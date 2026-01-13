@@ -17,8 +17,8 @@ const defaultData = {
     { id: 'u5', name: 'Aisha Patel', email: 'apatel@student.edu', role: 'student', avatar: 'AP' }
   ],
   courses: [
-    { id: 'c1', name: 'ECON 101 - Introduction to Economics', code: 'ECON101', inviteCode: 'ECON2025', createdBy: 'u1', description: 'An introduction to microeconomic and macroeconomic principles' },
-    { id: 'c2', name: 'ECON 301 - Advanced Microeconomics', code: 'ECON301', inviteCode: 'MICRO25', createdBy: 'u1', description: 'Advanced topics in microeconomic theory and applications' }
+    { id: 'c1', name: 'ECON 101 - Introduction to Economics', code: 'ECON101', inviteCode: 'ECON2025', createdBy: 'u1', description: 'An introduction to microeconomic and macroeconomic principles', startHereTitle: 'Start Here', startHereContent: 'Welcome to **ECON 101**! Begin by reviewing the syllabus and completing Quiz 1 before next week.' },
+    { id: 'c2', name: 'ECON 301 - Advanced Microeconomics', code: 'ECON301', inviteCode: 'MICRO25', createdBy: 'u1', description: 'Advanced topics in microeconomic theory and applications', startHereTitle: 'Start Here', startHereContent: 'Read the course overview, then jump into the first problem set.' }
   ],
   enrollments: [
     { userId: 'u1', courseId: 'c1', role: 'instructor' },
@@ -97,7 +97,26 @@ const defaultData = {
     // { id, assignmentId, criteria: [{ name, points, description }] }
   ],
   quizzes: [
-    // { id, courseId, title, status, dueDate, timeLimit, attempts, questions: [] }
+    {
+      id: 'q1',
+      courseId: 'c1',
+      title: 'Quiz 1: Market Basics',
+      description: 'Short quiz on supply and demand basics.',
+      status: 'published',
+      dueDate: new Date(Date.now() + 86400000 * 5).toISOString(),
+      createdAt: new Date(Date.now() - 86400000).toISOString(),
+      timeLimit: 20,
+      attempts: 2,
+      randomizeQuestions: true,
+      questionPoolEnabled: true,
+      questionSelectCount: 3,
+      questions: [
+        { id: 'q1-1', type: 'multiple_choice', prompt: 'What happens to quantity demanded when price increases?', options: ['Increases', 'Decreases', 'Stays the same', 'Becomes zero'], correctAnswer: 1, points: 2 },
+        { id: 'q1-2', type: 'true_false', prompt: 'A price ceiling can create a shortage.', options: ['True', 'False'], correctAnswer: 'True', points: 2 },
+        { id: 'q1-3', type: 'multiple_choice', prompt: 'Equilibrium occurs where?', options: ['Supply equals demand', 'Demand exceeds supply', 'Supply exceeds demand', 'Demand is zero'], correctAnswer: 0, points: 2 },
+        { id: 'q1-4', type: 'short_answer', prompt: 'In one sentence, define opportunity cost.', options: [], correctAnswer: '', points: 4 }
+      ]
+    }
   ],
   quizQuestions: [
     // { id, quizId, type: 'multiple_choice'|'true_false'|'short_answer', question, options: [], correctAnswer, points }
@@ -125,6 +144,15 @@ const defaultData = {
 let appData = loadData();
 let activeCourseId = null;
 let aiThread = [];
+let quizDraftQuestions = [];
+let currentEditQuizId = null;
+let currentQuizTakingId = null;
+let quizTimerInterval = null;
+let quizTimeRemaining = null;
+let aiDraft = null;
+let aiDraftType = 'announcement';
+let aiRubricDraft = null;
+let aiQuizDraft = null;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATA PERSISTENCE
@@ -155,6 +183,85 @@ function setText(id, text) {
 function setHTML(id, html) {
   const el = document.getElementById(id);
   if (el) el.innerHTML = html;
+}
+
+function escapeHtml(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatInlineMarkdown(text) {
+  let output = escapeHtml(text);
+  output = output.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  output = output.replace(/`([^`]+)`/g, '<code>$1</code>');
+  output = output.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  output = output.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+  return output;
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  const codeBlocks = [];
+  let working = text.replace(/```([\s\S]*?)```/g, (match, code) => {
+    const index = codeBlocks.length;
+    codeBlocks.push(code);
+    return `@@CODEBLOCK${index}@@`;
+  });
+  
+  const lines = working.split('\n');
+  let html = '';
+  let inList = false;
+  
+  const closeList = () => {
+    if (inList) {
+      html += '</ul>';
+      inList = false;
+    }
+  };
+  
+  lines.forEach(line => {
+    if (/^###\s+/.test(line)) {
+      closeList();
+      html += `<h4>${formatInlineMarkdown(line.replace(/^###\s+/, ''))}</h4>`;
+      return;
+    }
+    if (/^##\s+/.test(line)) {
+      closeList();
+      html += `<h3>${formatInlineMarkdown(line.replace(/^##\s+/, ''))}</h3>`;
+      return;
+    }
+    if (/^#\s+/.test(line)) {
+      closeList();
+      html += `<h2>${formatInlineMarkdown(line.replace(/^#\s+/, ''))}</h2>`;
+      return;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      if (!inList) {
+        html += '<ul>';
+        inList = true;
+      }
+      html += `<li>${formatInlineMarkdown(line.replace(/^[-*]\s+/, ''))}</li>`;
+      return;
+    }
+    if (line.trim() === '') {
+      closeList();
+      return;
+    }
+    closeList();
+    html += `<p>${formatInlineMarkdown(line)}</p>`;
+  });
+  
+  closeList();
+  codeBlocks.forEach((code, index) => {
+    const safeCode = escapeHtml(code);
+    html = html.replace(`@@CODEBLOCK${index}@@`, `<pre><code>${safeCode}</code></pre>`);
+  });
+  
+  return html;
 }
 
 function showToast(message, type = 'info') {
@@ -219,6 +326,16 @@ function generateId() {
   return 'id_' + Math.random().toString(36).substr(2, 9);
 }
 
+function getQuizPoints(quiz) {
+  if (!quiz || !quiz.questions) return 0;
+  const total = quiz.questions.reduce((sum, q) => sum + (parseFloat(q.points) || 0), 0);
+  if (quiz.questionPoolEnabled && quiz.questionSelectCount && quiz.questions.length > 0) {
+    const avg = total / quiz.questions.length;
+    return Math.round(avg * quiz.questionSelectCount * 10) / 10;
+  }
+  return total;
+}
+
 function addNotification(userId, type, title, message, courseId) {
   if (!appData.notifications) appData.notifications = [];
   
@@ -234,6 +351,7 @@ function addNotification(userId, type, title, message, courseId) {
   });
   
   saveData(appData);
+  updateNotificationBadge();
 }
 
 function getUnreadNotifications(userId) {
@@ -248,7 +366,74 @@ function markNotificationRead(notificationId) {
   if (notification) {
     notification.read = true;
     saveData(appData);
+    updateNotificationBadge();
   }
+}
+
+function markAllNotificationsRead(userId) {
+  if (!appData.notifications) return;
+  appData.notifications.forEach(n => {
+    if (n.userId === userId) n.read = true;
+  });
+  saveData(appData);
+  updateNotificationBadge();
+}
+
+function updateNotificationBadge() {
+  const badge = document.getElementById('notificationBadge');
+  const user = getCurrentUser();
+  if (!badge || !user) return;
+  
+  const unread = getUnreadNotifications(user.id);
+  if (unread.length === 0) {
+    badge.textContent = '';
+    badge.classList.remove('visible');
+    return;
+  }
+  
+  badge.textContent = unread.length > 9 ? '9+' : unread.length;
+  badge.classList.add('visible');
+}
+
+function openNotifications() {
+  renderNotifications();
+  openModal('notificationsModal');
+}
+
+function renderNotifications() {
+  const user = getCurrentUser();
+  const listEl = document.getElementById('notificationsList');
+  if (!user || !listEl) return;
+  
+  const notifications = (appData.notifications || [])
+    .filter(n => n.userId === user.id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  
+  if (notifications.length === 0) {
+    listEl.innerHTML = '<div class="empty-state-text">No notifications yet</div>';
+    return;
+  }
+  
+  listEl.innerHTML = notifications.map(n => {
+    const course = n.courseId ? getCourseById(n.courseId) : null;
+    const courseLabel = course ? `<span class="muted">• ${course.code}</span>` : '';
+    const statusBadge = n.read ? '' : '<span class="notification-new">New</span>';
+    return `
+      <button class="notification-item ${n.read ? '' : 'unread'}" onclick="openNotificationDetail('${n.id}')">
+        <div class="notification-title">
+          <span>${n.title}</span>
+          ${statusBadge}
+        </div>
+        <div class="notification-message">${n.message}</div>
+        <div class="notification-meta">${formatDate(n.createdAt)} ${courseLabel}</div>
+      </button>
+    `;
+  }).join('');
+}
+
+function openNotificationDetail(notificationId) {
+  markNotificationRead(notificationId);
+  renderNotifications();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -420,6 +605,7 @@ function initApp() {
   
   populateCourseSelector();
   renderAll();
+  updateNotificationBadge();
   navigateTo('courses');
 }
 
@@ -450,9 +636,11 @@ function renderAll() {
   renderHome();
   renderUpdates();
   renderAssignments();
+  renderCalendar();
   renderFiles();
   renderGradebook();
   renderPeople();
+  updateNotificationBadge();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -637,27 +825,42 @@ function renderHome() {
     setText('homeSubtitle', 'Select a course to get started');
     setHTML('homeUpcoming', '<div class="empty-state-text">No active course</div>');
     setHTML('homeUpdates', '<div class="empty-state-text">No active course</div>');
+    setHTML('homeStartHere', '');
+    setHTML('homeChecklist', '');
     return;
   }
   
   const course = getCourseById(activeCourseId);
   setText('homeTitle', course.name);
   setText('homeSubtitle', 'Course overview');
+
+  renderStartHere(course);
+  renderOnboardingChecklist(course);
   
-  // Upcoming assignments
-  const assignments = appData.assignments
+  // Upcoming assignments + quizzes
+  const upcomingAssignments = appData.assignments
     .filter(a => a.courseId === activeCourseId && a.status === 'published')
     .filter(a => new Date(a.dueDate) > new Date())
+    .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate }))
+    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  
+  const upcomingQuizzes = appData.quizzes
+    .filter(q => q.courseId === activeCourseId && q.status === 'published')
+    .filter(q => new Date(q.dueDate) > new Date())
+    .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate }))
+    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  
+  const upcoming = [...upcomingAssignments, ...upcomingQuizzes]
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
     .slice(0, 5);
   
-  if (assignments.length === 0) {
-    setHTML('homeUpcoming', '<div class="muted" style="padding:12px;">No upcoming assignments</div>');
+  if (upcoming.length === 0) {
+    setHTML('homeUpcoming', '<div class="muted" style="padding:12px;">No upcoming work</div>');
   } else {
-    const html = assignments.map(a => `
+    const html = upcoming.map(item => `
       <div style="padding:12px; border-bottom:1px solid var(--border-light);">
-        <div style="font-weight:500;">${a.title}</div>
-        <div class="muted" style="font-size:0.85rem;">Due ${formatDate(a.dueDate)}</div>
+        <div style="font-weight:500;">${item.title}</div>
+        <div class="muted" style="font-size:0.85rem;">${item.type} · Due ${formatDate(item.dueDate)}</div>
       </div>
     `).join('');
     setHTML('homeUpcoming', html);
@@ -685,6 +888,103 @@ function renderHome() {
   }
 }
 
+function renderStartHere(course) {
+  const isStaffUser = isStaff(appData.currentUser.id, course.id);
+  const startHereTitle = course.startHereTitle || 'Start Here';
+  const startHereContent = course.startHereContent || course.description || '';
+  const pinnedFiles = appData.files.filter(f => f.courseId === course.id).slice(0, 2);
+  const pinnedAssignments = appData.assignments.filter(a => a.courseId === course.id).slice(0, 2);
+  const pinnedQuizzes = appData.quizzes.filter(q => q.courseId === course.id).slice(0, 2);
+  
+  const pinnedItems = [
+    ...pinnedFiles.map(f => ({ label: f.name, type: 'File' })),
+    ...pinnedAssignments.map(a => ({ label: a.title, type: 'Assignment' })),
+    ...pinnedQuizzes.map(q => ({ label: q.title, type: 'Quiz' }))
+  ].slice(0, 4);
+  
+  const pinnedHtml = pinnedItems.length
+    ? `<div class="start-here-links">${pinnedItems.map(item => `<span class="pill">${item.type}: ${item.label}</span>`).join('')}</div>`
+    : '<div class="muted">Pin a syllabus, assignment, or quiz here.</div>';
+  
+  setHTML('homeStartHere', `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">${startHereTitle}</div>
+        ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="openStartHereModal('${course.id}')">Edit</button>` : ''}
+      </div>
+      <div class="markdown-content">${renderMarkdown(startHereContent)}</div>
+      <div style="margin-top:12px;">
+        <div class="muted" style="margin-bottom:6px;">Pinned essentials</div>
+        ${pinnedHtml}
+      </div>
+    </div>
+  `);
+}
+
+function renderOnboardingChecklist(course) {
+  const isStaffUser = isStaff(appData.currentUser.id, course.id);
+  if (!isStaffUser) {
+    setHTML('homeChecklist', '');
+    return;
+  }
+  
+  const hasStudents = appData.enrollments.some(e => e.courseId === course.id && e.role === 'student');
+  const hasAssignments = appData.assignments.some(a => a.courseId === course.id);
+  const hasQuizzes = appData.quizzes.some(q => q.courseId === course.id);
+  const hasUpdates = appData.announcements.some(a => a.courseId === course.id);
+  const hasFiles = appData.files.some(f => f.courseId === course.id);
+  
+  const items = [
+    { label: 'Invite students', done: hasStudents },
+    { label: 'Create your first assignment', done: hasAssignments },
+    { label: 'Publish a quiz', done: hasQuizzes },
+    { label: 'Post a welcome update', done: hasUpdates },
+    { label: 'Upload a syllabus file', done: hasFiles }
+  ];
+  
+  setHTML('homeChecklist', `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Getting started checklist</div>
+      </div>
+      <div class="checklist">
+        ${items.map(item => `
+          <div class="checklist-row">
+            <span class="checklist-status ${item.done ? 'done' : ''}">${item.done ? '✓' : '○'}</span>
+            <span>${item.label}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `);
+}
+
+function openStartHereModal(courseId) {
+  const course = getCourseById(courseId);
+  if (!course) return;
+  generateModals();
+  document.getElementById('startHereCourseId').value = courseId;
+  document.getElementById('startHereTitle').value = course.startHereTitle || 'Start Here';
+  document.getElementById('startHereContent').value = course.startHereContent || course.description || '';
+  openModal('startHereModal');
+}
+
+function saveStartHere() {
+  const courseId = document.getElementById('startHereCourseId').value;
+  const title = document.getElementById('startHereTitle').value.trim();
+  const content = document.getElementById('startHereContent').value.trim();
+  const course = getCourseById(courseId);
+  if (!course) return;
+  
+  course.startHereTitle = title || 'Start Here';
+  course.startHereContent = content;
+  saveData(appData);
+  
+  closeModal('startHereModal');
+  renderHome();
+  showToast('Start Here updated', 'success');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // UPDATES (ANNOUNCEMENTS) PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -705,6 +1005,7 @@ function renderUpdates() {
   if (isStaffUser) {
     setHTML('updatesActions', `
       <button class="btn btn-primary" onclick="openModal('announcementModal')">New Update</button>
+      <button class="btn btn-secondary" onclick="openAiCreateModal('announcement')">AI Draft</button>
       <button class="btn btn-secondary" onclick="openCopyContentModal()">Copy from Course</button>
     `);
   } else {
@@ -740,7 +1041,7 @@ function renderUpdates() {
             </div>
           ` : ''}
         </div>
-        <div>${a.content}</div>
+        <div class="markdown-content">${renderMarkdown(a.content)}</div>
       </div>
     `;
   }).join('');
@@ -869,7 +1170,11 @@ function renderAssignments() {
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
   
   if (isStaffUser) {
-    setHTML('assignmentsActions', '<button class="btn btn-primary" onclick="openModal(\'assignmentModal\')">New Assignment</button>');
+    setHTML('assignmentsActions', `
+      <button class="btn btn-primary" onclick="openModal('assignmentModal')">New Assignment</button>
+      <button class="btn btn-secondary" onclick="openQuizModal()">New Quiz</button>
+      <button class="btn btn-secondary" onclick="openAiCreateModal('quiz')">AI Quiz</button>
+    `);
   } else {
     setHTML('assignmentsActions', '');
   }
@@ -878,13 +1183,18 @@ function renderAssignments() {
     .filter(a => a.courseId === activeCourseId)
     .filter(a => isStaffUser || a.status === 'published')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const quizzes = appData.quizzes
+    .filter(q => q.courseId === activeCourseId)
+    .filter(q => isStaffUser || q.status === 'published')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   
-  if (assignments.length === 0) {
-    setHTML('assignmentsList', '<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-title">No assignments yet</div></div>');
+  if (assignments.length === 0 && quizzes.length === 0) {
+    setHTML('assignmentsList', '<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-title">No assignments or quizzes yet</div></div>');
     return;
   }
   
-  const html = assignments.map(a => {
+  const assignmentCards = assignments.map(a => {
     const dueDate = new Date(a.dueDate);
     const isPast = dueDate < new Date();
     const mySubmission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
@@ -912,12 +1222,141 @@ function renderAssignments() {
             ` : ''}
           </div>
         </div>
-        <div>${a.description}</div>
+        <div class="markdown-content">${renderMarkdown(a.description)}</div>
       </div>
     `;
   }).join('');
+
+  const quizCards = quizzes.map(q => {
+    const dueDate = new Date(q.dueDate);
+    const isPast = dueDate < new Date();
+    const quizPoints = getQuizPoints(q);
+    const submissions = appData.quizSubmissions.filter(s => s.quizId === q.id);
+    const mySubmissions = submissions.filter(s => s.userId === appData.currentUser.id);
+    const latestSubmission = mySubmissions.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))[0];
+    const attemptsUsed = mySubmissions.length;
+    const attemptsAllowed = q.attempts ? q.attempts : null;
+    const attemptsLeft = attemptsAllowed ? Math.max(attemptsAllowed - attemptsUsed, 0) : null;
+    
+    let statusBadge = '';
+    if (q.status === 'draft') statusBadge = '<span style="padding:4px 8px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.75rem; font-weight:600;">DRAFT</span>';
+    if (q.status === 'closed') statusBadge = '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>';
+
+    const timeLimitLabel = q.timeLimit ? `${q.timeLimit} min` : 'No time limit';
+    const attemptsLabel = attemptsAllowed ? `${attemptsLeft} of ${attemptsAllowed} left` : 'Unlimited attempts';
+    const submissionStatus = latestSubmission
+      ? (latestSubmission.released ? `Score: ${latestSubmission.score}/${quizPoints}` : 'Submitted · awaiting review')
+      : 'Not started';
+
+    return `
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">${q.title} ${statusBadge}</div>
+            <div class="muted">Due ${formatDate(q.dueDate)} ${isPast ? '(Past due)' : ''} · ${quizPoints} points · ${timeLimitLabel}</div>
+            <div class="muted" style="font-size:0.85rem;">${attemptsLabel} · ${submissionStatus}</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            ${isStaffUser ? `
+              <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
+              <button class="btn btn-secondary btn-sm" onclick="openQuizModal('${q.id}')">Edit</button>
+            ` : latestSubmission ? `
+              <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmission('${q.id}')">View Submission</button>
+              ${!isPast && (!attemptsAllowed || attemptsLeft > 0) ? `<button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Retake</button>` : ''}
+            ` : q.status === 'published' && !isPast ? `
+              <button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Take Quiz</button>
+            ` : ''}
+          </div>
+        </div>
+        <div class="markdown-content">${renderMarkdown(q.description || '')}</div>
+      </div>
+    `;
+  }).join('');
+
+  const sections = [];
+  if (assignments.length > 0) {
+    sections.push(`
+      <div class="section-header">Assignments</div>
+      ${assignmentCards}
+    `);
+  }
+  if (quizzes.length > 0) {
+    sections.push(`
+      <div class="section-header">Quizzes</div>
+      ${quizCards}
+    `);
+  }
+
+  setHTML('assignmentsList', sections.join(''));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CALENDAR PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderCalendar() {
+  if (!activeCourseId) {
+    setText('calendarSubtitle', 'Select a course');
+    setHTML('calendarActions', '');
+    setHTML('calendarList', '<div class="empty-state-text">No active course</div>');
+    return;
+  }
   
-  setHTML('assignmentsList', html);
+  const course = getCourseById(activeCourseId);
+  setText('calendarSubtitle', course.name);
+  setHTML('calendarActions', '');
+  
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const now = new Date();
+  const start = new Date();
+  start.setDate(now.getDate() - 7);
+  const end = new Date();
+  end.setDate(now.getDate() + 45);
+  
+  const items = [
+    ...appData.assignments
+      .filter(a => a.courseId === activeCourseId)
+      .filter(a => isStaffUser || a.status === 'published')
+      .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status })),
+    ...appData.quizzes
+      .filter(q => q.courseId === activeCourseId)
+      .filter(q => isStaffUser || q.status === 'published')
+      .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate, status: q.status }))
+  ].filter(item => {
+    const date = new Date(item.dueDate);
+    return date >= start && date <= end;
+  });
+  
+  if (items.length === 0) {
+    setHTML('calendarList', '<div class="empty-state"><div class="empty-state-icon">🗓️</div><div class="empty-state-title">No upcoming work</div></div>');
+    return;
+  }
+  
+  const grouped = items.reduce((acc, item) => {
+    const dateKey = new Date(item.dueDate).toDateString();
+    if (!acc[dateKey]) acc[dateKey] = [];
+    acc[dateKey].push(item);
+    return acc;
+  }, {});
+  
+  const orderedDates = Object.keys(grouped).sort((a, b) => new Date(a) - new Date(b));
+  
+  const html = orderedDates.map(dateKey => `
+    <div class="calendar-day">
+      <div class="calendar-date">${new Date(dateKey).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+      <div class="calendar-items">
+        ${grouped[dateKey].map(item => `
+          <div class="calendar-item">
+            <div class="calendar-item-type">${item.type}</div>
+            <div class="calendar-item-title">${item.title}</div>
+            ${item.status === 'draft' ? '<span class="calendar-badge">Draft</span>' : ''}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+  
+  setHTML('calendarList', html);
 }
 
 function createAssignment() {
@@ -1365,6 +1804,648 @@ The score should be between 0 and ${assignment.points}. The feedback should be c
     console.error('AI grading error:', err);
     showToast('AI drafting failed: ' + err.message, 'error');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUIZZES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function createDefaultQuestion(type = 'multiple_choice') {
+  if (type === 'true_false') {
+    return {
+      id: generateId(),
+      type,
+      prompt: '',
+      options: ['True', 'False'],
+      correctAnswer: 'True',
+      points: 1,
+      sampleAnswer: ''
+    };
+  }
+  
+  if (type === 'short_answer') {
+    return {
+      id: generateId(),
+      type,
+      prompt: '',
+      options: [],
+      correctAnswer: '',
+      points: 1,
+      sampleAnswer: ''
+    };
+  }
+  
+  return {
+    id: generateId(),
+    type,
+    prompt: '',
+    options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+    correctAnswer: 0,
+    points: 1,
+    sampleAnswer: ''
+  };
+}
+
+function openQuizModal(quizId = null) {
+  currentEditQuizId = quizId;
+  const quiz = quizId ? appData.quizzes.find(q => q.id === quizId) : null;
+  
+  const draft = !quiz && aiQuizDraft ? aiQuizDraft : null;
+  
+  document.getElementById('quizModalTitle').textContent = quiz ? 'Edit Quiz' : 'New Quiz';
+  document.getElementById('quizTitle').value = quiz ? quiz.title : (draft?.title || '');
+  document.getElementById('quizDescription').value = quiz ? quiz.description || '' : (draft?.description || '');
+  document.getElementById('quizDueDate').value = quiz ? new Date(quiz.dueDate).toISOString().slice(0, 16) : '';
+  document.getElementById('quizStatus').value = quiz ? quiz.status : 'draft';
+  document.getElementById('quizTimeLimit').value = quiz ? quiz.timeLimit || '' : '';
+  document.getElementById('quizAttempts').value = quiz ? quiz.attempts || '' : '';
+  document.getElementById('quizRandomize').checked = quiz ? quiz.randomizeQuestions === true : true;
+  document.getElementById('quizPoolEnabled').checked = quiz ? quiz.questionPoolEnabled === true : false;
+  document.getElementById('quizPoolCount').value = quiz ? quiz.questionSelectCount || '' : '';
+  
+  quizDraftQuestions = quiz
+    ? JSON.parse(JSON.stringify(quiz.questions || []))
+    : (draft?.questions?.map(q => ({
+      id: q.id || generateId(),
+      type: q.type || 'multiple_choice',
+      prompt: q.prompt || '',
+      options: q.options || (q.type === 'multiple_choice' ? ['Option 1', 'Option 2'] : []),
+      correctAnswer: q.correctAnswer ?? (q.type === 'true_false' ? 'True' : 0),
+      points: parseFloat(q.points) || 1,
+      sampleAnswer: ''
+    })) || [createDefaultQuestion()]);
+  
+  aiQuizDraft = null;
+  toggleQuizPoolFields();
+  renderQuizQuestions();
+  openModal('quizModal');
+}
+
+function toggleQuizPoolFields() {
+  const enabled = document.getElementById('quizPoolEnabled').checked;
+  const poolGroup = document.getElementById('quizPoolCountGroup');
+  if (poolGroup) {
+    poolGroup.style.display = enabled ? 'block' : 'none';
+  }
+}
+
+function renderQuizQuestions() {
+  const list = document.getElementById('quizQuestionsList');
+  if (!list) return;
+  
+  list.innerHTML = quizDraftQuestions.map((q, index) => {
+    const typeOptions = `
+      <option value="multiple_choice" ${q.type === 'multiple_choice' ? 'selected' : ''}>Multiple choice</option>
+      <option value="true_false" ${q.type === 'true_false' ? 'selected' : ''}>True / False</option>
+      <option value="short_answer" ${q.type === 'short_answer' ? 'selected' : ''}>Short answer</option>
+    `;
+    
+    let optionsHtml = '';
+    if (q.type === 'multiple_choice') {
+      optionsHtml = `
+        <div class="quiz-options">
+          ${q.options.map((opt, optIndex) => `
+            <div class="quiz-option-row">
+              <input type="text" class="form-input" value="${opt}" oninput="updateQuizOption(${index}, ${optIndex}, this.value)" placeholder="Option ${optIndex + 1}">
+            </div>
+          `).join('')}
+          <div class="form-group">
+            <label class="form-label">Correct answer</label>
+            <select class="form-select" onchange="updateQuizQuestion(${index}, 'correctAnswer', this.value)">
+              ${q.options.map((opt, optIndex) => `
+                <option value="${optIndex}" ${parseInt(q.correctAnswer) === optIndex ? 'selected' : ''}>${opt || `Option ${optIndex + 1}`}</option>
+              `).join('')}
+            </select>
+          </div>
+        </div>
+      `;
+    } else if (q.type === 'true_false') {
+      optionsHtml = `
+        <div class="form-group">
+          <label class="form-label">Correct answer</label>
+          <select class="form-select" onchange="updateQuizQuestion(${index}, 'correctAnswer', this.value)">
+            <option value="True" ${q.correctAnswer === 'True' ? 'selected' : ''}>True</option>
+            <option value="False" ${q.correctAnswer === 'False' ? 'selected' : ''}>False</option>
+          </select>
+        </div>
+      `;
+    } else {
+      optionsHtml = `
+        <div class="form-group">
+          <label class="form-label">Sample answer (optional)</label>
+          <textarea class="form-textarea" rows="2" oninput="updateQuizQuestion(${index}, 'correctAnswer', this.value)" placeholder="Add a reference answer">${q.correctAnswer || ''}</textarea>
+        </div>
+      `;
+    }
+    
+    return `
+      <div class="quiz-question-card">
+        <div class="quiz-question-header">
+          <div class="form-group">
+            <label class="form-label">Question ${index + 1}</label>
+            <input type="text" class="form-input" value="${q.prompt}" oninput="updateQuizQuestion(${index}, 'prompt', this.value)" placeholder="Write the question...">
+          </div>
+          <div class="quiz-question-meta">
+            <select class="form-select" onchange="updateQuizQuestion(${index}, 'type', this.value)">
+              ${typeOptions}
+            </select>
+            <input type="number" class="form-input" value="${q.points}" min="1" oninput="updateQuizQuestion(${index}, 'points', this.value)" placeholder="Points">
+            <button class="btn btn-secondary btn-sm" onclick="removeQuizQuestion(${index})">Remove</button>
+          </div>
+        </div>
+        ${optionsHtml}
+      </div>
+    `;
+  }).join('');
+  
+  updateQuizPointsTotal();
+}
+
+function updateQuizQuestion(index, field, value) {
+  const question = quizDraftQuestions[index];
+  if (!question) return;
+  
+  if (field === 'type') {
+    quizDraftQuestions[index] = createDefaultQuestion(value);
+    renderQuizQuestions();
+    return;
+  }
+  
+  if (field === 'points') {
+    question.points = parseFloat(value) || 0;
+    updateQuizPointsTotal();
+    return;
+  }
+  
+  if (field === 'correctAnswer' && question.type === 'multiple_choice') {
+    question.correctAnswer = parseInt(value, 10);
+    return;
+  }
+  
+  question[field] = value;
+}
+
+function updateQuizOption(questionIndex, optionIndex, value) {
+  const question = quizDraftQuestions[questionIndex];
+  if (!question || !question.options) return;
+  question.options[optionIndex] = value;
+}
+
+function addQuizQuestion() {
+  quizDraftQuestions.push(createDefaultQuestion());
+  renderQuizQuestions();
+}
+
+function removeQuizQuestion(index) {
+  quizDraftQuestions.splice(index, 1);
+  if (quizDraftQuestions.length === 0) {
+    quizDraftQuestions.push(createDefaultQuestion());
+  }
+  renderQuizQuestions();
+}
+
+function updateQuizPointsTotal() {
+  const total = quizDraftQuestions.reduce((sum, q) => sum + (parseFloat(q.points) || 0), 0);
+  const el = document.getElementById('quizPointsTotal');
+  if (el) el.textContent = total.toFixed(1);
+}
+
+function saveQuiz() {
+  const title = document.getElementById('quizTitle').value.trim();
+  const description = document.getElementById('quizDescription').value.trim();
+  const dueDate = document.getElementById('quizDueDate').value;
+  const status = document.getElementById('quizStatus').value;
+  const timeLimit = parseInt(document.getElementById('quizTimeLimit').value, 10) || 0;
+  const attempts = parseInt(document.getElementById('quizAttempts').value, 10) || 0;
+  const randomizeQuestions = document.getElementById('quizRandomize').checked;
+  const questionPoolEnabled = document.getElementById('quizPoolEnabled').checked;
+  const questionSelectCount = parseInt(document.getElementById('quizPoolCount').value, 10) || 0;
+  
+  if (!title || !dueDate) {
+    showToast('Please fill in title and due date', 'error');
+    return;
+  }
+  
+  if (quizDraftQuestions.length === 0) {
+    showToast('Add at least one question', 'error');
+    return;
+  }
+  
+  if (questionPoolEnabled && (!questionSelectCount || questionSelectCount > quizDraftQuestions.length)) {
+    showToast('Question pool count must be between 1 and total questions', 'error');
+    return;
+  }
+  
+  for (const question of quizDraftQuestions) {
+    if (!question.prompt.trim() || !question.points) {
+      showToast('Each question needs text and points', 'error');
+      return;
+    }
+    
+    if (question.type === 'multiple_choice') {
+      if (question.options.some(opt => !opt.trim())) {
+        showToast('Fill in all multiple choice options', 'error');
+        return;
+      }
+      if (question.correctAnswer === null || question.correctAnswer === undefined) {
+        showToast('Select a correct answer for each multiple choice question', 'error');
+        return;
+      }
+    }
+  }
+  
+  const quizData = {
+    id: currentEditQuizId || generateId(),
+    courseId: activeCourseId,
+    title,
+    description,
+    status,
+    dueDate: new Date(dueDate).toISOString(),
+    createdAt: currentEditQuizId ? appData.quizzes.find(q => q.id === currentEditQuizId)?.createdAt : new Date().toISOString(),
+    timeLimit: timeLimit || null,
+    attempts: attempts || null,
+    randomizeQuestions,
+    questionPoolEnabled,
+    questionSelectCount: questionPoolEnabled ? questionSelectCount : null,
+    questions: JSON.parse(JSON.stringify(quizDraftQuestions))
+  };
+  
+  const existingIndex = appData.quizzes.findIndex(q => q.id === quizData.id);
+  const previousStatus = existingIndex >= 0 ? appData.quizzes[existingIndex].status : null;
+  
+  if (existingIndex >= 0) {
+    appData.quizzes[existingIndex] = quizData;
+  } else {
+    appData.quizzes.push(quizData);
+  }
+  
+  saveData(appData);
+  
+  if (quizData.status === 'published' && previousStatus !== 'published') {
+    const students = appData.enrollments
+      .filter(e => e.courseId === activeCourseId && e.role === 'student')
+      .map(e => e.userId);
+    
+    students.forEach(studentId => {
+      addNotification(studentId, 'quiz', 'New Quiz Posted', `${title} is now available`, activeCourseId);
+    });
+  }
+  
+  closeModal('quizModal');
+  renderAssignments();
+  renderHome();
+  showToast('Quiz saved!', 'success');
+}
+
+function takeQuiz(quizId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  if (!quiz) return;
+  
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  if (!isStaffUser && quiz.status !== 'published') {
+    showToast('This quiz is not published yet', 'error');
+    return;
+  }
+  
+  const attemptsUsed = appData.quizSubmissions.filter(s => s.quizId === quizId && s.userId === appData.currentUser.id).length;
+  if (quiz.attempts && attemptsUsed >= quiz.attempts) {
+    showToast('No attempts left for this quiz', 'error');
+    return;
+  }
+  
+  if (new Date(quiz.dueDate) < new Date()) {
+    showToast('This quiz is past due', 'error');
+    return;
+  }
+  
+  currentQuizTakingId = quizId;
+  renderQuizTakeModal(quiz);
+  openModal('quizTakeModal');
+}
+
+function renderQuizTakeModal(quiz) {
+  const container = document.getElementById('quizTakeQuestions');
+  if (!container) return;
+  
+  let questions = JSON.parse(JSON.stringify(quiz.questions || []));
+  if (quiz.questionPoolEnabled && quiz.questionSelectCount && quiz.questionSelectCount < questions.length) {
+    questions = shuffleArray(questions).slice(0, quiz.questionSelectCount);
+  }
+  
+  if (quiz.randomizeQuestions) {
+    questions = shuffleArray(questions);
+  }
+  
+  container.dataset.questions = JSON.stringify(questions);
+  container.innerHTML = questions.map((q, index) => {
+    if (q.type === 'multiple_choice') {
+      return `
+        <div class="quiz-question-block">
+          <div class="quiz-question-title">${index + 1}. ${q.prompt}</div>
+          ${q.options.map((opt, optIndex) => `
+            <label class="quiz-answer-option">
+              <input type="radio" name="quizQuestion${index}" value="${optIndex}">
+              <span>${opt}</span>
+            </label>
+          `).join('')}
+        </div>
+      `;
+    }
+    
+    if (q.type === 'true_false') {
+      return `
+        <div class="quiz-question-block">
+          <div class="quiz-question-title">${index + 1}. ${q.prompt}</div>
+          ${['True', 'False'].map(option => `
+            <label class="quiz-answer-option">
+              <input type="radio" name="quizQuestion${index}" value="${option}">
+              <span>${option}</span>
+            </label>
+          `).join('')}
+        </div>
+      `;
+    }
+    
+    return `
+      <div class="quiz-question-block">
+        <div class="quiz-question-title">${index + 1}. ${q.prompt}</div>
+        <textarea class="form-textarea" rows="3" id="quizAnswer${index}" placeholder="Your answer..."></textarea>
+      </div>
+    `;
+  }).join('');
+  
+  const points = getQuizPoints({ questions });
+  setText('quizTakeTitle', quiz.title);
+  setText('quizTakeMeta', `${points} points · ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'No time limit'}`);
+  
+  startQuizTimer(quiz.timeLimit);
+}
+
+function startQuizTimer(timeLimit) {
+  const timerEl = document.getElementById('quizTimer');
+  if (quizTimerInterval) {
+    clearInterval(quizTimerInterval);
+    quizTimerInterval = null;
+  }
+  
+  if (!timeLimit) {
+    if (timerEl) timerEl.textContent = 'No time limit';
+    return;
+  }
+  
+  quizTimeRemaining = timeLimit * 60;
+  if (timerEl) timerEl.textContent = formatTimer(quizTimeRemaining);
+  
+  quizTimerInterval = setInterval(() => {
+    quizTimeRemaining -= 1;
+    if (timerEl) timerEl.textContent = formatTimer(quizTimeRemaining);
+    if (quizTimeRemaining <= 0) {
+      clearInterval(quizTimerInterval);
+      quizTimerInterval = null;
+      showToast('Time is up! Submitting quiz.', 'info');
+      submitQuiz();
+    }
+  }, 1000);
+}
+
+function submitQuiz() {
+  const quiz = appData.quizzes.find(q => q.id === currentQuizTakingId);
+  const container = document.getElementById('quizTakeQuestions');
+  if (!quiz || !container) return;
+  
+  const questions = JSON.parse(container.dataset.questions || '[]');
+  const answers = {};
+  
+  questions.forEach((q, index) => {
+    if (q.type === 'short_answer') {
+      answers[q.id] = document.getElementById(`quizAnswer${index}`).value.trim();
+    } else {
+      const selected = document.querySelector(`input[name="quizQuestion${index}"]:checked`);
+      answers[q.id] = selected ? selected.value : null;
+    }
+  });
+  
+  const { autoScore, needsManual } = calculateQuizAutoScore(questions, answers);
+  const totalPoints = getQuizPoints({ questions });
+  
+  const submission = {
+    id: generateId(),
+    quizId: quiz.id,
+    userId: appData.currentUser.id,
+    answers,
+    questions,
+    autoScore,
+    score: autoScore,
+    needsManual,
+    released: !needsManual,
+    feedback: '',
+    submittedAt: new Date().toISOString(),
+    gradedAt: needsManual ? null : new Date().toISOString(),
+    gradedBy: needsManual ? null : 'auto'
+  };
+  
+  appData.quizSubmissions.push(submission);
+  saveData(appData);
+  
+  if (quizTimerInterval) {
+    clearInterval(quizTimerInterval);
+    quizTimerInterval = null;
+  }
+  
+  const instructors = appData.enrollments
+    .filter(e => e.courseId === activeCourseId && (e.role === 'instructor' || e.role === 'ta'))
+    .map(e => e.userId);
+  
+  instructors.forEach(instrId => {
+    addNotification(instrId, 'quiz', 'New Quiz Submission', `${appData.currentUser.name} submitted ${quiz.title}`, activeCourseId);
+  });
+  
+  if (!needsManual) {
+    addNotification(appData.currentUser.id, 'quiz', 'Quiz Graded', `Score: ${autoScore}/${totalPoints}`, activeCourseId);
+    showToast(`Quiz submitted! Score: ${autoScore}/${totalPoints}`, 'success');
+  } else {
+    showToast('Quiz submitted! Awaiting review.', 'success');
+  }
+  
+  closeModal('quizTakeModal');
+  renderAssignments();
+}
+
+function calculateQuizAutoScore(questions, answers) {
+  let autoScore = 0;
+  let needsManual = false;
+  
+  questions.forEach(q => {
+    const points = parseFloat(q.points) || 0;
+    if (q.type === 'multiple_choice') {
+      const selectedIndex = parseInt(answers[q.id], 10);
+      if (selectedIndex === parseInt(q.correctAnswer, 10)) {
+        autoScore += points;
+      }
+    } else if (q.type === 'true_false') {
+      if (answers[q.id] === q.correctAnswer) {
+        autoScore += points;
+      }
+    } else {
+      needsManual = true;
+    }
+  });
+  
+  return { autoScore, needsManual };
+}
+
+function viewQuizSubmissions(quizId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  if (!quiz) return;
+  
+  const submissions = appData.quizSubmissions
+    .filter(s => s.quizId === quizId)
+    .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+  
+  const list = document.getElementById('quizSubmissionsList');
+  if (!list) return;
+  
+  if (submissions.length === 0) {
+    list.innerHTML = '<div class="empty-state-text">No submissions yet</div>';
+  } else {
+    list.innerHTML = submissions.map(submission => {
+      const student = getUserById(submission.userId);
+      const status = submission.released ? `Score: ${submission.score}` : 'Needs review';
+      return `
+        <div class="submission-row">
+          <div>
+            <div style="font-weight:600;">${student ? student.name : 'Unknown'}</div>
+            <div class="muted">${formatDate(submission.submittedAt)} · ${status}</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="openQuizGradeModal('${quizId}', '${submission.id}')">Grade</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  document.getElementById('quizSubmissionsTitle').textContent = `Quiz Submissions: ${quiz.title}`;
+  openModal('quizSubmissionsModal');
+}
+
+function openQuizGradeModal(quizId, submissionId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  const submission = appData.quizSubmissions.find(s => s.id === submissionId);
+  if (!quiz || !submission) return;
+  
+  const student = getUserById(submission.userId);
+  const answersList = document.getElementById('quizGradeAnswers');
+  const scoreInput = document.getElementById('quizGradeScore');
+  const feedbackInput = document.getElementById('quizGradeFeedback');
+  
+  document.getElementById('quizGradeTitle').textContent = `Grade Quiz: ${student ? student.name : 'Student'}`;
+  const totalPoints = getQuizPoints({ questions: submission.questions });
+  document.getElementById('quizGradePoints').textContent = `${totalPoints} pts total`;
+  
+  answersList.innerHTML = submission.questions.map((q, index) => {
+    const answer = submission.answers[q.id];
+    let answerText = '';
+    if (q.type === 'multiple_choice') {
+      const selectedIndex = parseInt(answer, 10);
+      answerText = answer !== null && !Number.isNaN(selectedIndex) ? q.options[selectedIndex] : 'No answer';
+    } else if (q.type === 'true_false') {
+      answerText = answer || 'No answer';
+    } else {
+      answerText = answer || 'No answer';
+    }
+    
+    return `
+      <div class="quiz-answer-review">
+        <div class="quiz-answer-question">${index + 1}. ${q.prompt}</div>
+        <div class="quiz-answer-response">Answer: ${answerText}</div>
+      </div>
+    `;
+  }).join('');
+  
+  scoreInput.value = submission.score || submission.autoScore || 0;
+  feedbackInput.value = submission.feedback || '';
+  document.getElementById('quizGradeSubmissionId').value = submission.id;
+  document.getElementById('quizGradeQuizId').value = quizId;
+  
+  openModal('quizGradeModal');
+}
+
+function saveQuizGrade() {
+  const submissionId = document.getElementById('quizGradeSubmissionId').value;
+  const quizId = document.getElementById('quizGradeQuizId').value;
+  const score = parseFloat(document.getElementById('quizGradeScore').value) || 0;
+  const feedback = document.getElementById('quizGradeFeedback').value.trim();
+  
+  const submission = appData.quizSubmissions.find(s => s.id === submissionId);
+  if (!submission) return;
+  
+  submission.score = score;
+  submission.feedback = feedback;
+  submission.released = true;
+  submission.needsManual = false;
+  submission.gradedAt = new Date().toISOString();
+  submission.gradedBy = appData.currentUser.id;
+  
+  saveData(appData);
+  
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  if (quiz) {
+    addNotification(submission.userId, 'quiz', 'Quiz Graded', `Score: ${score}/${getQuizPoints(quiz)}`, quiz.courseId);
+  }
+  
+  closeModal('quizGradeModal');
+  renderAssignments();
+  viewQuizSubmissions(quizId);
+  showToast('Quiz graded!', 'success');
+}
+
+function viewQuizSubmission(quizId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  const submissions = appData.quizSubmissions
+    .filter(s => s.quizId === quizId && s.userId === appData.currentUser.id)
+    .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+  
+  const latest = submissions[0];
+  if (!quiz || !latest) return;
+  
+  const list = document.getElementById('quizReviewList');
+  if (!list) return;
+  
+  const totalPoints = getQuizPoints({ questions: latest.questions });
+  document.getElementById('quizReviewTitle').textContent = `${quiz.title} · ${latest.released ? `Score ${latest.score}/${totalPoints}` : 'Awaiting review'}`;
+  
+  list.innerHTML = latest.questions.map((q, index) => {
+    const answer = latest.answers[q.id];
+    let answerText = '';
+    if (q.type === 'multiple_choice') {
+      const selectedIndex = parseInt(answer, 10);
+      answerText = answer !== null && !Number.isNaN(selectedIndex) ? q.options[selectedIndex] : 'No answer';
+    } else if (q.type === 'true_false') {
+      answerText = answer || 'No answer';
+    } else {
+      answerText = answer || 'No answer';
+    }
+    
+    return `
+      <div class="quiz-answer-review">
+        <div class="quiz-answer-question">${index + 1}. ${q.prompt}</div>
+        <div class="quiz-answer-response">Your answer: ${answerText}</div>
+      </div>
+    `;
+  }).join('');
+  
+  openModal('quizReviewModal');
+}
+
+function formatTimer(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function shuffleArray(list) {
+  return list.slice().sort(() => Math.random() - 0.5);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1822,7 +2903,7 @@ function renderAiThread() {
       <div style="font-weight:600; margin-bottom:4px; color:${msg.role === 'user' ? 'var(--primary)' : 'var(--text-color)'};">
         ${msg.role === 'user' ? 'You' : 'AI'}
       </div>
-      <div style="white-space:pre-wrap;">${msg.content}</div>
+      <div class="markdown-content">${msg.role === 'assistant' ? renderMarkdown(msg.content) : renderMarkdown(msg.content)}</div>
     </div>
   `).join('');
   
@@ -1900,6 +2981,176 @@ ${assignments.length > 0 ? `- Recent Assignments: ${assignments.slice(0, 3).map(
   }
 }
 
+function openAiCreateModal(type = 'announcement', assignmentId = null) {
+  generateModals();
+  aiDraftType = type;
+  aiDraft = null;
+  aiRubricDraft = assignmentId ? { assignmentId } : null;
+  
+  const typeSelect = document.getElementById('aiCreateType');
+  if (typeSelect) typeSelect.value = type;
+  
+  const assignmentSelect = document.getElementById('aiRubricAssignment');
+  if (assignmentSelect) {
+    const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
+    assignmentSelect.innerHTML = assignments.length
+      ? assignments.map(a => `<option value="${a.id}">${a.title}</option>`).join('')
+      : '<option value="">No assignments available</option>';
+    if (assignmentId) assignmentSelect.value = assignmentId;
+  }
+  
+  document.getElementById('aiCreatePrompt').value = '';
+  document.getElementById('aiQuestionCount').value = '5';
+  updateAiCreateType();
+  renderAiDraftPreview();
+  openModal('aiCreateModal');
+}
+
+function updateAiCreateType() {
+  aiDraftType = document.getElementById('aiCreateType').value;
+  const rubricGroup = document.getElementById('aiRubricGroup');
+  const quizGroup = document.getElementById('aiQuizGroup');
+  if (rubricGroup) rubricGroup.style.display = aiDraftType === 'rubric' ? 'block' : 'none';
+  if (quizGroup) quizGroup.style.display = aiDraftType === 'quiz' ? 'block' : 'none';
+}
+
+async function generateAiDraft() {
+  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  if (!apiKey) {
+    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    return;
+  }
+  
+  const prompt = document.getElementById('aiCreatePrompt').value.trim();
+  if (!prompt) {
+    showToast('Add a prompt to guide the AI', 'error');
+    return;
+  }
+  
+  const course = activeCourseId ? getCourseById(activeCourseId) : null;
+  let systemPrompt = '';
+  
+  if (aiDraftType === 'announcement') {
+    systemPrompt = `Create a course announcement. Return ONLY valid JSON with keys: title, content. Use markdown in content when helpful.`;
+  } else if (aiDraftType === 'quiz') {
+    const count = parseInt(document.getElementById('aiQuestionCount').value, 10) || 5;
+    systemPrompt = `Create a quiz as JSON with keys: title, description, questions (array). Each question must include type ("multiple_choice"|"true_false"|"short_answer"), prompt, options (array, for multiple_choice only), correctAnswer (index for multiple_choice, "True"/"False" for true_false, empty string for short_answer), points (number). Provide ${count} questions.`;
+  } else {
+    const assignmentId = document.getElementById('aiRubricAssignment').value;
+    if (!assignmentId) {
+      showToast('Select an assignment for the rubric', 'error');
+      return;
+    }
+    const assignment = appData.assignments.find(a => a.id === assignmentId);
+    systemPrompt = `Create a grading rubric for this assignment. Return ONLY JSON with key criteria (array). Each criterion must include name, points, description. Total points should sum to ${assignment ? assignment.points : 100}.`;
+  }
+  
+  const contextualPrompt = `
+Course: ${course ? course.name : 'Unknown'}
+Prompt: ${prompt}
+${systemPrompt}
+`;
+  
+  try {
+    showToast('Generating draft with AI...', 'info');
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: contextualPrompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.4
+        }
+      })
+    });
+    
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(data.error.message);
+    }
+    
+    const text = data.candidates[0].content.parts[0].text;
+    aiDraft = JSON.parse(text);
+    renderAiDraftPreview();
+    showToast('Draft ready! Review before applying.', 'success');
+  } catch (err) {
+    console.error('AI draft error:', err);
+    showToast('AI draft failed: ' + err.message, 'error');
+  }
+}
+
+function renderAiDraftPreview() {
+  const preview = document.getElementById('aiDraftPreview');
+  if (!preview) return;
+  
+  if (!aiDraft) {
+    preview.innerHTML = '<div class="muted">Generate a draft to preview it here.</div>';
+    return;
+  }
+  
+  if (aiDraftType === 'announcement') {
+    preview.innerHTML = `
+      <div class="card">
+        <div class="card-title">${aiDraft.title || 'Untitled announcement'}</div>
+        <div class="markdown-content">${renderMarkdown(aiDraft.content || '')}</div>
+      </div>
+    `;
+    return;
+  }
+  
+  if (aiDraftType === 'quiz') {
+    preview.innerHTML = `
+      <div class="card">
+        <div class="card-title">${aiDraft.title || 'Untitled quiz'}</div>
+        <div class="markdown-content">${renderMarkdown(aiDraft.description || '')}</div>
+        <div class="muted" style="margin-top:8px;">${(aiDraft.questions || []).length} questions</div>
+      </div>
+    `;
+    return;
+  }
+  
+  preview.innerHTML = `
+    <div class="card">
+      <div class="card-title">Rubric draft</div>
+      <ul>
+        ${(aiDraft.criteria || []).map(c => `<li>${escapeHtml(c.name || 'Criterion')} (${c.points || 0} pts)</li>`).join('')}
+      </ul>
+    </div>
+  `;
+}
+
+function applyAiDraft() {
+  if (!aiDraft) {
+    showToast('Generate a draft first', 'error');
+    return;
+  }
+  
+  if (aiDraftType === 'announcement') {
+    document.getElementById('announcementTitle').value = aiDraft.title || '';
+    document.getElementById('announcementContent').value = aiDraft.content || '';
+    closeModal('aiCreateModal');
+    openModal('announcementModal');
+    return;
+  }
+  
+  if (aiDraftType === 'quiz') {
+    aiQuizDraft = aiDraft;
+    closeModal('aiCreateModal');
+    openQuizModal();
+    return;
+  }
+  
+  const assignmentId = document.getElementById('aiRubricAssignment').value;
+  if (!assignmentId) {
+    showToast('Select an assignment for the rubric', 'error');
+    return;
+  }
+  aiRubricDraft = { assignmentId, criteria: aiDraft.criteria || [] };
+  closeModal('aiCreateModal');
+  openRubricModal(assignmentId);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1913,6 +3164,11 @@ function openModal(id) {
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (modal) modal.classList.remove('visible');
+  
+  if (id === 'quizTakeModal' && quizTimerInterval) {
+    clearInterval(quizTimerInterval);
+    quizTimerInterval = null;
+  }
 }
 
 function generateModals() {
@@ -2066,6 +3322,159 @@ student2@university.edu" rows="5"></textarea>
       </div>
     </div>
 
+    <!-- Quiz Modal -->
+    <div class="modal-overlay" id="quizModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="quizModalTitle">New Quiz</h2>
+          <button class="modal-close" onclick="closeModal('quizModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Quiz Title</label>
+            <input type="text" class="form-input" id="quizTitle" placeholder="e.g., Week 2 Quiz">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description (optional)</label>
+            <textarea class="form-textarea" id="quizDescription" placeholder="Add instructions..." rows="3"></textarea>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Due Date</label>
+              <input type="datetime-local" class="form-input" id="quizDueDate">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Status</label>
+              <select class="form-select" id="quizStatus">
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Time Limit (minutes)</label>
+              <input type="number" class="form-input" id="quizTimeLimit" min="0" placeholder="e.g., 30">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Attempts Allowed</label>
+              <input type="number" class="form-input" id="quizAttempts" min="0" placeholder="Leave blank for unlimited">
+            </div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="quizRandomize" checked>
+              <span>Randomize question order</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="quizPoolEnabled" onchange="toggleQuizPoolFields()">
+              <span>Use question pool (random subset)</span>
+            </label>
+          </div>
+          <div class="form-group" id="quizPoolCountGroup" style="display:none;">
+            <label class="form-label">Questions to show</label>
+            <input type="number" class="form-input" id="quizPoolCount" min="1" placeholder="e.g., 5">
+          </div>
+          <div class="card" style="padding:16px; margin-top:16px;">
+            <div class="card-title">Questions</div>
+            <div id="quizQuestionsList" class="quiz-questions-list"></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+              <button class="btn btn-secondary btn-sm" onclick="addQuizQuestion()">Add Question</button>
+              <div class="muted">Total Points: <span id="quizPointsTotal">0</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('quizModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveQuiz()">Save Quiz</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quiz Take Modal -->
+    <div class="modal-overlay" id="quizTakeModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header">
+          <div>
+            <h2 class="modal-title" id="quizTakeTitle">Take Quiz</h2>
+            <div class="muted" id="quizTakeMeta"></div>
+          </div>
+          <div class="quiz-timer" id="quizTimer">No time limit</div>
+          <button class="modal-close" onclick="closeModal('quizTakeModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="quizTakeQuestions" class="quiz-take-list"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('quizTakeModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="submitQuiz()">Submit Quiz</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quiz Submissions Modal -->
+    <div class="modal-overlay" id="quizSubmissionsModal">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="quizSubmissionsTitle">Quiz Submissions</h2>
+          <button class="modal-close" onclick="closeModal('quizSubmissionsModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="quizSubmissionsList"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('quizSubmissionsModal')">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quiz Grade Modal -->
+    <div class="modal-overlay" id="quizGradeModal">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+          <div>
+            <h2 class="modal-title" id="quizGradeTitle">Grade Quiz</h2>
+            <div class="muted" id="quizGradePoints"></div>
+          </div>
+          <button class="modal-close" onclick="closeModal('quizGradeModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="quizGradeSubmissionId">
+          <input type="hidden" id="quizGradeQuizId">
+          <div id="quizGradeAnswers" class="quiz-grade-list"></div>
+          <div class="form-group">
+            <label class="form-label">Score</label>
+            <input type="number" class="form-input" id="quizGradeScore" min="0" placeholder="Enter score">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Feedback (optional)</label>
+            <textarea class="form-textarea" id="quizGradeFeedback" rows="3" placeholder="Leave feedback..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('quizGradeModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveQuizGrade()">Save Grade</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quiz Review Modal -->
+    <div class="modal-overlay" id="quizReviewModal">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="quizReviewTitle">Quiz Submission</h2>
+          <button class="modal-close" onclick="closeModal('quizReviewModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="quizReviewList" class="quiz-grade-list"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('quizReviewModal')">Close</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Submit Assignment Modal -->
     <div class="modal-overlay" id="submitModal">
       <div class="modal">
@@ -2149,6 +3558,88 @@ student2@university.edu" rows="5"></textarea>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Cancel</button>
           <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="startHereModal">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Edit Start Here</h2>
+          <button class="modal-close" onclick="closeModal('startHereModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="startHereCourseId">
+          <div class="form-group">
+            <label class="form-label">Title</label>
+            <input type="text" class="form-input" id="startHereTitle" placeholder="Start Here">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Intro content (supports Markdown)</label>
+            <textarea class="form-textarea" id="startHereContent" rows="4" placeholder="Welcome message..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('startHereModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveStartHere()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="aiCreateModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header">
+          <h2 class="modal-title">AI Create</h2>
+          <button class="modal-close" onclick="closeModal('aiCreateModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Create</label>
+              <select class="form-select" id="aiCreateType" onchange="updateAiCreateType()">
+                <option value="announcement">Announcement</option>
+                <option value="quiz">Quiz</option>
+                <option value="rubric">Rubric</option>
+              </select>
+            </div>
+            <div class="form-group" id="aiQuizGroup">
+              <label class="form-label">Question count</label>
+              <input type="number" class="form-input" id="aiQuestionCount" min="1" value="5">
+            </div>
+          </div>
+          <div class="form-group" id="aiRubricGroup" style="display:none;">
+            <label class="form-label">Assignment</label>
+            <select class="form-select" id="aiRubricAssignment"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Prompt</label>
+            <textarea class="form-textarea" id="aiCreatePrompt" rows="4" placeholder="Describe what you want the AI to draft..."></textarea>
+          </div>
+          <div class="card" style="padding:16px; margin-top:12px;">
+            <div class="card-title">Preview</div>
+            <div id="aiDraftPreview" class="ai-preview"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('aiCreateModal')">Cancel</button>
+          <button class="btn btn-secondary" onclick="generateAiDraft()">Generate Draft</button>
+          <button class="btn btn-primary" onclick="applyAiDraft()">Use Draft</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="notificationsModal">
+      <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Notifications</h2>
+          <button class="modal-close" onclick="closeModal('notificationsModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="notificationsList" class="notification-list"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="markAllNotificationsRead(appData.currentUser?.id); renderNotifications();">Mark all read</button>
+          <button class="btn btn-primary" onclick="closeModal('notificationsModal')">Done</button>
         </div>
       </div>
     </div>
@@ -2339,6 +3830,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div class="hint" style="margin-bottom:16px;">
             Define grading criteria. Points for each criterion must add up to the assignment's total points.
           </div>
+          <button class="btn btn-secondary btn-sm" onclick="openAiCreateModal('rubric', currentRubricAssignment)">AI Draft Rubric</button>
           <div id="rubricCriteriaList"></div>
           <button class="btn btn-secondary" style="margin-top:12px; width:100%;" onclick="addRubricCriterion()">+ Add Criterion</button>
           <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius);">
@@ -2646,7 +4138,10 @@ function openRubricModal(assignmentId) {
   // Check if assignment already has a rubric
   const existingRubric = appData.rubrics?.find(r => r.assignmentId === assignmentId);
   
-  if (existingRubric) {
+  if (aiRubricDraft && aiRubricDraft.assignmentId === assignmentId && aiRubricDraft.criteria?.length) {
+    rubricCriteria = JSON.parse(JSON.stringify(aiRubricDraft.criteria));
+    aiRubricDraft = null;
+  } else if (existingRubric) {
     rubricCriteria = JSON.parse(JSON.stringify(existingRubric.criteria)); // Deep copy
   } else {
     rubricCriteria = [
@@ -3079,6 +4574,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ESC closes modals
     if (e.key === 'Escape') {
       document.querySelectorAll('.modal-overlay.visible').forEach(m => m.classList.remove('visible'));
+      if (quizTimerInterval) {
+        clearInterval(quizTimerInterval);
+        quizTimerInterval = null;
+      }
     }
     
     // Ctrl/Cmd+Enter sends AI message
