@@ -34,7 +34,7 @@
 ### 1. **Bulk Operations** (High Priority)
 - [x] Bulk grade entry (paste from spreadsheet)
 - [x] Bulk grade release (release all grades for an assignment at once)
-- [ ] Bulk student import (CSV upload)
+- [x] Bulk student import (CSV upload)
 - [x] Download all submissions as ZIP (placeholder; JSZip needed)
 
 ### 2. **Assignment Improvements** (High Priority)
