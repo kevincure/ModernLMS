@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus · LMS</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+
+  <script src="keys.js" defer></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+
+  <!-- Login -->
+  <div class="login-screen" id="loginScreen">
+    <div class="login-card">
+      <div class="brand">Campus</div>
+      <div class="subtitle">A clean LMS for universities</div>
+
+      <div class="login-block">
+        <div class="muted" style="margin-bottom:10px;">Sign in</div>
+
+        <div id="googleSigninContainer" class="google-signin-container"></div>
+
+        <button class="btn btn-primary btn-wide" id="fallbackGoogleBtn" onclick="googleSignIn()" style="display:none;">
+          Continue with Google
+        </button>
+      </div>
+
+      <div class="login-divider"><span>or demo</span></div>
+
+      <div class="demo-grid">
+        <button class="demo-btn" onclick="demoLogin('instructor')">
+          <div class="demo-title">Instructor demo</div>
+          <div class="demo-sub">Create courses, assignments, grades</div>
+        </button>
+        <button class="demo-btn" onclick="demoLogin('ta')">
+          <div class="demo-title">TA demo</div>
+          <div class="demo-sub">Grade and release feedback</div>
+        </button>
+        <button class="demo-btn" onclick="demoLogin('student')">
+          <div class="demo-title">Student demo</div>
+          <div class="demo-sub">Submit work and view grades</div>
+        </button>
+      </div>
+
+      <div class="login-footer">
+        <span class="muted">Local-first demo · Data stored in your browser</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div class="app" id="appContainer" aria-hidden="true">
+
+    <!-- Left floating toolbar -->
+    <div class="toolbar" id="toolbar">
+      <button class="tool-btn" data-page="courses" onclick="navigateTo('courses')" title="Courses" aria-label="Courses">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
+      </button>
+
+      <button class="tool-btn" data-page="home" onclick="navigateTo('home')" title="Home" aria-label="Home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1v-10.5Z"/></svg>
+      </button>
+
+      <button class="tool-btn" data-page="updates" onclick="navigateTo('updates')" title="Updates" aria-label="Updates">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 0h12l4 4v10H4Z"/><path d="M8 9h8M8 13h8M8 17h6"/></svg>
+      </button>
+
+      <button class="tool-btn" data-page="assignments" onclick="navigateTo('assignments')" title="Assignments" aria-label="Assignments">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>
+      </button>
+
+      <button class="tool-btn" data-page="files" onclick="navigateTo('files')" title="Files" aria-label="Files">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+      </button>
+
+      <button class="tool-btn" data-page="gradebook" onclick="navigateTo('gradebook')" title="Gradebook" aria-label="Gradebook">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5M8 17h10"/></svg>
+      </button>
+
+      <button class="tool-btn" data-page="people" onclick="navigateTo('people')" title="People" aria-label="People">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-8 0"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+      </button>
+
+      <button class="tool-btn" data-page="ai" onclick="navigateTo('ai')" title="AI" aria-label="AI">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><path d="M7 7h10v10H7z"/></svg>
+      </button>
+    </div>
+
+    <!-- Main content -->
+    <main class="main">
+      
+      <!-- Top bar with user info -->
+      <div class="top-bar">
+        <div class="top-bar-left">
+          <select id="courseSelect" class="course-selector" onchange="switchCourse(this.value)"></select>
+        </div>
+        <div class="top-bar-right">
+          <div class="user-info-compact">
+            <div class="user-avatar-small" id="userAvatarTop">U</div>
+            <div class="user-details-compact">
+              <div class="user-name-small" id="userNameTop">User</div>
+              <div class="user-email-small" id="userEmailTop">user@example.com</div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="openModal('settingsModal')">Settings</button>
+          <button class="btn btn-secondary btn-sm" onclick="logout()">Logout</button>
+        </div>
+      </div>
+
+      <!-- Courses -->
+      <section class="page" id="page-courses">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Courses</h1>
+            <div class="page-subtitle">Switch, create, or join a course.</div>
+          </div>
+          <div class="page-actions" id="coursesActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="coursesList"></div>
+        </div>
+      </section>
+
+      <!-- Home -->
+      <section class="page" id="page-home">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title" id="homeTitle">Home</h1>
+            <div class="page-subtitle" id="homeSubtitle"></div>
+          </div>
+        </div>
+        <div class="page-body">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Upcoming</div>
+              </div>
+              <div id="homeUpcoming"></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Recent updates</div>
+              </div>
+              <div id="homeUpdates"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Updates -->
+      <section class="page" id="page-updates">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Updates</h1>
+            <div class="page-subtitle" id="updatesSubtitle"></div>
+          </div>
+          <div class="page-actions" id="updatesActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="updatesList"></div>
+        </div>
+      </section>
+
+      <!-- Assignments -->
+      <section class="page" id="page-assignments">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Assignments</h1>
+            <div class="page-subtitle" id="assignmentsSubtitle"></div>
+          </div>
+          <div class="page-actions" id="assignmentsActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="assignmentsList"></div>
+        </div>
+      </section>
+
+      <!-- Files -->
+      <section class="page" id="page-files">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Files</h1>
+            <div class="page-subtitle" id="filesSubtitle"></div>
+          </div>
+          <div class="page-actions" id="filesActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="filesList"></div>
+        </div>
+      </section>
+
+      <!-- Gradebook -->
+      <section class="page" id="page-gradebook">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Gradebook</h1>
+            <div class="page-subtitle" id="gradebookSubtitle"></div>
+          </div>
+          <div class="page-actions" id="gradebookActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="gradebookWrap"></div>
+        </div>
+      </section>
+
+      <!-- People -->
+      <section class="page" id="page-people">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">People</h1>
+            <div class="page-subtitle" id="peopleSubtitle"></div>
+          </div>
+          <div class="page-actions" id="peopleActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="peopleList"></div>
+        </div>
+      </section>
+
+      <!-- AI -->
+      <section class="page" id="page-ai">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">AI</h1>
+            <div class="page-subtitle">Chat with Gemini AI</div>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-secondary" onclick="resetAiThread()">Reset</button>
+          </div>
+        </div>
+        <div class="page-body">
+          <div class="card" style="padding:0;">
+            <div class="ai-thread" id="aiThread"></div>
+            <div class="ai-composer">
+              <textarea class="form-textarea ai-input" id="aiInput" placeholder="Ask something…" rows="3"></textarea>
+              <div class="ai-actions">
+                <button class="btn btn-primary" onclick="sendAiMessage()">Send</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modals + toast -->
+  <div id="modalsContainer"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
