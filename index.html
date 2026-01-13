@@ -75,6 +75,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>
       </button>
 
+      <button class="tool-btn" data-page="calendar" onclick="navigateTo('calendar')" title="Calendar" aria-label="Calendar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v15H4z"/><path d="M8 3v4M16 3v4M4 9h16"/></svg>
+      </button>
+
       <button class="tool-btn" data-page="files" onclick="navigateTo('files')" title="Files" aria-label="Files">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
       </button>
@@ -101,6 +105,13 @@
           <select id="courseSelect" class="course-selector" onchange="switchCourse(this.value)"></select>
         </div>
         <div class="top-bar-right">
+          <button class="btn btn-secondary btn-sm notification-btn" onclick="openNotifications()" aria-label="Notifications">
+            <svg class="notification-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 22a2.5 2.5 0 0 0 2.5-2.5h-5A2.5 2.5 0 0 0 12 22Z"/>
+              <path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 2h16l-2-2Z"/>
+            </svg>
+            <span class="notification-badge" id="notificationBadge" aria-hidden="true"></span>
+          </button>
           <div class="user-info-compact">
             <div class="user-avatar-small" id="userAvatarTop">U</div>
             <div class="user-details-compact">
@@ -136,6 +147,8 @@
           </div>
         </div>
         <div class="page-body">
+          <div class="home-stack" id="homeStartHere"></div>
+          <div class="home-stack" id="homeChecklist"></div>
           <div class="grid-2">
             <div class="card">
               <div class="card-header">
@@ -150,6 +163,20 @@
               <div id="homeUpdates"></div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Calendar -->
+      <section class="page" id="page-calendar">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Calendar</h1>
+            <div class="page-subtitle" id="calendarSubtitle"></div>
+          </div>
+          <div class="page-actions" id="calendarActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="calendarList"></div>
         </div>
       </section>
 

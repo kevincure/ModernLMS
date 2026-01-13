@@ -1,4 +1,4 @@
-# Campus LMS - Minimal Feature Roadmap
+# Campus LMS - Minimal Feature Roadmap (Current)
 
 ## ✅ Already Implemented (MVP v1.0)
 
@@ -10,7 +10,7 @@
 - ✅ Assignment creation with draft/published/closed states
 - ✅ Student submissions (text + file uploads)
 - ✅ Staff grading with release gating
-- ✅ AI-powered grading assistance (Gemini 1.5 Flash)
+- ✅ AI-powered grading assistance (Gemini 3.0 Flash Preview)
 - ✅ Gradebook (student view: released grades only, staff view: full matrix)
 - ✅ Announcements/updates per course
 - ✅ File uploads per course
@@ -32,51 +32,51 @@
 ## 🎯 Priority Features (MVP v1.1 - Essential for Teaching)
 
 ### 1. **Bulk Operations** (High Priority)
-- [ ] Bulk grade entry (paste from spreadsheet)
-- [ ] Bulk grade release (release all grades for an assignment at once)
+- [x] Bulk grade entry (paste from spreadsheet)
+- [x] Bulk grade release (release all grades for an assignment at once)
 - [ ] Bulk student import (CSV upload)
-- [ ] Download all submissions as ZIP
+- [x] Download all submissions as ZIP (placeholder; JSZip needed)
 
 ### 2. **Assignment Improvements** (High Priority)
 - [ ] Assignment templates (reuse assignments across courses)
-- [ ] Late submission handling (accept after due date with indicator)
-- [ ] Submission history (view previous versions)
-- [ ] Allow resubmission toggle
-- [ ] Point deduction for late work
-- [ ] Rubrics (define grading criteria)
+- [x] Late submission handling (accept after due date with indicator)
+- [x] Submission history (view previous versions)
+- [x] Allow resubmission toggle
+- [x] Point deduction for late work
+- [x] Rubrics (define grading criteria)
 
 ### 3. **Communication** (High Priority)
-- [ ] Email notifications for:
+- [x] Email notifications (simulated) for:
   - New assignments posted
   - Grades released
-  - Assignment due soon (24h reminder)
-  - Announcements
-- [ ] In-app notification center
+- [ ] Assignment due soon (24h reminder)
+- [ ] Announcements
+- [x] In-app notification center
 - [ ] Direct messaging (instructor ↔ student)
 
 ### 4. **Gradebook Enhancements** (Medium Priority)
-- [ ] Grade statistics (average, median, distribution)
+- [x] Grade statistics (average, median, distribution)
 - [ ] Curved grading support
 - [ ] Extra credit assignments
 - [ ] Dropped lowest grade(s) policy
-- [ ] Weighted categories (homework 30%, exams 70%, etc.)
+- [x] Weighted categories (homework 30%, exams 70%, etc.)
 - [ ] Letter grade calculator
 
 ### 5. **Quizzes** (Medium Priority)
-- [ ] Multiple choice questions
-- [ ] True/false questions
-- [ ] Short answer questions
-- [ ] Auto-grading for MC/TF
-- [ ] Time limits
-- [ ] Randomize question order
-- [ ] Question bank/pools
+- [x] Multiple choice questions
+- [x] True/false questions
+- [x] Short answer questions
+- [x] Auto-grading for MC/TF
+- [x] Time limits
+- [x] Randomize question order
+- [x] Question bank/pools
 
 ---
 
 ## 🚀 Nice-to-Have Features (MVP v2.0 - Polish)
 
 ### 6. **Calendar & Scheduling**
-- [ ] Course calendar view
+- [x] Course calendar view
 - [ ] Assignment timeline visualization
 - [ ] Office hours scheduling
 - [ ] Sync with Google Calendar
@@ -93,6 +93,14 @@
 - [ ] Assignment difficulty analysis (from grade distribution)
 - [ ] Time-to-complete tracking
 - [ ] Participation metrics
+
+### 9. **AI-Native Experience (Highest Leverage)**
+- [ ] **AI course setup wizard** (start with goals → generate syllabus, modules, grading policy)
+- [ ] **Natural language → LMS objects** (assignments, quizzes, announcements, rubrics) with HITL confirmation
+- [ ] **AI student help** (policy-aware Q&A + “ask the syllabus”)
+- [ ] **Second-look grading** (rubric-based review with confidence + escalation)
+- [ ] **Auto study guides** (summaries, key terms, practice questions)
+- [ ] **Accessibility assist** (reading level simplification + multilingual drafts)
 
 ### 9. **Collaboration**
 - [ ] Group assignments
@@ -181,7 +189,7 @@ Maintain these principles as features are added:
 
 These can be added quickly with high user impact:
 
-- [ ] **Assignment descriptions with Markdown support** (add marked.js)
+- [x] **Assignment descriptions with Markdown support** (custom renderer)
 - [ ] **Dark mode toggle** (CSS variables already in place)
 - [ ] **Assignment due date countdown** ("Due in 3 days, 2 hours")
 - [ ] **Grade entry via keyboard** (Tab through cells, Enter to save)
@@ -189,6 +197,8 @@ These can be added quickly with high user impact:
 - [ ] **Recently viewed courses** (localStorage breadcrumbs)
 - [ ] **Assignment duplication** (one-click copy)
 - [ ] **Search/filter** (assignments, students, files)
+- [x] **Guided onboarding checklist** (first course setup in <5 minutes)
+- [x] **Inline AI shortcuts** (generate rubric/quiz/announcement from a prompt)
 
 ---
 
@@ -210,6 +220,11 @@ These can be added quickly with high user impact:
 - Direct messaging
 - Discussion boards
 - Notification center
+
+### Phase 3.5: AI-Native Flows (1-2 weeks)
+- AI course setup wizard
+- Natural language → LMS objects (HITL confirm)
+- AI study guides + student help
 
 ### Phase 4: Organization (1-2 weeks)
 - Calendar

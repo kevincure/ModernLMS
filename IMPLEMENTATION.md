@@ -1,6 +1,6 @@
-# Campus LMS - v1.5 Implementation Summary
+# Campus LMS - Implementation Summary (Current State)
 
-## ✅ Completed Updates
+## ✅ Completed Updates (Code + UI)
 
 ### 1. Gemini API Update
 - **Updated to Gemini 3.0 Flash Preview** (`gemini-3-flash-preview`)
@@ -9,8 +9,9 @@
 - Uses `responseMimeType: "application/json"` for structured outputs
 - Temperature set to 0.2 for grading (deterministic) and 0.7 for chat (creative)
 - **Keys masked in Settings** with password input type for security
+- **AI grading + AI chat** both use Gemini 3.0 Flash Preview
 
-### 2. MVP v1.1 Features Implemented ✅ (100%)
+### 2. MVP v1.1 Features Implemented ✅
 
 #### Bulk Operations ✅
 - **Bulk Grade Import**: Paste data from spreadsheet (email, score, feedback)
@@ -60,6 +61,7 @@
     - New assignments posted (students notified)
     - Grades released (students notified)
     - New submissions (instructors notified)
+  - In-app notification center with unread badge
   
 - **Settings Toggle**:
   - Enable/disable email notifications
@@ -70,7 +72,7 @@
   - `getUnreadNotifications(userId)`
   - `markNotificationRead(notificationId)`
 
-### 3. MVP v1.5 Features Implemented ✅ (100%)
+### 3. MVP v1.5 Features Implemented ✅
 
 #### Assignment Categories ✅
 - **Category Dropdown**: homework, quiz, exam, essay, project, participation
@@ -127,7 +129,7 @@
 #### Data Structure Updates ✅
 Added support for:
 - `rubrics` array (FULLY IMPLEMENTED)
-- `quizzes` and `quizQuestions` arrays (ready for quiz implementation)
+- `quizzes` and `quizQuestions` arrays (FULLY IMPLEMENTED)
 - `quizSubmissions` array
 - `gradeCategories` array (IMPLEMENTED with full UI)
 - `notifications` array
@@ -137,6 +139,9 @@ Added support for:
   - `lateDeduction`
   - `allowResubmission`
   - `rubric` (ID reference)
+- Course fields:
+  - `startHereTitle`
+  - `startHereContent`
 
 ### 4. UI/UX Improvements ✅
 
@@ -180,42 +185,48 @@ Added support for:
 - Better organization of fields
 - Help text for late penalties
 
+#### Quizzes ✅
+- **Quiz Builder**:
+  - Multiple choice, true/false, short answer
+  - Per-question points with total calculator
+  - Draft/published/closed status
+- **Delivery**:
+  - Time limits with countdown
+  - Attempts limit (or unlimited)
+  - Randomized order + question pools
+- **Grading**:
+  - Auto-grading for MC/TF
+  - Manual review flow for short answers
+- Student submission review modal
+
+#### AI Content Shortcuts ✅
+- **AI Drafts**:
+  - One-click AI draft for announcements, quizzes, and rubrics
+  - Human-in-the-loop preview and confirm before creating
+  - Draft previews render Markdown correctly
+
+#### Onboarding Checklist ✅
+- Instructor checklist on Home
+- Automatically completes based on course activity
+
+#### Calendar View ✅
+- Course calendar list for assignments + quizzes
+- Shows next 45 days with recent history
+
+#### Markdown Support ✅
+- Assignment descriptions, announcements, and AI chat render Markdown
+- Code blocks, links, lists, and headings supported
+
+#### Course Home "Start Here" Module ✅
+- Start Here card on Home with editable intro
+- Pinned essentials list (files, assignments, quizzes)
+
 ---
 
-## 🚧 Partially Implemented (Data Structures Ready)
+## 🚧 Next Up
 
-### Rubrics
-- **Status**: Data structure defined, not yet in UI
-- **Next Steps**:
-  - Add "Create Rubric" button to assignment creation
-  - Rubric builder modal (criteria, points, description)
-  - Display rubric when grading
-  - Calculate score from rubric items
-
-### Quizzes with Auto-Grading
-- **Status**: Data structure defined for quizzes and questions
-- **Next Steps**:
-  - Quiz creation interface
-  - Question bank management
-  - Quiz taking interface (multiple choice, true/false, short answer)
-  - Auto-grading for MC/TF
-  - Time limits and attempt tracking
-
-### Weighted Grade Categories
-- **Status**: Categories stored, weights not yet implemented
-- **Next Steps**:
-  - Course settings for category weights
-  - Gradebook calculation with weights
-  - Drop lowest grade policy
-  - Extra credit support
-
-### Grade Statistics
-- **Status**: Not implemented
-- **Next Steps**:
-  - Calculate average, median, std dev per assignment
-  - Grade distribution chart
-  - Class performance trends
-  - At-risk student identification
+- AI course setup wizard (syllabus + policies)
+- Student-facing AI help (ask the syllabus, due dates)
 
 ---
 
@@ -255,6 +266,27 @@ function removeRubricCriterion(index)
 function updateRubricCriterion(index, field, value)
 function saveRubric()
 function calculateRubricScore(assignmentId)
+
+// Quizzes
+function openQuizModal(quizId)
+function renderQuizQuestions()
+function addQuizQuestion()
+function removeQuizQuestion(index)
+function takeQuiz(quizId)
+function submitQuiz()
+function viewQuizSubmissions(quizId)
+function saveQuizGrade()
+
+// AI shortcuts + markdown
+function openAiCreateModal(type, assignmentId)
+function generateAiDraft()
+function applyAiDraft()
+function renderMarkdown(text)
+
+// Home + calendar
+function renderStartHere(course)
+function renderOnboardingChecklist(course)
+function renderCalendar()
 
 // Course management
 function openEditCourseModal(courseId)
@@ -297,19 +329,17 @@ assignments: [{
 
 ---
 
-## 🎯 Next Implementation Priority
+## 🎯 Next Implementation Priority (Most Impactful)
 
 ### Quick Wins (1-2 days each)
-1. **Rubric Builder** - High impact for grading consistency
-2. **Simple Quizzes** - MC/TF with auto-grading
-3. **Grade Statistics** - Average, median, distribution per assignment
-4. **Weighted Categories** - Calculate final grades with weights
+1. **AI Content Shortcuts** ✅
+2. **Onboarding Checklist** ✅
 
 ### Medium Effort (3-5 days each)
-5. **Full Quiz System** - Question banks, randomization, time limits
-6. **In-App Notification Center** - Bell icon with unread count
-7. **Calendar View** - See all due dates
-8. **Markdown Support** - For assignment descriptions
+5. **Full Quiz System** ✅
+6. **Calendar View** ✅
+7. **Markdown Support** ✅
+8. **Course Home "Start Here" Module** ✅
 
 ### Production Requirements (1-2 weeks)
 9. **Supabase Backend Migration** - Real database, auth, storage
@@ -357,19 +387,19 @@ All core features working
 - Grade statistics ✅
 - Weighted categories ✅
 - Rubrics ✅
-- Quizzes 🟡 (data ready, UI pending)
+- Quizzes ✅
 
 ### MVP v2.0 ❌ (0%)
 - Calendar
 - Discussion boards
-- Natural language AI -> json via the Gemini API -> implement, give a set of instructions for faculty to do this very easily to create quizzes, announcements, etc. then HITL the confirmation
-- Mobile-ready design as well
+- **AI-native authoring (natural language → LMS objects)** with HITL confirmation
+- Mobile-ready design
 - Analytics dashboard
-- Create user for faculty (administrator backend that adds a given email to Supabase, and lets you add students also, then lets them use Google SSO)
-- Backend via Supabase(?)/local user hosting(?) - let's discuss
-- Automated "second-look" grading given a rubric and an exam, via same Gemini, including notes and option to pass to HITL if unsure
-- Check whether secure/meets accessibility and security requirements
-- Improve design to be even crisper
+- Admin console for provisioning instructors/students (Supabase-based)
+- Backend via Supabase or hosted database
+- Automated "second-look" grading using rubrics + confidence gating
+- Accessibility + security audit
+- Design polish pass (crisper, more forgiving UI)
 
 ---
 
@@ -377,11 +407,9 @@ All core features working
 
 1. **Email Notifications**: Currently in-memory only, not sent via email
 2. **ZIP Download**: Placeholder button, needs JSZip implementation
-3. **Rubrics**: Data structure ready but no UI
-4. **Quizzes**: No quiz taking interface yet
-5. **localStorage Limit**: ~5-10MB storage, will need backend for production
-6. **No Real-time Updates**: Refresh required to see others' changes
-7. **No Search/Filter**: Large courses will need search functionality
+3. **localStorage Limit**: ~5-10MB storage, will need backend for production
+4. **No Real-time Updates**: Refresh required to see others' changes
+5. **No Search/Filter**: Large courses will need search functionality
 
 ---
 
@@ -421,7 +449,7 @@ All core features working
 - [ ] Implement actual email service
 - [ ] Add JSZip for submission downloads
 - [x] ~~Implement rubric UI~~ **COMPLETE**
-- [ ] Implement quiz UI
+- [x] ~~Implement quiz UI~~ **COMPLETE**
 - [x] ~~Add grade statistics~~ **COMPLETE**
 - [ ] Mobile responsive testing
 - [ ] Accessibility audit
@@ -431,7 +459,7 @@ All core features working
 
 ---
 
-*Implementation completed: January 2026*  
+*Implementation updated: Current*  
 *Gemini Model: 3.0 Flash Preview (`gemini-3-flash-preview`)*  
 *Status: **MVP v1.1 Complete ✅, MVP v1.5 Complete ✅***
 
