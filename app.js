@@ -612,6 +612,10 @@ function initApp() {
 function populateCourseSelector() {
   const courses = getUserCourses(appData.currentUser.id);
   const select = document.getElementById('courseSelect');
+
+  if (!select) {
+    return;
+  }
   
   if (courses.length === 0) {
     select.innerHTML = '<option value="">No courses</option>';
@@ -632,6 +636,8 @@ function switchCourse(courseId) {
 
 function renderAll() {
   populateCourseSelector(); // Update dropdown
+  renderTopBarCourse();
+  renderTopBarActions();
   renderCourses();
   renderHome();
   renderUpdates();
@@ -641,6 +647,35 @@ function renderAll() {
   renderGradebook();
   renderPeople();
   updateNotificationBadge();
+}
+
+function renderTopBarActions() {
+  const importBtn = document.getElementById('importContentBtn');
+  if (!importBtn) return;
+  const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
+  importBtn.style.display = isStaffUser ? 'inline-flex' : 'none';
+}
+
+function renderTopBarCourse() {
+  const titleEl = document.getElementById('activeCourseTitle');
+  const subtitleEl = document.getElementById('activeCourseSubtitle');
+  if (!titleEl || !subtitleEl) return;
+
+  if (!activeCourseId) {
+    titleEl.textContent = 'Select a course';
+    subtitleEl.textContent = 'Choose a course from the Courses tab';
+    return;
+  }
+
+  const course = getCourseById(activeCourseId);
+  const role = getUserRole(appData.currentUser?.id, activeCourseId);
+  if (course) {
+    titleEl.textContent = course.name;
+    subtitleEl.textContent = `${course.code} · ${role}`;
+  } else {
+    titleEl.textContent = 'Select a course';
+    subtitleEl.textContent = 'Choose a course from the Courses tab';
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -962,7 +997,7 @@ function renderOnboardingChecklist(course) {
 function openStartHereModal(courseId) {
   const course = getCourseById(courseId);
   if (!course) return;
-  generateModals();
+  ensureModalsRendered();
   document.getElementById('startHereCourseId').value = courseId;
   document.getElementById('startHereTitle').value = course.startHereTitle || 'Start Here';
   document.getElementById('startHereContent').value = course.startHereContent || course.description || '';
@@ -1006,7 +1041,6 @@ function renderUpdates() {
     setHTML('updatesActions', `
       <button class="btn btn-primary" onclick="openModal('announcementModal')">New Update</button>
       <button class="btn btn-secondary" onclick="openAiCreateModal('announcement')">AI Draft</button>
-      <button class="btn btn-secondary" onclick="openCopyContentModal()">Copy from Course</button>
     `);
   } else {
     setHTML('updatesActions', '');
@@ -1094,6 +1128,7 @@ function editAnnouncement(id) {
   const announcement = appData.announcements.find(a => a.id === id);
   
   if (!announcement) return;
+  ensureModalsRendered();
   
   // Reuse the announcement modal
   document.getElementById('announcementTitle').value = announcement.title;
@@ -1171,7 +1206,7 @@ function renderAssignments() {
   
   if (isStaffUser) {
     setHTML('assignmentsActions', `
-      <button class="btn btn-primary" onclick="openModal('assignmentModal')">New Assignment</button>
+      <button class="btn btn-primary" onclick="openAssignmentModal()">New Assignment</button>
       <button class="btn btn-secondary" onclick="openQuizModal()">New Quiz</button>
       <button class="btn btn-secondary" onclick="openAiCreateModal('quiz')">AI Quiz</button>
     `);
@@ -1408,11 +1443,38 @@ function createAssignment() {
   }
   
   closeModal('assignmentModal');
+  resetAssignmentModal();
   renderAssignments();
   renderHome();
   showToast('Assignment created!', 'success');
-  
-  // Clear form
+}
+
+let currentEditAssignmentId = null;
+
+function openAssignmentModal(assignmentId = null) {
+  ensureModalsRendered();
+  currentEditAssignmentId = assignmentId;
+  const assignment = assignmentId ? appData.assignments.find(a => a.id === assignmentId) : null;
+
+  document.getElementById('assignmentModalTitle').textContent = assignment ? 'Edit Assignment' : 'New Assignment';
+  document.getElementById('assignmentSubmitBtn').textContent = assignment ? 'Save Changes' : 'Create';
+  document.getElementById('assignmentTitle').value = assignment ? assignment.title : '';
+  document.getElementById('assignmentDescription').value = assignment ? assignment.description : '';
+  document.getElementById('assignmentCategory').value = assignment ? assignment.category : 'homework';
+  document.getElementById('assignmentPoints').value = assignment ? assignment.points : '100';
+  document.getElementById('assignmentDueDate').value = assignment ? new Date(assignment.dueDate).toISOString().slice(0, 16) : '';
+  document.getElementById('assignmentStatus').value = assignment ? assignment.status : 'draft';
+  document.getElementById('assignmentAllowLate').checked = assignment ? assignment.allowLateSubmissions !== false : true;
+  document.getElementById('assignmentLateDeduction').value = assignment ? assignment.lateDeduction || 0 : '10';
+  document.getElementById('assignmentAllowResubmit').checked = assignment ? assignment.allowResubmission !== false : true;
+
+  openModal('assignmentModal');
+}
+
+function resetAssignmentModal() {
+  currentEditAssignmentId = null;
+  document.getElementById('assignmentModalTitle').textContent = 'New Assignment';
+  document.getElementById('assignmentSubmitBtn').textContent = 'Create';
   document.getElementById('assignmentTitle').value = '';
   document.getElementById('assignmentDescription').value = '';
   document.getElementById('assignmentCategory').value = 'homework';
@@ -1422,6 +1484,71 @@ function createAssignment() {
   document.getElementById('assignmentAllowLate').checked = true;
   document.getElementById('assignmentLateDeduction').value = '10';
   document.getElementById('assignmentAllowResubmit').checked = true;
+}
+
+function saveAssignmentChanges() {
+  if (currentEditAssignmentId) {
+    updateAssignment();
+  } else {
+    createAssignment();
+  }
+}
+
+function updateAssignment() {
+  if (!currentEditAssignmentId) return;
+
+  const assignment = appData.assignments.find(a => a.id === currentEditAssignmentId);
+  if (!assignment) return;
+
+  const title = document.getElementById('assignmentTitle').value.trim();
+  const description = document.getElementById('assignmentDescription').value.trim();
+  const category = document.getElementById('assignmentCategory').value;
+  const points = parseInt(document.getElementById('assignmentPoints').value);
+  const dueDate = document.getElementById('assignmentDueDate').value;
+  const status = document.getElementById('assignmentStatus').value;
+  const allowLate = document.getElementById('assignmentAllowLate').checked;
+  const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
+  const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
+
+  if (!title || !description || !points || !dueDate) {
+    showToast('Please fill in all required fields', 'error');
+    return;
+  }
+
+  const previousStatus = assignment.status;
+
+  assignment.title = title;
+  assignment.description = description;
+  assignment.category = category;
+  assignment.points = points;
+  assignment.status = status;
+  assignment.dueDate = new Date(dueDate).toISOString();
+  assignment.allowLateSubmissions = allowLate;
+  assignment.lateDeduction = lateDeduction;
+  assignment.allowResubmission = allowResubmit;
+
+  saveData(appData);
+
+  if (previousStatus !== 'published' && status === 'published') {
+    const students = appData.enrollments
+      .filter(e => e.courseId === activeCourseId && e.role === 'student')
+      .map(e => e.userId);
+
+    students.forEach(studentId => {
+      addNotification(studentId, 'assignment', 'New Assignment Posted',
+        `${title} is now available`, activeCourseId);
+    });
+  }
+
+  closeModal('assignmentModal');
+  resetAssignmentModal();
+  renderAssignments();
+  renderHome();
+  showToast('Assignment updated!', 'success');
+}
+
+function editAssignment(assignmentId) {
+  openAssignmentModal(assignmentId);
 }
 
 function submitAssignment(assignmentId) {
@@ -1847,6 +1974,7 @@ function createDefaultQuestion(type = 'multiple_choice') {
 }
 
 function openQuizModal(quizId = null) {
+  ensureModalsRendered();
   currentEditQuizId = quizId;
   const quiz = quizId ? appData.quizzes.find(q => q.id === quizId) : null;
   
@@ -2295,6 +2423,7 @@ function calculateQuizAutoScore(questions, answers) {
 }
 
 function viewQuizSubmissions(quizId) {
+  ensureModalsRendered();
   const quiz = appData.quizzes.find(q => q.id === quizId);
   if (!quiz) return;
   
@@ -2330,6 +2459,7 @@ function viewQuizSubmissions(quizId) {
 }
 
 function openQuizGradeModal(quizId, submissionId) {
+  ensureModalsRendered();
   const quiz = appData.quizzes.find(q => q.id === quizId);
   const submission = appData.quizSubmissions.find(s => s.id === submissionId);
   if (!quiz || !submission) return;
@@ -2401,6 +2531,7 @@ function saveQuizGrade() {
 }
 
 function viewQuizSubmission(quizId) {
+  ensureModalsRendered();
   const quiz = appData.quizzes.find(q => q.id === quizId);
   const submissions = appData.quizSubmissions
     .filter(s => s.quizId === quizId && s.userId === appData.currentUser.id)
@@ -2820,6 +2951,7 @@ function renderPeople() {
   if (isStaffUser) {
     setHTML('peopleActions', `
       <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
+      <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
       <div class="muted" style="margin-left:12px;">Invite code: <strong>${course.inviteCode}</strong></div>
     `);
   } else {
@@ -3031,10 +3163,10 @@ async function generateAiDraft() {
   let systemPrompt = '';
   
   if (aiDraftType === 'announcement') {
-    systemPrompt = `Create a course announcement. Return ONLY valid JSON with keys: title, content. Use markdown in content when helpful.`;
+    systemPrompt = `Create a course announcement. Return ONLY valid JSON with keys: title, content. Use markdown in content when helpful. Example: {"title":"...","content":"..."}. Do not wrap in code fences or extra text.`;
   } else if (aiDraftType === 'quiz') {
     const count = parseInt(document.getElementById('aiQuestionCount').value, 10) || 5;
-    systemPrompt = `Create a quiz as JSON with keys: title, description, questions (array). Each question must include type ("multiple_choice"|"true_false"|"short_answer"), prompt, options (array, for multiple_choice only), correctAnswer (index for multiple_choice, "True"/"False" for true_false, empty string for short_answer), points (number). Provide ${count} questions.`;
+    systemPrompt = `Create a quiz as JSON with keys: title, description, questions (array). Each question must include type ("multiple_choice"|"true_false"|"short_answer"), prompt, options (array, for multiple_choice only), correctAnswer (index for multiple_choice, "True"/"False" for true_false, empty string for short_answer), points (number). Provide ${count} questions. Return only JSON (no markdown). Example: {"title":"...","description":"...","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B"],"correctAnswer":0,"points":2}]}.`;
   } else {
     const assignmentId = document.getElementById('aiRubricAssignment').value;
     if (!assignmentId) {
@@ -3042,7 +3174,7 @@ async function generateAiDraft() {
       return;
     }
     const assignment = appData.assignments.find(a => a.id === assignmentId);
-    systemPrompt = `Create a grading rubric for this assignment. Return ONLY JSON with key criteria (array). Each criterion must include name, points, description. Total points should sum to ${assignment ? assignment.points : 100}.`;
+    systemPrompt = `Create a grading rubric for this assignment. Return ONLY JSON with key criteria (array). Each criterion must include name, points, description. Total points should sum to ${assignment ? assignment.points : 100}. Example: {"criteria":[{"name":"...","points":10,"description":"..."}]}.`;
   }
   
   const contextualPrompt = `
@@ -3071,13 +3203,64 @@ ${systemPrompt}
     }
     
     const text = data.candidates[0].content.parts[0].text;
-    aiDraft = JSON.parse(text);
+    aiDraft = normalizeAiDraft(parseAiJsonResponse(text), aiDraftType);
     renderAiDraftPreview();
     showToast('Draft ready! Review before applying.', 'success');
   } catch (err) {
     console.error('AI draft error:', err);
     showToast('AI draft failed: ' + err.message, 'error');
   }
+}
+
+function parseAiJsonResponse(text) {
+  if (!text) {
+    throw new Error('AI response was empty.');
+  }
+
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/^```json/i, '```');
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+  }
+
+  if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
+    return JSON.parse(cleaned);
+  }
+
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+  }
+
+  throw new Error('AI response was not valid JSON.');
+}
+
+function normalizeAiDraft(draft, type) {
+  if (!draft || typeof draft !== 'object') return draft;
+
+  if (type === 'announcement') {
+    return {
+      title: typeof draft.title === 'string' ? draft.title : '',
+      content: typeof draft.content === 'string' ? draft.content : ''
+    };
+  }
+
+  if (type === 'quiz') {
+    return {
+      title: typeof draft.title === 'string' ? draft.title : '',
+      description: typeof draft.description === 'string' ? draft.description : '',
+      questions: Array.isArray(draft.questions) ? draft.questions : []
+    };
+  }
+
+  if (type === 'rubric') {
+    return {
+      criteria: Array.isArray(draft.criteria) ? draft.criteria : []
+    };
+  }
+
+  return draft;
 }
 
 function renderAiDraftPreview() {
@@ -3127,6 +3310,7 @@ function applyAiDraft() {
   }
   
   if (aiDraftType === 'announcement') {
+    ensureModalsRendered();
     document.getElementById('announcementTitle').value = aiDraft.title || '';
     document.getElementById('announcementContent').value = aiDraft.content || '';
     closeModal('aiCreateModal');
@@ -3155,8 +3339,16 @@ function applyAiDraft() {
 // MODALS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function ensureModalsRendered() {
+  if (!document.getElementById('announcementModal')) {
+    generateModals();
+  }
+}
+
 function openModal(id) {
-  generateModals();
+  if (!document.getElementById(id)) {
+    generateModals();
+  }
   const modal = document.getElementById(id);
   if (modal) modal.classList.add('visible');
 }
@@ -3259,8 +3451,8 @@ student2@university.edu" rows="5"></textarea>
     <div class="modal-overlay" id="assignmentModal">
       <div class="modal">
         <div class="modal-header">
-          <h2 class="modal-title">New Assignment</h2>
-          <button class="modal-close" onclick="closeModal('assignmentModal')">&times;</button>
+          <h2 class="modal-title" id="assignmentModalTitle">New Assignment</h2>
+          <button class="modal-close" onclick="closeModal('assignmentModal'); resetAssignmentModal();">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -3316,8 +3508,8 @@ student2@university.edu" rows="5"></textarea>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('assignmentModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="createAssignment()">Create</button>
+          <button class="btn btn-secondary" onclick="closeModal('assignmentModal'); resetAssignmentModal();">Cancel</button>
+          <button class="btn btn-primary" id="assignmentSubmitBtn" onclick="saveAssignmentChanges()">Create</button>
         </div>
       </div>
     </div>
@@ -3696,43 +3888,35 @@ student2@university.edu" rows="5"></textarea>
       </div>
     </div>
 
-    <!-- Copy Content Modal -->
-    <div class="modal-overlay" id="copyContentModal">
+    <!-- Import Content Modal -->
+    <div class="modal-overlay" id="importContentModal">
       <div class="modal">
         <div class="modal-header">
-          <h2 class="modal-title">Copy Content from Another Course</h2>
-          <button class="modal-close" onclick="closeModal('copyContentModal')">&times;</button>
+          <h2 class="modal-title">Import Content</h2>
+          <button class="modal-close" onclick="closeModal('importContentModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
             <label class="form-label">Select Source Course</label>
-            <select class="form-select" id="copySourceCourse">
+            <select class="form-select" id="importSourceCourse">
               <option value="">-- Select a course --</option>
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">What to copy:</label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
-              <input type="checkbox" id="copyAssignments" checked>
-              <span>Assignments</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
-              <input type="checkbox" id="copyAnnouncements">
-              <span>Announcements</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
-              <input type="checkbox" id="copyFiles">
-              <span>Files</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
-              <input type="checkbox" id="copyCategoryWeights">
-              <span>Grade Category Weights</span>
-            </label>
+            <label class="form-label">Content to import</label>
+            <select class="form-select" id="importContentTypes" multiple size="6">
+              <option value="assignments" selected>Assignments</option>
+              <option value="quizzes" selected>Quizzes</option>
+              <option value="announcements">Announcements</option>
+              <option value="files">Files</option>
+              <option value="categoryWeights">Grade Category Weights</option>
+            </select>
+            <div class="hint">Hold Ctrl (Windows) or ⌘ (Mac) to select multiple items.</div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('copyContentModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="executeCopyContent()">Copy Selected Content</button>
+          <button class="btn btn-secondary" onclick="closeModal('importContentModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="executeImportContent()">Import Selected Content</button>
         </div>
       </div>
     </div>
@@ -3761,6 +3945,37 @@ student2@university.edu" rows="5"></textarea>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('addPersonModal')">Cancel</button>
           <button class="btn btn-primary" onclick="addPersonToCourse()">Add Person</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bulk Student Import Modal -->
+    <div class="modal-overlay" id="bulkStudentImportModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Import Students</h2>
+          <button class="modal-close" onclick="closeModal('bulkStudentImportModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="hint" style="margin-bottom:12px;">
+            Upload a CSV with columns: Email, Name (optional), Role (optional: student/ta/instructor).
+          </div>
+          <div class="form-group">
+            <label class="form-label">CSV File</label>
+            <input type="file" class="form-input" id="bulkStudentFile" accept=".csv,text/csv">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Default Role</label>
+            <select class="form-select" id="bulkStudentRole">
+              <option value="student" selected>Student</option>
+              <option value="ta">Teaching Assistant</option>
+              <option value="instructor">Instructor</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('bulkStudentImportModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="processBulkStudentImport()">Import Students</button>
         </div>
       </div>
     </div>
@@ -3919,58 +4134,73 @@ function updateCourse() {
   showToast('Course updated', 'success');
 }
 
-function openCopyContentModal() {
-  // Populate source course dropdown with instructor's courses
+function openImportContentModal() {
+  ensureModalsRendered();
   const courses = getUserCourses(appData.currentUser.id).filter(c => c.role === 'instructor' && c.id !== activeCourseId);
-  
   const options = courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-  
-  const select = document.getElementById('copySourceCourse');
+  const select = document.getElementById('importSourceCourse');
   if (select) {
     select.innerHTML = '<option value="">-- Select a course --</option>' + options;
   }
-  
-  openModal('copyContentModal');
+  openModal('importContentModal');
 }
 
-function executeCopyContent() {
-  const sourceCourseId = document.getElementById('copySourceCourse').value;
-  
+function executeImportContent() {
+  const sourceCourseId = document.getElementById('importSourceCourse').value;
+  const typesSelect = document.getElementById('importContentTypes');
+  const selectedTypes = typesSelect ? Array.from(typesSelect.selectedOptions).map(opt => opt.value) : [];
+
   if (!sourceCourseId) {
     showToast('Please select a source course', 'error');
     return;
   }
-  
+
   if (!activeCourseId) {
     showToast('No active course', 'error');
     return;
   }
-  
-  const copyAssignments = document.getElementById('copyAssignments').checked;
-  const copyAnnouncements = document.getElementById('copyAnnouncements').checked;
-  const copyFiles = document.getElementById('copyFiles').checked;
-  const copyCategoryWeights = document.getElementById('copyCategoryWeights').checked;
-  
-  let copiedCount = 0;
-  
-  // Copy assignments
-  if (copyAssignments) {
+
+  if (selectedTypes.length === 0) {
+    showToast('Select at least one content type to import', 'error');
+    return;
+  }
+
+  let importedCount = 0;
+
+  if (selectedTypes.includes('assignments')) {
     const assignments = appData.assignments.filter(a => a.courseId === sourceCourseId);
     assignments.forEach(assignment => {
       const newAssignment = {
         ...assignment,
         id: generateId(),
         courseId: activeCourseId,
-        status: 'draft', // Reset to draft
+        status: 'draft',
         createdAt: new Date().toISOString()
       };
       appData.assignments.push(newAssignment);
-      copiedCount++;
+      importedCount++;
     });
   }
-  
-  // Copy announcements
-  if (copyAnnouncements) {
+
+  if (selectedTypes.includes('quizzes')) {
+    const quizzes = appData.quizzes.filter(q => q.courseId === sourceCourseId);
+    quizzes.forEach(quiz => {
+      appData.quizzes.push({
+        ...quiz,
+        id: generateId(),
+        courseId: activeCourseId,
+        status: 'draft',
+        createdAt: new Date().toISOString(),
+        questions: (quiz.questions || []).map(q => ({
+          ...q,
+          id: generateId()
+        }))
+      });
+      importedCount++;
+    });
+  }
+
+  if (selectedTypes.includes('announcements')) {
     const announcements = appData.announcements.filter(a => a.courseId === sourceCourseId);
     announcements.forEach(announcement => {
       appData.announcements.push({
@@ -3979,14 +4209,13 @@ function executeCopyContent() {
         courseId: activeCourseId,
         authorId: appData.currentUser.id,
         createdAt: new Date().toISOString(),
-        pinned: false // Reset pins
+        pinned: false
       });
-      copiedCount++;
+      importedCount++;
     });
   }
-  
-  // Copy files
-  if (copyFiles) {
+
+  if (selectedTypes.includes('files')) {
     const files = appData.files.filter(f => f.courseId === sourceCourseId);
     files.forEach(file => {
       appData.files.push({
@@ -3996,28 +4225,26 @@ function executeCopyContent() {
         uploadedBy: appData.currentUser.id,
         uploadedAt: new Date().toISOString()
       });
-      copiedCount++;
+      importedCount++;
     });
   }
-  
-  // Copy grade category weights
-  if (copyCategoryWeights && appData.gradeCategories) {
+
+  if (selectedTypes.includes('categoryWeights') && appData.gradeCategories) {
     const weights = appData.gradeCategories.filter(w => w.courseId === sourceCourseId);
-    // Remove existing weights for target course
     appData.gradeCategories = appData.gradeCategories.filter(w => w.courseId !== activeCourseId);
-    // Add copied weights
     weights.forEach(weight => {
       appData.gradeCategories.push({
         ...weight,
         courseId: activeCourseId
       });
     });
+    importedCount += weights.length;
   }
-  
+
   saveData(appData);
-  closeModal('copyContentModal');
+  closeModal('importContentModal');
   renderAll();
-  showToast(`Copied ${copiedCount} items`, 'success');
+  showToast(`Imported ${importedCount} items`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4025,9 +4252,108 @@ function executeCopyContent() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function openAddPersonModal() {
+  ensureModalsRendered();
   document.getElementById('addPersonEmail').value = '';
   document.getElementById('addPersonRole').value = 'student';
   openModal('addPersonModal');
+}
+
+function openBulkStudentImportModal() {
+  ensureModalsRendered();
+  const fileInput = document.getElementById('bulkStudentFile');
+  if (fileInput) fileInput.value = '';
+  const roleSelect = document.getElementById('bulkStudentRole');
+  if (roleSelect) roleSelect.value = 'student';
+  openModal('bulkStudentImportModal');
+}
+
+function processBulkStudentImport() {
+  const fileInput = document.getElementById('bulkStudentFile');
+  const defaultRole = document.getElementById('bulkStudentRole').value;
+
+  if (!activeCourseId) {
+    showToast('No active course', 'error');
+    return;
+  }
+
+  if (!fileInput || !fileInput.files[0]) {
+    showToast('Please upload a CSV file', 'error');
+    return;
+  }
+
+  const file = fileInput.files[0];
+  const reader = new FileReader();
+
+  reader.onload = function(event) {
+    const text = event.target.result;
+    const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+
+    if (!lines.length) {
+      showToast('CSV file is empty', 'error');
+      return;
+    }
+
+    let added = 0;
+    let invited = 0;
+    let errors = 0;
+
+    lines.forEach((line, index) => {
+      if (index === 0 && line.toLowerCase().includes('email')) {
+        return;
+      }
+
+      const parts = line.split(',').map(part => part.trim());
+      const email = parts[0];
+      const name = parts[1] || '';
+      const roleRaw = parts[2] || '';
+      const role = ['student', 'ta', 'instructor'].includes(roleRaw.toLowerCase())
+        ? roleRaw.toLowerCase()
+        : defaultRole;
+
+      if (!email || !email.includes('@')) {
+        errors += 1;
+        return;
+      }
+
+      let user = appData.users.find(u => u.email === email);
+      if (user) {
+        const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === activeCourseId);
+        if (existing) {
+          existing.role = role;
+        } else {
+          appData.enrollments.push({
+            userId: user.id,
+            courseId: activeCourseId,
+            role: role
+          });
+        }
+        added += 1;
+        return;
+      }
+
+      if (!appData.invites) appData.invites = [];
+      appData.invites.push({
+        courseId: activeCourseId,
+        email: email,
+        role: role,
+        status: 'pending',
+        sentAt: new Date().toISOString(),
+        name: name || undefined
+      });
+      invited += 1;
+    });
+
+    saveData(appData);
+    closeModal('bulkStudentImportModal');
+    renderPeople();
+    showToast(`Imported ${added} students, invited ${invited}. ${errors} errors.`, errors ? 'error' : 'success');
+  };
+
+  reader.onerror = function() {
+    showToast('Failed to read CSV file', 'error');
+  };
+
+  reader.readAsText(file);
 }
 
 function addPersonToCourse() {
@@ -4130,6 +4456,7 @@ let currentRubricAssignment = null;
 let rubricCriteria = [];
 
 function openRubricModal(assignmentId) {
+  ensureModalsRendered();
   currentRubricAssignment = assignmentId;
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   
@@ -4253,6 +4580,7 @@ function saveRubric() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function openCategoryWeightsModal() {
+  ensureModalsRendered();
   if (!appData.gradeCategories) appData.gradeCategories = [];
   
   const courseCategories = appData.gradeCategories.filter(c => c.courseId === activeCourseId);
@@ -4391,6 +4719,7 @@ function calculateWeightedGrade(userId, courseId) {
 let currentBulkAssignmentId = null;
 
 function openBulkGradeModal(assignmentId) {
+  ensureModalsRendered();
   currentBulkAssignmentId = assignmentId;
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   document.getElementById('bulkGradeTitle').textContent = `Bulk Grade: ${assignment.title}`;

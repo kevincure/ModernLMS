@@ -94,6 +94,22 @@
       <button class="tool-btn" data-page="ai" onclick="navigateTo('ai')" title="AI" aria-label="AI">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><path d="M7 7h10v10H7z"/></svg>
       </button>
+
+      <div class="toolbar-spacer"></div>
+
+      <button class="tool-btn" onclick="openModal('settingsModal')" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3l1.5 2.6 3 .5-2.1 2.1.5 3-2.9-1.5-2.9 1.5.5-3L7.5 6.1l3-.5L12 3z"/>
+          <circle cx="12" cy="12" r="3.5" />
+        </svg>
+      </button>
+      <button class="tool-btn" onclick="logout()" title="Logout" aria-label="Logout">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+          <path d="M10 17l5-5-5-5"/>
+          <path d="M15 12H3"/>
+        </svg>
+      </button>
     </div>
 
     <!-- Main content -->
@@ -102,16 +118,13 @@
       <!-- Top bar with user info -->
       <div class="top-bar">
         <div class="top-bar-left">
-          <select id="courseSelect" class="course-selector" onchange="switchCourse(this.value)"></select>
+          <div class="course-header">
+            <div class="course-title" id="activeCourseTitle">Select a course</div>
+            <div class="course-subtitle" id="activeCourseSubtitle">Choose a course from the Courses tab</div>
+          </div>
         </div>
         <div class="top-bar-right">
-          <button class="btn btn-secondary btn-sm notification-btn" onclick="openNotifications()" aria-label="Notifications">
-            <svg class="notification-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 22a2.5 2.5 0 0 0 2.5-2.5h-5A2.5 2.5 0 0 0 12 22Z"/>
-              <path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 2h16l-2-2Z"/>
-            </svg>
-            <span class="notification-badge" id="notificationBadge" aria-hidden="true"></span>
-          </button>
+          <button class="btn btn-secondary btn-sm" id="importContentBtn" onclick="openImportContentModal()" style="display:none;">Import</button>
           <div class="user-info-compact">
             <div class="user-avatar-small" id="userAvatarTop">U</div>
             <div class="user-details-compact">
@@ -119,8 +132,6 @@
               <div class="user-email-small" id="userEmailTop">user@example.com</div>
             </div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="openModal('settingsModal')">Settings</button>
-          <button class="btn btn-secondary btn-sm" onclick="logout()">Logout</button>
         </div>
       </div>
 

@@ -24,6 +24,11 @@
   - Sends notifications to all students
   - Confirmation dialog to prevent accidents
 
+- **Bulk Student Import**: CSV upload from People page
+  - Columns: Email, Name (optional), Role (optional)
+  - Imports existing users into enrollments or creates pending invites
+  - Default role selection with error reporting
+
 - **Download All Submissions**: Button added (ZIP implementation ready)
   - Would use JSZip library in production
   - Placeholder shows implementation path
