@@ -672,10 +672,12 @@ function renderAll() {
 }
 
 function renderTopBarActions() {
-  const importBtn = document.getElementById('importContentBtn');
-  if (!importBtn) return;
-  const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
-  importBtn.style.display = isStaffUser ? 'inline-flex' : 'none';
+  // Show/hide import button in sidebar based on user role
+  const importToolBtn = document.getElementById('importToolBtn');
+  if (importToolBtn) {
+    const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
+    importToolBtn.style.display = isStaffUser ? 'inline-flex' : 'none';
+  }
 }
 
 function renderTopBarCourse() {
@@ -1062,8 +1064,6 @@ function renderUpdates() {
   if (isStaffUser) {
     setHTML('updatesActions', `
       <button class="btn btn-primary" onclick="openModal('announcementModal')">New Update</button>
-      <button class="btn btn-secondary" onclick="openAiCreateModal('announcement')">AI Draft</button>
-      <button class="btn btn-secondary" onclick="openAudioInputModal()">🎤 Voice</button>
     `);
   } else {
     setHTML('updatesActions', '');
@@ -1231,7 +1231,6 @@ function renderAssignments() {
     setHTML('assignmentsActions', `
       <button class="btn btn-primary" onclick="openAssignmentModal()">New Assignment</button>
       <button class="btn btn-secondary" onclick="openQuizModal()">New Quiz</button>
-      <button class="btn btn-secondary" onclick="openAiCreateModal('quiz')">AI Quiz</button>
     `);
   } else {
     setHTML('assignmentsActions', '');
@@ -1910,7 +1909,7 @@ The score should be between 0 and ${assignment.points}. The feedback should be c
   try {
     showToast('Drafting grade with AI...', 'info');
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2607,6 +2606,13 @@ function shuffleArray(list) {
 // MODULES PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let modulesSearch = '';
+
+function updateModulesSearch(value) {
+  modulesSearch = value.toLowerCase();
+  renderModules();
+}
+
 function renderModules() {
   if (!activeCourseId) {
     setText('modulesSubtitle', 'Select a course');
@@ -2622,21 +2628,50 @@ function renderModules() {
 
   if (!appData.modules) appData.modules = [];
 
-  if (isStaffUser) {
-    setHTML('modulesActions', `
-      <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
-      <button class="btn btn-secondary" onclick="openSyllabusParserModal()">📄 Import from Syllabus</button>
-    `);
-  } else {
-    setHTML('modulesActions', '');
-  }
+  // Actions with search
+  setHTML('modulesActions', `
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <input type="text" class="form-input" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" onkeyup="updateModulesSearch(this.value)" style="width:200px;">
+      ${isStaffUser ? `
+        <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
+        <button class="btn btn-secondary" onclick="openSyllabusParserModal()">📄 Import from Syllabus</button>
+      ` : ''}
+    </div>
+  `);
 
-  const modules = appData.modules
+  let modules = appData.modules
     .filter(m => m.courseId === activeCourseId)
     .sort((a, b) => a.position - b.position);
 
+  // Filter by search - search module names and item titles
+  if (modulesSearch) {
+    modules = modules.filter(mod => {
+      // Check module name
+      if (mod.name.toLowerCase().includes(modulesSearch)) return true;
+      // Check items in module
+      const items = mod.items || [];
+      return items.some(item => {
+        if (item.type === 'assignment') {
+          const a = appData.assignments.find(a => a.id === item.refId);
+          return a && a.title.toLowerCase().includes(modulesSearch);
+        } else if (item.type === 'quiz') {
+          const q = appData.quizzes.find(q => q.id === item.refId);
+          return q && q.title.toLowerCase().includes(modulesSearch);
+        } else if (item.type === 'file') {
+          const f = appData.files.find(f => f.id === item.refId);
+          return f && f.name.toLowerCase().includes(modulesSearch);
+        } else if (item.type === 'page') {
+          return (item.title || '').toLowerCase().includes(modulesSearch);
+        }
+        return false;
+      });
+    });
+  }
+
   if (modules.length === 0) {
-    setHTML('modulesList', `
+    setHTML('modulesList', modulesSearch
+      ? '<div class="empty-state"><div class="empty-state-text">No modules match your search</div></div>'
+      : `
       <div class="empty-state">
         <div class="empty-state-icon">📦</div>
         <div class="empty-state-title">No modules yet</div>
@@ -2991,24 +3026,6 @@ async function parseSyllabus() {
   const fileInput = document.getElementById('syllabusFile');
   const textInput = document.getElementById('syllabusText').value.trim();
 
-  let syllabusContent = textInput;
-
-  // If file uploaded, read it
-  if (fileInput.files.length > 0) {
-    const file = fileInput.files[0];
-    try {
-      syllabusContent = await readFileAsText(file);
-    } catch (err) {
-      showToast('Could not read file: ' + err.message, 'error');
-      return;
-    }
-  }
-
-  if (!syllabusContent) {
-    showToast('Please upload a syllabus file or paste syllabus text', 'error');
-    return;
-  }
-
   const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, and due dates. Return ONLY valid JSON with the following structure:
 {
   "modules": [
@@ -3029,19 +3046,57 @@ async function parseSyllabus() {
 
 Mark all items as drafts by default. If the syllabus mentions exams, quizzes, or tests, set type to "quiz". If it mentions homework, problem sets, essays, or projects, set type to "assignment".`;
 
-  try {
-    showToast('Parsing syllabus with AI...', 'info');
+  let requestBody;
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: systemPrompt + '\n\nSYLLABUS:\n' + syllabusContent }] }],
+  // If file uploaded, send as base64 inline data to Gemini
+  if (fileInput.files.length > 0) {
+    const file = fileInput.files[0];
+    try {
+      const base64Data = await fileToBase64(file);
+      const mimeType = file.type || 'application/octet-stream';
+
+      requestBody = {
+        contents: [{
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+              }
+            },
+            { text: systemPrompt }
+          ]
+        }],
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.2
         }
-      })
+      };
+    } catch (err) {
+      showToast('Could not read file: ' + err.message, 'error');
+      return;
+    }
+  } else if (textInput) {
+    // Use pasted text
+    requestBody = {
+      contents: [{ parts: [{ text: systemPrompt + '\n\nSYLLABUS:\n' + textInput }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.2
+      }
+    };
+  } else {
+    showToast('Please upload a syllabus file or paste syllabus text', 'error');
+    return;
+  }
+
+  try {
+    showToast('Parsing syllabus with AI...', 'info');
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
     });
 
     const data = await response.json();
@@ -3344,7 +3399,7 @@ async function transcribeAudio() {
   try {
     showToast('Transcribing audio with Gemini...', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3720,7 +3775,7 @@ Provide a score (0-${assignment.points}) and constructive feedback. Return JSON:
   try {
     showToast('Drafting grade with AI...', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3826,6 +3881,19 @@ function saveSpeedGraderGrade() {
 // FILES PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let filesSearch = '';
+let filesSort = 'date-desc';
+
+function updateFilesSearch(value) {
+  filesSearch = value.toLowerCase();
+  renderFiles();
+}
+
+function updateFilesSort(value) {
+  filesSort = value;
+  renderFiles();
+}
+
 function renderFiles() {
   if (!activeCourseId) {
     setText('filesSubtitle', 'Select a course');
@@ -3833,32 +3901,62 @@ function renderFiles() {
     setHTML('filesList', '<div class="empty-state-text">No active course</div>');
     return;
   }
-  
+
   const course = getCourseById(activeCourseId);
   setText('filesSubtitle', course.name);
-  
+
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-  
-  if (isStaffUser) {
-    setHTML('filesActions', '<button class="btn btn-primary" onclick="openModal(\'fileUploadModal\')">Upload File</button>');
-  } else {
-    setHTML('filesActions', '');
+
+  // Actions with search and sort
+  setHTML('filesActions', `
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <input type="text" class="form-input" placeholder="Search files..." value="${escapeHtml(filesSearch)}" onkeyup="updateFilesSearch(this.value)" style="width:200px;">
+      <select class="form-select" onchange="updateFilesSort(this.value)" style="width:150px;">
+        <option value="date-desc" ${filesSort === 'date-desc' ? 'selected' : ''}>Newest first</option>
+        <option value="date-asc" ${filesSort === 'date-asc' ? 'selected' : ''}>Oldest first</option>
+        <option value="name-asc" ${filesSort === 'name-asc' ? 'selected' : ''}>Name A-Z</option>
+        <option value="name-desc" ${filesSort === 'name-desc' ? 'selected' : ''}>Name Z-A</option>
+        <option value="size-desc" ${filesSort === 'size-desc' ? 'selected' : ''}>Largest first</option>
+        <option value="size-asc" ${filesSort === 'size-asc' ? 'selected' : ''}>Smallest first</option>
+      </select>
+      ${isStaffUser ? `<button class="btn btn-primary" onclick="openModal('fileUploadModal')">Upload File</button>` : ''}
+    </div>
+  `);
+
+  let files = appData.files.filter(f => f.courseId === activeCourseId);
+
+  // Filter by search
+  if (filesSearch) {
+    files = files.filter(f => f.name.toLowerCase().includes(filesSearch));
   }
-  
-  const files = appData.files.filter(f => f.courseId === activeCourseId);
-  
+
+  // Sort
+  files.sort((a, b) => {
+    switch (filesSort) {
+      case 'date-asc': return new Date(a.uploadedAt) - new Date(b.uploadedAt);
+      case 'date-desc': return new Date(b.uploadedAt) - new Date(a.uploadedAt);
+      case 'name-asc': return a.name.localeCompare(b.name);
+      case 'name-desc': return b.name.localeCompare(a.name);
+      case 'size-asc': return a.size - b.size;
+      case 'size-desc': return b.size - a.size;
+      default: return 0;
+    }
+  });
+
   if (files.length === 0) {
-    setHTML('filesList', '<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No files yet</div></div>');
+    setHTML('filesList', filesSearch
+      ? '<div class="empty-state"><div class="empty-state-text">No files match your search</div></div>'
+      : '<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No files yet</div></div>');
     return;
   }
-  
+
   const html = files.map(f => {
     const uploader = getUserById(f.uploadedBy);
     return `
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">📄 ${f.name}</div>
+            <div class="card-title">📄 ${escapeHtml(f.name)}</div>
             <div class="muted">${formatFileSize(f.size)} · Uploaded by ${uploader ? uploader.name : 'Unknown'} on ${formatDate(f.uploadedAt)}</div>
           </div>
           ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="deleteFile('${f.id}')">Delete</button>` : ''}
@@ -3866,7 +3964,7 @@ function renderFiles() {
       </div>
     `;
   }).join('');
-  
+
   setHTML('filesList', html);
 }
 
@@ -3909,6 +4007,13 @@ function deleteFile(id) {
 // GRADEBOOK PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let gradebookSearch = '';
+
+function updateGradebookSearch(value) {
+  gradebookSearch = value.toLowerCase();
+  renderGradebook();
+}
+
 function renderGradebook() {
   if (!activeCourseId) {
     setText('gradebookSubtitle', 'Select a course');
@@ -3916,12 +4021,12 @@ function renderGradebook() {
     setHTML('gradebookWrap', '<div class="empty-state-text">No active course</div>');
     return;
   }
-  
+
   const course = getCourseById(activeCourseId);
   setText('gradebookSubtitle', course.name);
-  
+
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-  
+
   if (isStaffUser) {
     renderStaffGradebook();
   } else {
@@ -4006,23 +4111,38 @@ function renderStudentGradebook() {
 
 function renderStaffGradebook() {
   const hasWeights = appData.gradeCategories && appData.gradeCategories.some(c => c.courseId === activeCourseId);
-  
+
+  // Actions with search
   setHTML('gradebookActions', `
-    <button class="btn btn-secondary" onclick="openCategoryWeightsModal()">Category Weights ${hasWeights ? '✓' : ''}</button>
-    <button class="btn btn-secondary" onclick="exportGradebook()">Export CSV</button>
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <input type="text" class="form-input" placeholder="Search students..." value="${escapeHtml(gradebookSearch)}" onkeyup="updateGradebookSearch(this.value)" style="width:200px;">
+      <button class="btn btn-secondary" onclick="openCategoryWeightsModal()">Category Weights ${hasWeights ? '✓' : ''}</button>
+      <button class="btn btn-secondary" onclick="exportGradebook()">Export CSV</button>
+    </div>
   `);
-  
+
   const assignments = appData.assignments
     .filter(a => a.courseId === activeCourseId)
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  
-  const students = appData.enrollments
+
+  let students = appData.enrollments
     .filter(e => e.courseId === activeCourseId && e.role === 'student')
     .map(e => getUserById(e.userId))
-    .filter(u => u);
-  
+    .filter(u => u)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Filter by search
+  if (gradebookSearch) {
+    students = students.filter(s =>
+      s.name.toLowerCase().includes(gradebookSearch) ||
+      s.email.toLowerCase().includes(gradebookSearch)
+    );
+  }
+
   if (students.length === 0 || assignments.length === 0) {
-    setHTML('gradebookWrap', '<div class="empty-state-text">No students or assignments yet</div>');
+    setHTML('gradebookWrap', gradebookSearch
+      ? '<div class="empty-state-text">No students match your search</div>'
+      : '<div class="empty-state-text">No students or assignments yet</div>');
     return;
   }
   
@@ -4169,6 +4289,13 @@ function exportGradebook() {
 // PEOPLE PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let peopleSearch = '';
+
+function updatePeopleSearch(value) {
+  peopleSearch = value.toLowerCase();
+  renderPeople();
+}
+
 function renderPeople() {
   if (!activeCourseId) {
     setText('peopleSubtitle', 'Select a course');
@@ -4176,183 +4303,425 @@ function renderPeople() {
     setHTML('peopleList', '<div class="empty-state-text">No active course</div>');
     return;
   }
-  
+
   const course = getCourseById(activeCourseId);
   setText('peopleSubtitle', course.name);
-  
-  const people = appData.enrollments
+
+  let people = appData.enrollments
     .filter(e => e.courseId === activeCourseId)
     .map(e => ({ ...getUserById(e.userId), role: e.role }))
     .filter(p => p.id)
     .sort((a, b) => {
       const roleOrder = { instructor: 0, ta: 1, student: 2 };
-      return roleOrder[a.role] - roleOrder[b.role];
+      if (roleOrder[a.role] !== roleOrder[b.role]) return roleOrder[a.role] - roleOrder[b.role];
+      return a.name.localeCompare(b.name);
     });
-  
+
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-  
-  if (isStaffUser) {
-    setHTML('peopleActions', `
-      <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
-      <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
-      <div class="muted" style="margin-left:12px;">Invite code: <strong>${course.inviteCode}</strong></div>
-    `);
-  } else {
-    setHTML('peopleActions', '');
+
+  // Actions with search
+  setHTML('peopleActions', `
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <input type="text" class="form-input" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" onkeyup="updatePeopleSearch(this.value)" style="width:200px;">
+      ${isStaffUser ? `
+        <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
+        <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
+        <div class="muted">Invite code: <strong>${course.inviteCode}</strong></div>
+      ` : ''}
+    </div>
+  `);
+
+  // Filter by search
+  if (peopleSearch) {
+    people = people.filter(p =>
+      p.name.toLowerCase().includes(peopleSearch) ||
+      p.email.toLowerCase().includes(peopleSearch)
+    );
   }
   
   // Show as clean table instead of blocky cards
   let html = '';
-  
+
   const grouped = {
     instructor: people.filter(p => p.role === 'instructor'),
     ta: people.filter(p => p.role === 'ta'),
     student: people.filter(p => p.role === 'student')
   };
-  
-  Object.entries(grouped).forEach(([role, members]) => {
-    if (members.length === 0) return;
-    
-    const roleTitle = role === 'ta' ? 'Teaching Assistants' : role.charAt(0).toUpperCase() + role.slice(1) + 's';
-    
-    html += `
+
+  // Get pending invites (also filtered by search)
+  let pendingInvites = isStaffUser && appData.invites
+    ? appData.invites.filter(i => i.courseId === activeCourseId && i.status === 'pending')
+    : [];
+
+  if (peopleSearch) {
+    pendingInvites = pendingInvites.filter(inv =>
+      inv.email.toLowerCase().includes(peopleSearch)
+    );
+  }
+
+  // Helper function to render a section
+  const renderSection = (title, members, isInvites = false) => {
+    if (members.length === 0) return '';
+
+    const bgColor = isInvites ? 'var(--warning-light)' : 'white';
+    const borderColor = isInvites ? 'var(--warning)' : 'var(--border-light)';
+    const titleColor = isInvites ? 'var(--warning)' : 'var(--text-color)';
+
+    return `
       <div style="margin-bottom:32px;">
-        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color);">${roleTitle} (${members.length})</h3>
-        <div style="background:white; border:1px solid var(--border-light); border-radius:var(--radius); overflow:hidden;">
-          ${members.map((p, idx) => `
-            <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < members.length - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
-              <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:var(--primary-light); color:var(--primary); flex-shrink:0;">${p.avatar}</div>
-              <div style="flex:1; min-width:0;">
-                <div style="font-weight:500; font-size:0.95rem;">${p.name}</div>
-                <div class="muted" style="font-size:0.8rem;">${p.email}</div>
+        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:${titleColor};">${title} (${members.length})</h3>
+        <div style="background:${bgColor}; border:1px solid ${borderColor}; border-radius:var(--radius); overflow:hidden;">
+          ${members.map((item, idx) => {
+            const isInvite = isInvites;
+            const p = isInvite ? null : item;
+            const inv = isInvite ? item : null;
+
+            return `
+              <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < members.length - 1 ? `border-bottom:1px solid ${borderColor};` : ''}">
+                <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:${isInvite ? 'var(--warning)' : 'var(--primary-light)'}; color:${isInvite ? 'white' : 'var(--primary)'}; flex-shrink:0;">${isInvite ? '?' : p.avatar}</div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-weight:500; font-size:0.95rem;">${isInvite ? inv.email : p.name}</div>
+                  <div class="muted" style="font-size:0.8rem; ${isInvite ? 'color:var(--warning);' : ''}">${isInvite ? `Invited ${formatDate(inv.sentAt)} · Awaiting sign-up` : p.email}</div>
+                </div>
+                ${!isInvite && isStaffUser && p.id !== appData.currentUser.id ? `
+                  <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
+                ` : ''}
               </div>
-              ${isStaffUser && p.id !== appData.currentUser.id ? `
-                <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
-              ` : ''}
-            </div>
-          `).join('')}
+            `;
+          }).join('')}
         </div>
       </div>
     `;
-  });
-  
-  // Show pending invites for staff
-  if (isStaffUser && appData.invites) {
-    const pendingInvites = appData.invites.filter(i => i.courseId === activeCourseId && i.status === 'pending');
-    
-    if (pendingInvites.length > 0) {
-      html += `
-        <div style="margin-bottom:32px;">
-          <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--warning);">Pending Invites (${pendingInvites.length})</h3>
-          <div style="background:var(--warning-light); border:1px solid var(--warning); border-radius:var(--radius); overflow:hidden;">
-            ${pendingInvites.map((inv, idx) => `
-              <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < pendingInvites.length - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
-                <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:var(--warning); color:white; flex-shrink:0;">?</div>
-                <div style="flex:1; min-width:0;">
-                  <div style="font-weight:500; font-size:0.95rem;">${inv.email}</div>
-                  <div style="font-size:0.8rem; color:var(--warning);">Invited ${formatDate(inv.sentAt)} · Awaiting sign-up</div>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
-    }
+  };
+
+  // Render in order: Instructors, TAs, Pending Invites, Students
+  html += renderSection('Instructors', grouped.instructor);
+  html += renderSection('Teaching Assistants', grouped.ta);
+
+  // Pending invites appear before students (only for staff)
+  if (isStaffUser && pendingInvites.length > 0) {
+    html += renderSection('Pending Invites', pendingInvites, true);
   }
-  
+
+  html += renderSection('Students', grouped.student);
+
   setHTML('peopleList', html || '<div class="empty-state-text">No people in this course</div>');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// AI PAGE
+// AI PAGE - Unified Chatbot with Tool Use
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function resetAiThread() {
-  aiThread = [];
+let aiRecording = false;
+let aiMediaRecorder = null;
+let aiAudioChunks = [];
+let pendingAiAction = null;
+
+function renderAiThread() {
+  const html = aiThread.map((msg, idx) => {
+    if (msg.role === 'user') {
+      return `
+        <div style="margin-bottom:16px; display:flex; justify-content:flex-end;">
+          <div style="background:var(--primary); color:white; padding:12px 16px; border-radius:16px 16px 4px 16px; max-width:80%;">
+            ${escapeHtml(msg.content)}
+          </div>
+        </div>
+      `;
+    } else if (msg.role === 'assistant') {
+      return `
+        <div style="margin-bottom:16px;">
+          <div style="background:var(--bg-color); padding:12px 16px; border-radius:16px 16px 16px 4px; max-width:80%; border:1px solid var(--border-color);">
+            <div class="markdown-content">${renderMarkdown(msg.content)}</div>
+          </div>
+        </div>
+      `;
+    } else if (msg.role === 'action') {
+      // Pending action with HITL confirmation
+      const isLatest = idx === aiThread.length - 1 && !msg.confirmed && !msg.rejected;
+      return `
+        <div style="margin-bottom:16px;">
+          <div style="background:var(--primary-light); padding:16px; border-radius:var(--radius); border:2px solid var(--primary);">
+            <div style="font-weight:600; margin-bottom:8px; color:var(--primary);">
+              ${msg.actionType === 'announcement' ? '📢 Create Announcement' : msg.actionType === 'quiz' ? '📝 Create Quiz' : '🔧 Action'}
+            </div>
+            <div style="background:white; padding:12px; border-radius:var(--radius); margin-bottom:12px;">
+              ${msg.actionType === 'announcement' ? `
+                <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
+                <div class="markdown-content">${renderMarkdown(msg.data.content)}</div>
+              ` : msg.actionType === 'quiz' ? `
+                <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
+                <div class="muted">${(msg.data.questions || []).length} questions</div>
+              ` : ''}
+            </div>
+            ${msg.confirmed ? `
+              <div style="color:var(--success); font-weight:500;">✓ Created successfully</div>
+            ` : msg.rejected ? `
+              <div style="color:var(--text-muted);">✗ Cancelled</div>
+            ` : isLatest ? `
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx})">Create</button>
+                <button class="btn btn-secondary btn-sm" onclick="rejectAiAction(${idx})">Cancel</button>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+    return '';
+  }).join('');
+
+  setHTML('aiThread', html || '<div class="muted" style="padding:20px; text-align:center;">Ask me anything about your course, or say "create an announcement about..." or "create a quiz on..."</div>');
+
+  const thread = document.getElementById('aiThread');
+  if (thread) thread.scrollTop = thread.scrollHeight;
+}
+
+function confirmAiAction(idx) {
+  const msg = aiThread[idx];
+  if (!msg || msg.role !== 'action') return;
+
+  if (msg.actionType === 'announcement') {
+    appData.announcements.push({
+      id: generateId(),
+      courseId: activeCourseId,
+      title: msg.data.title,
+      content: msg.data.content,
+      pinned: false,
+      authorId: appData.currentUser.id,
+      createdAt: new Date().toISOString()
+    });
+    saveData(appData);
+    renderUpdates();
+    renderHome();
+    showToast('Announcement created!', 'success');
+  } else if (msg.actionType === 'quiz') {
+    const newQuiz = {
+      id: generateId(),
+      courseId: activeCourseId,
+      title: msg.data.title,
+      description: msg.data.description || '',
+      status: 'draft',
+      dueDate: msg.data.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
+      createdAt: new Date().toISOString(),
+      timeLimit: msg.data.timeLimit || 30,
+      attempts: msg.data.attempts || 1,
+      randomizeQuestions: false,
+      questionPoolEnabled: false,
+      questionSelectCount: 0,
+      questions: msg.data.questions || []
+    };
+    appData.quizzes.push(newQuiz);
+    saveData(appData);
+    renderAssignments();
+    showToast('Quiz created as draft!', 'success');
+  }
+
+  msg.confirmed = true;
   renderAiThread();
 }
 
-function renderAiThread() {
-  const html = aiThread.map(msg => `
-    <div style="margin-bottom:16px;">
-      <div style="font-weight:600; margin-bottom:4px; color:${msg.role === 'user' ? 'var(--primary)' : 'var(--text-color)'};">
-        ${msg.role === 'user' ? 'You' : 'AI'}
-      </div>
-      <div class="markdown-content">${msg.role === 'assistant' ? renderMarkdown(msg.content) : renderMarkdown(msg.content)}</div>
-    </div>
-  `).join('');
-  
-  setHTML('aiThread', html || '<div class="muted" style="padding:20px; text-align:center;">Start a conversation...</div>');
-  
-  const thread = document.getElementById('aiThread');
-  thread.scrollTop = thread.scrollHeight;
+function rejectAiAction(idx) {
+  const msg = aiThread[idx];
+  if (!msg || msg.role !== 'action') return;
+  msg.rejected = true;
+  aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
+  renderAiThread();
 }
 
-async function sendAiMessage() {
+async function sendAiMessage(audioBase64 = null) {
   const input = document.getElementById('aiInput');
-  const message = input.value.trim();
-  
-  if (!message) return;
-  
+  const message = audioBase64 ? '[Voice message]' : input.value.trim();
+
+  if (!message && !audioBase64) return;
+
   const apiKey = window.GEMINI || appData.settings.geminiKey;
-  
+
   if (!apiKey) {
     showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
     return;
   }
-  
-  // Build context about current course
+
+  const isStaffUser = activeCourseId && isStaff(appData.currentUser.id, activeCourseId);
+
+  // Build rich context about current course
   let context = '';
   if (activeCourseId) {
     const course = getCourseById(activeCourseId);
     const role = getUserRole(appData.currentUser.id, activeCourseId);
     const students = appData.enrollments.filter(e => e.courseId === activeCourseId && e.role === 'student');
     const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
-    
+    const modules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
+    const instructor = appData.enrollments.find(e => e.courseId === activeCourseId && e.role === 'instructor');
+    const instructorUser = instructor ? getUserById(instructor.userId) : null;
+
     context = `
-Course Context:
-- Course: ${course.name} (${course.code})
+COURSE CONTEXT (use this for accurate spelling and context):
+- Course Name: ${course.name}
+- Course Code: ${course.code}
+- Course Description: ${course.description || 'No description'}
+- Instructor: ${instructorUser ? instructorUser.name : 'Unknown'}
 - Your Role: ${role}
 - Number of Students: ${students.length}
 - Number of Assignments: ${assignments.length}
-${assignments.length > 0 ? `- Recent Assignments: ${assignments.slice(0, 3).map(a => a.title).join(', ')}` : ''}
+- Modules: ${modules.map(m => m.name).join(', ') || 'None'}
+${assignments.length > 0 ? `- Assignments: ${assignments.map(a => a.title).join(', ')}` : ''}
 
 `;
   }
-  
-  const fullMessage = context + message;
-  
-  aiThread.push({ role: 'user', content: message }); // Show only user's message
-  input.value = '';
+
+  const systemPrompt = `You are an AI assistant for a Learning Management System (LMS). You help instructors and students with course-related tasks.
+
+${isStaffUser ? `The user is an INSTRUCTOR/TA. You can help them create content.
+
+IMPORTANT: If the user asks you to CREATE an announcement or quiz, you MUST respond with a JSON object in this EXACT format:
+- For announcements: {"action":"create_announcement","title":"...","content":"..."}
+- For quizzes: {"action":"create_quiz","title":"...","description":"...","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correctAnswer":0,"points":10},...]}
+
+Only output the JSON when the user clearly wants to CREATE something. For questions about content or help drafting, respond normally.
+When creating content, make sure titles and content are professional and appropriate for an academic setting.` : 'The user is a STUDENT. Help them with course questions but do not create content.'}
+
+${context}
+
+Respond helpfully and concisely. If asked to create content, output ONLY the JSON object with no additional text.`;
+
+  aiThread.push({ role: 'user', content: audioBase64 ? '🎤 Voice message' : message });
+  if (!audioBase64) input.value = '';
   renderAiThread();
-  
+
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+    let requestBody;
+
+    if (audioBase64) {
+      // Voice message - send audio to Gemini
+      requestBody = {
+        contents: [{
+          parts: [
+            { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
+            { text: systemPrompt + '\n\nTranscribe and respond to this voice message:' }
+          ]
+        }],
+        generationConfig: { temperature: 0.4 }
+      };
+    } else {
+      requestBody = {
+        contents: [{ parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }],
+        generationConfig: { temperature: 0.4 }
+      };
+    }
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: fullMessage }] }],
-        generationConfig: {
-          temperature: 0.7
-        }
-      })
+      body: JSON.stringify(requestBody)
     });
-    
+
     const data = await response.json();
-    
+
     if (data.error) {
       throw new Error(data.error.message);
     }
-    
-    const reply = data.candidates[0].content.parts[0].text;
-    aiThread.push({ role: 'assistant', content: reply });
+
+    const reply = data.candidates[0].content.parts[0].text.trim();
+
+    // Check if it's a JSON action
+    if (reply.startsWith('{') && reply.includes('"action"')) {
+      try {
+        const action = JSON.parse(reply);
+        if (action.action === 'create_announcement') {
+          aiThread.push({
+            role: 'action',
+            actionType: 'announcement',
+            data: { title: action.title, content: action.content },
+            confirmed: false,
+            rejected: false
+          });
+        } else if (action.action === 'create_quiz') {
+          aiThread.push({
+            role: 'action',
+            actionType: 'quiz',
+            data: {
+              title: action.title,
+              description: action.description || '',
+              questions: action.questions || []
+            },
+            confirmed: false,
+            rejected: false
+          });
+        } else {
+          aiThread.push({ role: 'assistant', content: reply });
+        }
+      } catch (e) {
+        aiThread.push({ role: 'assistant', content: reply });
+      }
+    } else {
+      aiThread.push({ role: 'assistant', content: reply });
+    }
+
     renderAiThread();
-    
+
   } catch (err) {
     console.error('AI error:', err);
     showToast('AI request failed: ' + err.message, 'error');
-    aiThread.push({ role: 'assistant', content: `Error: ${err.message}` });
+    aiThread.push({ role: 'assistant', content: `Sorry, I encountered an error: ${err.message}` });
     renderAiThread();
+  }
+}
+
+function toggleAiRecording() {
+  if (aiRecording) {
+    stopAiRecording();
+  } else {
+    startAiRecording();
+  }
+}
+
+async function startAiRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    aiAudioChunks = [];
+
+    aiMediaRecorder = new MediaRecorder(stream);
+
+    aiMediaRecorder.ondataavailable = (event) => {
+      aiAudioChunks.push(event.data);
+    };
+
+    aiMediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(aiAudioChunks, { type: 'audio/webm' });
+      stream.getTracks().forEach(track => track.stop());
+
+      // Convert to base64 and send
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        sendAiMessage(base64);
+      };
+      reader.readAsDataURL(audioBlob);
+    };
+
+    aiMediaRecorder.start();
+    aiRecording = true;
+
+    document.getElementById('aiRecordIcon').textContent = '⏹️';
+    document.getElementById('aiRecordText').textContent = 'Stop';
+    document.getElementById('aiRecordBtn').classList.add('recording');
+
+    showToast('Recording...', 'info');
+
+  } catch (err) {
+    console.error('Recording error:', err);
+    showToast('Could not access microphone: ' + err.message, 'error');
+  }
+}
+
+function stopAiRecording() {
+  if (aiMediaRecorder && aiMediaRecorder.state === 'recording') {
+    aiMediaRecorder.stop();
+    aiRecording = false;
+
+    document.getElementById('aiRecordIcon').textContent = '🎤';
+    document.getElementById('aiRecordText').textContent = 'Record';
+    document.getElementById('aiRecordBtn').classList.remove('recording');
   }
 }
 
@@ -4428,7 +4797,7 @@ ${systemPrompt}
   
   try {
     showToast('Generating draft with AI...', 'info');
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -5517,7 +5886,6 @@ function openEditCourseModal(courseId) {
   document.getElementById('editCourseName').value = course.name || '';
   document.getElementById('editCourseCode').value = course.code || '';
   document.getElementById('editCourseDescription').value = course.description || '';
-  document.getElementById('editCourseUuid').value = course.id;
   
   // Add checkbox for active/inactive status
   const statusCheckbox = document.getElementById('editCourseActive');
