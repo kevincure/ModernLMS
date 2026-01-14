@@ -82,7 +82,7 @@
 - [ ] Sync with Google Calendar
 
 ### 7. **Content Organization**
-- [ ] Modules/weeks structure
+- [x] Modules/weeks structure (with drag-and-drop reordering)
 - [ ] Prerequisites (assignments unlock after others)
 - [ ] Learning paths
 - [ ] Tags for files/assignments
@@ -96,8 +96,10 @@
 
 ### 9. **AI-Native Experience (Highest Leverage)**
 - [ ] **AI course setup wizard** (start with goals → generate syllabus, modules, grading policy)
-- [ ] **Natural language → LMS objects** (assignments, quizzes, announcements, rubrics) with HITL confirmation
-- [ ] **AI student help** (policy-aware Q&A + “ask the syllabus”)
+- [x] **Natural language → LMS objects** (announcements, quizzes) with HITL confirmation + editable preview
+- [x] **Unified AI chatbot** with tool use (create announcements, quizzes via natural language)
+- [x] **Voice input in AI chat** (record audio → transcription with course context)
+- [ ] **AI student help** (policy-aware Q&A + "ask the syllabus")
 - [ ] **Second-look grading** (rubric-based review with confidence + escalation)
 - [ ] **Auto study guides** (summaries, key terms, practice questions)
 - [ ] **Accessibility assist** (reading level simplification + multilingual drafts)
@@ -196,7 +198,7 @@ These can be added quickly with high user impact:
 - [ ] **Quick actions menu** (right-click on assignments/students)
 - [ ] **Recently viewed courses** (localStorage breadcrumbs)
 - [ ] **Assignment duplication** (one-click copy)
-- [ ] **Search/filter** (assignments, students, files)
+- [x] **Search/filter** (files, modules, people, gradebook)
 - [x] **Guided onboarding checklist** (first course setup in <5 minutes)
 - [x] **Inline AI shortcuts** (generate rubric/quiz/announcement from a prompt)
 
@@ -223,7 +225,9 @@ These can be added quickly with high user impact:
 
 ### Phase 3.5: AI-Native Flows (1-2 weeks)
 - AI course setup wizard
-- Natural language → LMS objects (HITL confirm)
+- ✅ Natural language → LMS objects (HITL confirm + editable)
+- ✅ Unified AI chatbot with tool use
+- ✅ Voice input in AI chat
 - AI study guides + student help
 
 ### Phase 4: Organization (1-2 weeks)

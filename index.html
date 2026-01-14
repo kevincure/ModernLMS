@@ -101,10 +101,14 @@
 
       <div class="toolbar-spacer"></div>
 
+      <button class="tool-btn" id="importToolBtn" onclick="openImportContentModal()" title="Import Content" aria-label="Import Content" style="display:none;">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+      </button>
+
       <button class="tool-btn" onclick="openModal('settingsModal')" title="Settings" aria-label="Settings">
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3l1.5 2.6 3 .5-2.1 2.1.5 3-2.9-1.5-2.9 1.5.5-3L7.5 6.1l3-.5L12 3z"/>
-          <circle cx="12" cy="12" r="3.5" />
+          <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
         </svg>
       </button>
       <button class="tool-btn" onclick="logout()" title="Logout" aria-label="Logout">
@@ -128,7 +132,6 @@
           </div>
         </div>
         <div class="top-bar-right">
-          <button class="btn btn-secondary btn-sm" id="importContentBtn" onclick="openImportContentModal()" style="display:none;">Import</button>
           <div class="user-info-compact">
             <div class="user-avatar-small" id="userAvatarTop">U</div>
             <div class="user-details-compact">
@@ -283,19 +286,19 @@
       <section class="page" id="page-ai">
         <div class="page-header">
           <div>
-            <h1 class="page-title">AI</h1>
-            <div class="page-subtitle">Chat with Gemini AI</div>
-          </div>
-          <div class="page-actions">
-            <button class="btn btn-secondary" onclick="resetAiThread()">Reset</button>
+            <h1 class="page-title">AI Assistant</h1>
+            <div class="page-subtitle">Ask questions or create announcements, quizzes, and more</div>
           </div>
         </div>
         <div class="page-body">
-          <div class="card" style="padding:0;">
-            <div class="ai-thread" id="aiThread"></div>
-            <div class="ai-composer">
-              <textarea class="form-textarea ai-input" id="aiInput" placeholder="Ask something…" rows="3"></textarea>
-              <div class="ai-actions">
+          <div class="card" style="padding:0; display:flex; flex-direction:column; height:calc(100vh - 200px);">
+            <div class="ai-thread" id="aiThread" style="flex:1; overflow-y:auto;"></div>
+            <div class="ai-composer" style="border-top:1px solid var(--border-color); padding:16px;">
+              <textarea class="form-textarea ai-input" id="aiInput" placeholder="Ask a question or say 'create an announcement about...' or 'create a quiz on...'" rows="2"></textarea>
+              <div class="ai-actions" style="display:flex; gap:8px; margin-top:8px;">
+                <button class="btn btn-secondary" id="aiRecordBtn" onclick="toggleAiRecording()">
+                  <span id="aiRecordIcon">🎤</span> <span id="aiRecordText">Record</span>
+                </button>
                 <button class="btn btn-primary" onclick="sendAiMessage()">Send</button>
               </div>
             </div>
