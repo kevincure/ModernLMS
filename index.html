@@ -79,6 +79,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v15H4z"/><path d="M8 3v4M16 3v4M4 9h16"/></svg>
       </button>
 
+      <button class="tool-btn" data-page="modules" onclick="navigateTo('modules')" title="Modules" aria-label="Modules">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+      </button>
+
       <button class="tool-btn" data-page="files" onclick="navigateTo('files')" title="Files" aria-label="Files">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
       </button>
@@ -216,6 +220,20 @@
         </div>
         <div class="page-body">
           <div id="assignmentsList"></div>
+        </div>
+      </section>
+
+      <!-- Modules -->
+      <section class="page" id="page-modules">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Modules</h1>
+            <div class="page-subtitle" id="modulesSubtitle"></div>
+          </div>
+          <div class="page-actions" id="modulesActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="modulesList"></div>
         </div>
       </section>
 
