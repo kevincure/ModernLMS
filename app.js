@@ -806,10 +806,11 @@ function createCourse() {
           });
         }
       } else {
-        // User doesn't exist - create invite
+        // User doesn't exist - create invite (default to student role)
         appData.invites.push({
           courseId: courseId,
           email: email,
+          role: 'student',
           status: 'pending',
           sentAt: new Date().toISOString()
         });
@@ -1909,7 +1910,7 @@ The score should be between 0 and ${assignment.points}. The feedback should be c
   try {
     showToast('Drafting grade with AI...', 'info');
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3093,7 +3094,7 @@ Mark all items as drafts by default. If the syllabus mentions exams, quizzes, or
   try {
     showToast('Parsing syllabus with AI...', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
@@ -3399,7 +3400,7 @@ async function transcribeAudio() {
   try {
     showToast('Transcribing audio with Gemini...', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3775,7 +3776,7 @@ Provide a score (0-${assignment.points}) and constructive feedback. Return JSON:
   try {
     showToast('Drafting grade with AI...', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -4348,62 +4349,78 @@ function renderPeople() {
     student: people.filter(p => p.role === 'student')
   };
 
-  // Get pending invites (also filtered by search)
-  let pendingInvites = isStaffUser && appData.invites
+  // Get pending invites (also filtered by search), grouped by role
+  let allPendingInvites = isStaffUser && appData.invites
     ? appData.invites.filter(i => i.courseId === activeCourseId && i.status === 'pending')
     : [];
 
   if (peopleSearch) {
-    pendingInvites = pendingInvites.filter(inv =>
+    allPendingInvites = allPendingInvites.filter(inv =>
       inv.email.toLowerCase().includes(peopleSearch)
     );
   }
 
-  // Helper function to render a section
-  const renderSection = (title, members, isInvites = false) => {
-    if (members.length === 0) return '';
+  // Group invites by role (default to 'student' if no role specified)
+  const invitesByRole = {
+    instructor: allPendingInvites.filter(i => i.role === 'instructor'),
+    ta: allPendingInvites.filter(i => i.role === 'ta'),
+    student: allPendingInvites.filter(i => !i.role || i.role === 'student')
+  };
 
-    const bgColor = isInvites ? 'var(--warning-light)' : 'white';
-    const borderColor = isInvites ? 'var(--warning)' : 'var(--border-light)';
-    const titleColor = isInvites ? 'var(--warning)' : 'var(--text-color)';
+  // Helper function to render a single person row
+  const renderPersonRow = (p, idx, total, isInvite = false) => {
+    const bgColor = isInvite ? 'var(--warning-light)' : 'white';
+    const borderColor = isInvite ? 'var(--warning)' : 'var(--border-light)';
+
+    if (isInvite) {
+      return `
+        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; background:var(--warning-light); ${idx < total - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
+          <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:var(--warning); color:white; flex-shrink:0;">?</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; font-size:0.95rem;">${p.email}</div>
+            <div style="font-size:0.8rem; color:var(--warning);">Invited ${formatDate(p.sentAt)} · Awaiting sign-up</div>
+          </div>
+        </div>
+      `;
+    } else {
+      return `
+        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
+          <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:var(--primary-light); color:var(--primary); flex-shrink:0;">${p.avatar}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; font-size:0.95rem;">${p.name}</div>
+            <div class="muted" style="font-size:0.8rem;">${p.email}</div>
+          </div>
+          ${isStaffUser && p.id !== appData.currentUser.id ? `
+            <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
+          ` : ''}
+        </div>
+      `;
+    }
+  };
+
+  // Helper function to render a section with invites at top
+  const renderSectionWithInvites = (title, members, invites) => {
+    const totalCount = members.length + invites.length;
+    if (totalCount === 0) return '';
+
+    const allItems = [...invites.map(i => ({ ...i, isInvite: true })), ...members.map(m => ({ ...m, isInvite: false }))];
 
     return `
       <div style="margin-bottom:32px;">
-        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:${titleColor};">${title} (${members.length})</h3>
-        <div style="background:${bgColor}; border:1px solid ${borderColor}; border-radius:var(--radius); overflow:hidden;">
-          ${members.map((item, idx) => {
-            const isInvite = isInvites;
-            const p = isInvite ? null : item;
-            const inv = isInvite ? item : null;
-
-            return `
-              <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < members.length - 1 ? `border-bottom:1px solid ${borderColor};` : ''}">
-                <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:${isInvite ? 'var(--warning)' : 'var(--primary-light)'}; color:${isInvite ? 'white' : 'var(--primary)'}; flex-shrink:0;">${isInvite ? '?' : p.avatar}</div>
-                <div style="flex:1; min-width:0;">
-                  <div style="font-weight:500; font-size:0.95rem;">${isInvite ? inv.email : p.name}</div>
-                  <div class="muted" style="font-size:0.8rem; ${isInvite ? 'color:var(--warning);' : ''}">${isInvite ? `Invited ${formatDate(inv.sentAt)} · Awaiting sign-up` : p.email}</div>
-                </div>
-                ${!isInvite && isStaffUser && p.id !== appData.currentUser.id ? `
-                  <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
-                ` : ''}
-              </div>
-            `;
-          }).join('')}
+        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color);">
+          ${title} (${members.length}${invites.length > 0 ? ` + ${invites.length} pending` : ''})
+        </h3>
+        <div style="background:white; border:1px solid var(--border-light); border-radius:var(--radius); overflow:hidden;">
+          ${allItems.map((item, idx) => renderPersonRow(item, idx, allItems.length, item.isInvite)).join('')}
         </div>
       </div>
     `;
   };
 
-  // Render in order: Instructors, TAs, Pending Invites, Students
-  html += renderSection('Instructors', grouped.instructor);
-  html += renderSection('Teaching Assistants', grouped.ta);
-
-  // Pending invites appear before students (only for staff)
-  if (isStaffUser && pendingInvites.length > 0) {
-    html += renderSection('Pending Invites', pendingInvites, true);
-  }
-
-  html += renderSection('Students', grouped.student);
+  // Render in order: Instructors, TAs, Students - each with their pending invites at top
+  html += renderSectionWithInvites('Instructors', grouped.instructor, invitesByRole.instructor);
+  html += renderSectionWithInvites('Teaching Assistants', grouped.ta, invitesByRole.ta);
+  html += renderSectionWithInvites('Students', grouped.student, invitesByRole.student);
 
   setHTML('peopleList', html || '<div class="empty-state-text">No people in this course</div>');
 }
@@ -4436,7 +4453,7 @@ function renderAiThread() {
         </div>
       `;
     } else if (msg.role === 'action') {
-      // Pending action with HITL confirmation
+      // Pending action with HITL confirmation - editable before acceptance
       const isLatest = idx === aiThread.length - 1 && !msg.confirmed && !msg.rejected;
       return `
         <div style="margin-bottom:16px;">
@@ -4445,13 +4462,36 @@ function renderAiThread() {
               ${msg.actionType === 'announcement' ? '📢 Create Announcement' : msg.actionType === 'quiz' ? '📝 Create Quiz' : '🔧 Action'}
             </div>
             <div style="background:white; padding:12px; border-radius:var(--radius); margin-bottom:12px;">
-              ${msg.actionType === 'announcement' ? `
-                <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
-                <div class="markdown-content">${renderMarkdown(msg.data.content)}</div>
-              ` : msg.actionType === 'quiz' ? `
-                <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
-                <div class="muted">${(msg.data.questions || []).length} questions</div>
-              ` : ''}
+              ${msg.confirmed || msg.rejected ? `
+                ${msg.actionType === 'announcement' ? `
+                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
+                  <div class="markdown-content">${renderMarkdown(msg.data.content)}</div>
+                ` : msg.actionType === 'quiz' ? `
+                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
+                  <div class="muted">${(msg.data.questions || []).length} questions</div>
+                ` : ''}
+              ` : `
+                ${msg.actionType === 'announcement' ? `
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Title</label>
+                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
+                  </div>
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" style="font-size:0.85rem;">Content (supports Markdown)</label>
+                    <textarea class="form-textarea" id="aiAction${idx}Content" rows="6" onchange="updateAiActionField(${idx}, 'content', this.value)">${escapeHtml(msg.data.content)}</textarea>
+                  </div>
+                ` : msg.actionType === 'quiz' ? `
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Title</label>
+                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
+                  </div>
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Description</label>
+                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
+                  </div>
+                  <div class="muted" style="font-size:0.85rem;">${(msg.data.questions || []).length} questions will be created</div>
+                ` : ''}
+              `}
             </div>
             ${msg.confirmed ? `
               <div style="color:var(--success); font-weight:500;">✓ Created successfully</div>
@@ -4474,6 +4514,12 @@ function renderAiThread() {
 
   const thread = document.getElementById('aiThread');
   if (thread) thread.scrollTop = thread.scrollHeight;
+}
+
+function updateAiActionField(idx, field, value) {
+  const msg = aiThread[idx];
+  if (!msg || msg.role !== 'action') return;
+  msg.data[field] = value;
 }
 
 function confirmAiAction(idx) {
@@ -4609,7 +4655,7 @@ Respond helpfully and concisely. If asked to create content, output ONLY the JSO
       };
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
@@ -4797,7 +4843,7 @@ ${systemPrompt}
   
   try {
     showToast('Generating draft with AI...', 'info');
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

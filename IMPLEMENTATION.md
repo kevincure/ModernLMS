@@ -231,21 +231,25 @@ Added support for:
 ### 6. MVP v2.0 Features Implemented ✅
 
 #### AI Syllabus Parser ✅
-- **Upload syllabus file or paste text**
+- **Upload syllabus file (PDF, DOC, TXT) or paste text**
+- **Files sent to Gemini as base64 inline data** (proper PDF support)
 - **AI extracts modules, assignments, quizzes**
 - **Creates all items as drafts**
 - **Checkbox selection for what to import**
 - **Bulk creation with proper data structures**
 
-#### Audio/Voice Input ✅
-- **Record audio directly in browser**
-- **Upload audio files**
-- **Gemini transcription**
-- **Convert to announcements with scheduling**
-  - "Send this announcement at midnight tomorrow"
-- **Convert to quizzes with settings**
-  - "Create a quiz, five questions, due at 2pm on Dec 18, available immediately, randomized order"
-- **JSON schema output for structured data**
+#### Unified AI Chatbot with Tool Use ✅
+- **Consolidated AI interface** - removed separate AI Draft, AI Quiz, Voice buttons
+- **Natural language commands**: "create an announcement about..." or "create a quiz on..."
+- **Tool-based output with JSON schema** for structured data creation
+- **Human-in-the-loop (HITL) confirmation**:
+  - Preview shows editable title and content fields
+  - Edit before accepting
+  - Create/Cancel buttons for confirmation
+- **Voice recording integrated into AI chat**:
+  - Record button in AI chat composer
+  - Audio sent to Gemini with course context for accurate transcription
+  - Course metadata (professor name, module names) included for spelling accuracy
 
 #### Modules with Drag-and-Drop ✅
 - **Create and organize modules**
@@ -485,13 +489,28 @@ All core features working
 
 ---
 
+### 7. MVP v2.1 Features Implemented ✅
+
+#### Search and Sort Functionality ✅
+- **Files Page**: Search by filename, sort by date/name/size
+- **Modules Page**: Search module names and item titles
+- **People Page**: Search by name or email
+- **Gradebook Page**: Search students by name or email
+
+#### UI/UX Improvements ✅
+- **Import button moved to sidebar** (from top bar)
+- **Settings icon** updated to standard gear icon
+- **Pending invites** appear at top of their respective role sections (not as a separate section)
+- **Course edit** modal fixed (removed non-existent field reference)
+
+---
+
 ## 🐛 Known Limitations
 
 1. **Email Notifications**: Currently in-memory only, not sent via email
 2. **ZIP Download**: Placeholder button, needs JSZip implementation
 3. **localStorage Limit**: ~5-10MB storage, will need backend for production
 4. **No Real-time Updates**: Refresh required to see others' changes
-5. **No Search/Filter**: Large courses will need search functionality
 
 ---
 
@@ -563,11 +582,18 @@ All Priority 1 (MVP v1.1), Priority 2 (MVP v1.5), and most Priority 3 (MVP v2.0)
 - Automatic rubric score calculation
 
 ### AI-Native Features (v2.0) ✅
-- **AI Syllabus Parser**: Upload/paste syllabus → AI extracts modules + assignments/quizzes as drafts
-- **Voice/Audio Input**: Record or upload audio → Gemini transcription → Create announcements/quizzes with natural language
-  - Supports scheduling: "send at midnight tomorrow"
-  - Supports quiz settings: "five questions, due at 2pm Dec 18, randomized"
+- **AI Syllabus Parser**: Upload PDF/DOC/TXT or paste syllabus → AI extracts modules + assignments/quizzes as drafts
+- **Unified AI Chatbot**: Natural language commands to create announcements and quizzes
+  - Tool-based output with HITL confirmation
+  - Editable title/content before acceptance
+  - Voice recording integrated with course context for accurate transcription
 - **Modules with Drag-and-Drop**: Organize content into modules, reorder via drag-and-drop
 - **SpeedGrader**: Student-by-student grading with AI assistance, rubric integration, auto-advance
 
-The LMS is now feature-complete for v2.0 and ready for production deployment with a proper backend (Supabase recommended).
+### Search & Organization (v2.1) ✅
+- **Search/Sort on Files, Modules, People, Gradebook pages**
+- **Pending invites appear at top of role sections** (Instructors, TAs, Students)
+- **Import button in sidebar** (consolidated UI)
+- **Standard gear icon for Settings**
+
+The LMS is now feature-complete for v2.1 and ready for production deployment with a proper backend (Supabase recommended).
