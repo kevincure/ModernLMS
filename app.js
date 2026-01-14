@@ -133,6 +133,12 @@ const defaultData = {
   invites: [
     // { courseId, email, status: 'pending'|'accepted', sentAt }
   ],
+  modules: [
+    // { id, courseId, name, position, items: [{ id, type: 'assignment'|'quiz'|'file'|'page', refId, position }] }
+  ],
+  questionBanks: [
+    // { id, courseId, name, questions: [{ id, type, prompt, options, correctAnswer, points }] }
+  ],
   settings: {
     geminiKey: '',
     googleClientId: '',
@@ -153,6 +159,12 @@ let aiDraft = null;
 let aiDraftType = 'announcement';
 let aiRubricDraft = null;
 let aiQuizDraft = null;
+let currentSpeedGraderAssignmentId = null;
+let currentSpeedGraderStudentIndex = 0;
+let speedGraderStudents = [];
+let mediaRecorder = null;
+let audioChunks = [];
+let draggedModuleItem = null;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATA PERSISTENCE
@@ -161,7 +173,16 @@ let aiQuizDraft = null;
 function loadData() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) {
-    return JSON.parse(stored);
+    const data = JSON.parse(stored);
+    // Migration: ensure new data structures exist
+    if (!data.modules) data.modules = [];
+    if (!data.questionBanks) data.questionBanks = [];
+    if (!data.notifications) data.notifications = [];
+    if (!data.quizzes) data.quizzes = [];
+    if (!data.quizSubmissions) data.quizSubmissions = [];
+    if (!data.gradeCategories) data.gradeCategories = [];
+    if (!data.rubrics) data.rubrics = [];
+    return data;
   }
   saveData(defaultData);
   return defaultData;
@@ -643,6 +664,7 @@ function renderAll() {
   renderUpdates();
   renderAssignments();
   renderCalendar();
+  renderModules();
   renderFiles();
   renderGradebook();
   renderPeople();
@@ -1041,6 +1063,7 @@ function renderUpdates() {
     setHTML('updatesActions', `
       <button class="btn btn-primary" onclick="openModal('announcementModal')">New Update</button>
       <button class="btn btn-secondary" onclick="openAiCreateModal('announcement')">AI Draft</button>
+      <button class="btn btn-secondary" onclick="openAudioInputModal()">🎤 Voice</button>
     `);
   } else {
     setHTML('updatesActions', '');
@@ -1676,7 +1699,8 @@ function viewSubmissions(assignmentId) {
           <button class="modal-close" onclick="closeModal('submissionsModal')">&times;</button>
         </div>
         <div class="modal-body">
-          <div style="display:flex; gap:8px; margin-bottom:16px;">
+          <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">⚡ SpeedGrader</button>
             <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">📋 Bulk Import Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="bulkReleaseGrades('${assignmentId}')">🔓 Release All Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="downloadAllSubmissions('${assignmentId}')">📥 Download All (ZIP)</button>
@@ -2577,6 +2601,1225 @@ function formatTimer(seconds) {
 
 function shuffleArray(list) {
   return list.slice().sort(() => Math.random() - 0.5);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODULES PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderModules() {
+  if (!activeCourseId) {
+    setText('modulesSubtitle', 'Select a course');
+    setHTML('modulesActions', '');
+    setHTML('modulesList', '<div class="empty-state-text">No active course</div>');
+    return;
+  }
+
+  const course = getCourseById(activeCourseId);
+  setText('modulesSubtitle', course.name);
+
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+
+  if (!appData.modules) appData.modules = [];
+
+  if (isStaffUser) {
+    setHTML('modulesActions', `
+      <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
+      <button class="btn btn-secondary" onclick="openSyllabusParserModal()">📄 Import from Syllabus</button>
+    `);
+  } else {
+    setHTML('modulesActions', '');
+  }
+
+  const modules = appData.modules
+    .filter(m => m.courseId === activeCourseId)
+    .sort((a, b) => a.position - b.position);
+
+  if (modules.length === 0) {
+    setHTML('modulesList', `
+      <div class="empty-state">
+        <div class="empty-state-icon">📦</div>
+        <div class="empty-state-title">No modules yet</div>
+        <div class="empty-state-text">Organize your course content into modules</div>
+      </div>
+    `);
+    return;
+  }
+
+  const html = modules.map((mod, modIndex) => {
+    const items = (mod.items || []).sort((a, b) => a.position - b.position);
+
+    const itemsHtml = items.map((item, itemIndex) => {
+      let itemData = null;
+      let itemIcon = '📄';
+      let itemTitle = 'Unknown Item';
+      let statusBadge = '';
+
+      if (item.type === 'assignment') {
+        itemData = appData.assignments.find(a => a.id === item.refId);
+        itemIcon = '📝';
+        if (itemData) {
+          itemTitle = itemData.title;
+          statusBadge = itemData.status === 'draft' ? '<span class="status-badge draft">(draft)</span>' : '';
+        }
+      } else if (item.type === 'quiz') {
+        itemData = appData.quizzes.find(q => q.id === item.refId);
+        itemIcon = '❓';
+        if (itemData) {
+          itemTitle = itemData.title;
+          statusBadge = itemData.status === 'draft' ? '<span class="status-badge draft">(draft)</span>' : '';
+        }
+      } else if (item.type === 'file') {
+        itemData = appData.files.find(f => f.id === item.refId);
+        itemIcon = '📁';
+        if (itemData) itemTitle = itemData.name;
+      } else if (item.type === 'page') {
+        itemIcon = '📃';
+        itemTitle = item.title || 'Untitled Page';
+      }
+
+      if (!itemData && item.type !== 'page') {
+        return ''; // Item was deleted
+      }
+
+      return `
+        <div class="module-item"
+             draggable="${isStaffUser}"
+             data-module-id="${mod.id}"
+             data-item-id="${item.id}"
+             ondragstart="handleModuleItemDragStart(event)"
+             ondragover="handleModuleItemDragOver(event)"
+             ondrop="handleModuleItemDrop(event)"
+             ondragend="handleModuleItemDragEnd(event)">
+          <span class="module-item-handle">${isStaffUser ? '⋮⋮' : ''}</span>
+          <span class="module-item-icon">${itemIcon}</span>
+          <span class="module-item-title">${escapeHtml(itemTitle)} ${statusBadge}</span>
+          ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="removeModuleItem('${mod.id}', '${item.id}')">×</button>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="module-card"
+           draggable="${isStaffUser}"
+           data-module-id="${mod.id}"
+           ondragstart="handleModuleDragStart(event)"
+           ondragover="handleModuleDragOver(event)"
+           ondrop="handleModuleDrop(event)"
+           ondragend="handleModuleDragEnd(event)">
+        <div class="module-header">
+          <div class="module-header-left">
+            <span class="module-drag-handle">${isStaffUser ? '⋮⋮' : ''}</span>
+            <h3 class="module-title">${escapeHtml(mod.name)}</h3>
+          </div>
+          ${isStaffUser ? `
+            <div class="module-actions">
+              <button class="btn btn-secondary btn-sm" onclick="openAddModuleItemModal('${mod.id}')">+ Add Item</button>
+              <button class="btn btn-secondary btn-sm" onclick="editModule('${mod.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="deleteModule('${mod.id}')">Delete</button>
+            </div>
+          ` : ''}
+        </div>
+        <div class="module-items" data-module-id="${mod.id}">
+          ${itemsHtml || '<div class="module-empty">No items in this module</div>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  setHTML('modulesList', html);
+}
+
+// Module drag-and-drop handlers
+function handleModuleDragStart(event) {
+  event.dataTransfer.setData('text/plain', event.target.dataset.moduleId);
+  event.dataTransfer.effectAllowed = 'move';
+  event.target.classList.add('dragging');
+}
+
+function handleModuleDragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+}
+
+function handleModuleDrop(event) {
+  event.preventDefault();
+  const draggedId = event.dataTransfer.getData('text/plain');
+  const targetEl = event.target.closest('.module-card');
+  if (!targetEl) return;
+
+  const targetId = targetEl.dataset.moduleId;
+  if (draggedId === targetId) return;
+
+  const modules = appData.modules.filter(m => m.courseId === activeCourseId).sort((a, b) => a.position - b.position);
+  const draggedIndex = modules.findIndex(m => m.id === draggedId);
+  const targetIndex = modules.findIndex(m => m.id === targetId);
+
+  if (draggedIndex === -1 || targetIndex === -1) return;
+
+  // Reorder
+  const [removed] = modules.splice(draggedIndex, 1);
+  modules.splice(targetIndex, 0, removed);
+
+  // Update positions
+  modules.forEach((m, i) => {
+    const mod = appData.modules.find(x => x.id === m.id);
+    if (mod) mod.position = i;
+  });
+
+  saveData(appData);
+  renderModules();
+}
+
+function handleModuleDragEnd(event) {
+  event.target.classList.remove('dragging');
+}
+
+// Module item drag-and-drop handlers
+function handleModuleItemDragStart(event) {
+  event.stopPropagation();
+  draggedModuleItem = {
+    moduleId: event.target.dataset.moduleId,
+    itemId: event.target.dataset.itemId
+  };
+  event.dataTransfer.setData('text/plain', JSON.stringify(draggedModuleItem));
+  event.dataTransfer.effectAllowed = 'move';
+  event.target.classList.add('dragging');
+}
+
+function handleModuleItemDragOver(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  event.dataTransfer.dropEffect = 'move';
+}
+
+function handleModuleItemDrop(event) {
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (!draggedModuleItem) return;
+
+  const targetEl = event.target.closest('.module-item');
+  const targetModuleEl = event.target.closest('.module-items') || event.target.closest('.module-card');
+
+  if (!targetModuleEl) return;
+
+  const targetModuleId = targetModuleEl.dataset.moduleId;
+  const sourceModule = appData.modules.find(m => m.id === draggedModuleItem.moduleId);
+  const targetModule = appData.modules.find(m => m.id === targetModuleId);
+
+  if (!sourceModule || !targetModule) return;
+
+  const sourceItemIndex = sourceModule.items.findIndex(i => i.id === draggedModuleItem.itemId);
+  if (sourceItemIndex === -1) return;
+
+  const [movedItem] = sourceModule.items.splice(sourceItemIndex, 1);
+
+  if (targetEl) {
+    const targetItemId = targetEl.dataset.itemId;
+    const targetItemIndex = targetModule.items.findIndex(i => i.id === targetItemId);
+    targetModule.items.splice(targetItemIndex, 0, movedItem);
+  } else {
+    targetModule.items.push(movedItem);
+  }
+
+  // Update positions
+  sourceModule.items.forEach((item, i) => item.position = i);
+  targetModule.items.forEach((item, i) => item.position = i);
+
+  saveData(appData);
+  renderModules();
+}
+
+function handleModuleItemDragEnd(event) {
+  event.target.classList.remove('dragging');
+  draggedModuleItem = null;
+}
+
+function openModuleModal(moduleId = null) {
+  generateModals();
+  const module = moduleId ? appData.modules.find(m => m.id === moduleId) : null;
+
+  document.getElementById('moduleModalTitle').textContent = module ? 'Edit Module' : 'New Module';
+  document.getElementById('moduleName').value = module ? module.name : '';
+  document.getElementById('moduleId').value = moduleId || '';
+
+  openModal('moduleModal');
+}
+
+function saveModule() {
+  const moduleId = document.getElementById('moduleId').value;
+  const name = document.getElementById('moduleName').value.trim();
+
+  if (!name) {
+    showToast('Module name is required', 'error');
+    return;
+  }
+
+  if (!appData.modules) appData.modules = [];
+
+  if (moduleId) {
+    const module = appData.modules.find(m => m.id === moduleId);
+    if (module) {
+      module.name = name;
+    }
+  } else {
+    const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
+    const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
+
+    appData.modules.push({
+      id: generateId(),
+      courseId: activeCourseId,
+      name: name,
+      position: maxPosition,
+      items: []
+    });
+  }
+
+  saveData(appData);
+  closeModal('moduleModal');
+  renderModules();
+  showToast(moduleId ? 'Module updated!' : 'Module created!', 'success');
+}
+
+function editModule(moduleId) {
+  openModuleModal(moduleId);
+}
+
+function deleteModule(moduleId) {
+  confirm('Delete this module and all its items?', () => {
+    appData.modules = appData.modules.filter(m => m.id !== moduleId);
+    saveData(appData);
+    renderModules();
+    showToast('Module deleted', 'success');
+  });
+}
+
+function openAddModuleItemModal(moduleId) {
+  generateModals();
+  document.getElementById('addItemModuleId').value = moduleId;
+  document.getElementById('addItemType').value = 'assignment';
+  updateAddItemOptions();
+  openModal('addModuleItemModal');
+}
+
+function updateAddItemOptions() {
+  const type = document.getElementById('addItemType').value;
+  const select = document.getElementById('addItemRef');
+
+  let options = [];
+
+  if (type === 'assignment') {
+    const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
+    options = assignments.map(a => `<option value="${a.id}">${a.title}${a.status === 'draft' ? ' (draft)' : ''}</option>`);
+  } else if (type === 'quiz') {
+    const quizzes = appData.quizzes.filter(q => q.courseId === activeCourseId);
+    options = quizzes.map(q => `<option value="${q.id}">${q.title}${q.status === 'draft' ? ' (draft)' : ''}</option>`);
+  } else if (type === 'file') {
+    const files = appData.files.filter(f => f.courseId === activeCourseId);
+    options = files.map(f => `<option value="${f.id}">${f.name}</option>`);
+  }
+
+  select.innerHTML = options.length > 0 ? options.join('') : '<option value="">No items available</option>';
+}
+
+function addModuleItem() {
+  const moduleId = document.getElementById('addItemModuleId').value;
+  const type = document.getElementById('addItemType').value;
+  const refId = document.getElementById('addItemRef').value;
+
+  if (!refId) {
+    showToast('Please select an item to add', 'error');
+    return;
+  }
+
+  const module = appData.modules.find(m => m.id === moduleId);
+  if (!module) return;
+
+  // Check if item already exists in module
+  if (module.items.some(i => i.refId === refId && i.type === type)) {
+    showToast('This item is already in the module', 'error');
+    return;
+  }
+
+  const maxPosition = module.items.length > 0 ? Math.max(...module.items.map(i => i.position)) + 1 : 0;
+
+  module.items.push({
+    id: generateId(),
+    type: type,
+    refId: refId,
+    position: maxPosition
+  });
+
+  saveData(appData);
+  closeModal('addModuleItemModal');
+  renderModules();
+  showToast('Item added to module!', 'success');
+}
+
+function removeModuleItem(moduleId, itemId) {
+  const module = appData.modules.find(m => m.id === moduleId);
+  if (!module) return;
+
+  module.items = module.items.filter(i => i.id !== itemId);
+  module.items.forEach((item, i) => item.position = i);
+
+  saveData(appData);
+  renderModules();
+  showToast('Item removed from module', 'success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI SYLLABUS PARSER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function openSyllabusParserModal() {
+  generateModals();
+  document.getElementById('syllabusFile').value = '';
+  document.getElementById('syllabusText').value = '';
+  document.getElementById('syllabusParsedPreview').innerHTML = '<div class="muted">Upload a syllabus or paste text to extract modules and assignments</div>';
+  openModal('syllabusParserModal');
+}
+
+async function parseSyllabus() {
+  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  if (!apiKey) {
+    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    return;
+  }
+
+  const fileInput = document.getElementById('syllabusFile');
+  const textInput = document.getElementById('syllabusText').value.trim();
+
+  let syllabusContent = textInput;
+
+  // If file uploaded, read it
+  if (fileInput.files.length > 0) {
+    const file = fileInput.files[0];
+    try {
+      syllabusContent = await readFileAsText(file);
+    } catch (err) {
+      showToast('Could not read file: ' + err.message, 'error');
+      return;
+    }
+  }
+
+  if (!syllabusContent) {
+    showToast('Please upload a syllabus file or paste syllabus text', 'error');
+    return;
+  }
+
+  const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, and due dates. Return ONLY valid JSON with the following structure:
+{
+  "modules": [
+    {
+      "name": "Module/Week/Unit name",
+      "items": [
+        {
+          "type": "assignment" | "quiz" | "reading",
+          "title": "Item title",
+          "description": "Brief description if available",
+          "dueDate": "ISO date string if available, or null",
+          "points": "number if available, or 100"
+        }
+      ]
+    }
+  ]
+}
+
+Mark all items as drafts by default. If the syllabus mentions exams, quizzes, or tests, set type to "quiz". If it mentions homework, problem sets, essays, or projects, set type to "assignment".`;
+
+  try {
+    showToast('Parsing syllabus with AI...', 'info');
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: systemPrompt + '\n\nSYLLABUS:\n' + syllabusContent }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.2
+        }
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(data.error.message);
+    }
+
+    const text = data.candidates[0].content.parts[0].text;
+    const parsed = parseAiJsonResponse(text);
+
+    renderSyllabusParsedPreview(parsed);
+    showToast('Syllabus parsed! Review and import.', 'success');
+
+  } catch (err) {
+    console.error('Syllabus parsing error:', err);
+    showToast('Syllabus parsing failed: ' + err.message, 'error');
+  }
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+let parsedSyllabusData = null;
+
+function renderSyllabusParsedPreview(parsed) {
+  parsedSyllabusData = parsed;
+  const preview = document.getElementById('syllabusParsedPreview');
+
+  if (!parsed || !parsed.modules || parsed.modules.length === 0) {
+    preview.innerHTML = '<div class="muted">No modules found in syllabus</div>';
+    return;
+  }
+
+  const html = parsed.modules.map((mod, modIndex) => `
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-header">
+        <label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" checked data-module-index="${modIndex}" class="syllabus-module-check">
+          <strong>${escapeHtml(mod.name)}</strong>
+        </label>
+      </div>
+      <div style="padding:12px;">
+        ${(mod.items || []).map((item, itemIndex) => `
+          <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+            <input type="checkbox" checked data-module-index="${modIndex}" data-item-index="${itemIndex}" class="syllabus-item-check">
+            <span class="muted">${item.type === 'quiz' ? '❓' : '📝'}</span>
+            <span>${escapeHtml(item.title)}</span>
+            <span class="status-badge draft">(draft)</span>
+            ${item.dueDate ? `<span class="muted">Due: ${new Date(item.dueDate).toLocaleDateString()}</span>` : ''}
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  preview.innerHTML = html + `
+    <button class="btn btn-primary" onclick="importParsedSyllabus()" style="margin-top:16px;">Import Selected Items as Drafts</button>
+  `;
+}
+
+function importParsedSyllabus() {
+  if (!parsedSyllabusData || !parsedSyllabusData.modules) {
+    showToast('No parsed data to import', 'error');
+    return;
+  }
+
+  if (!appData.modules) appData.modules = [];
+
+  let modulesCreated = 0;
+  let itemsCreated = 0;
+
+  const checkedModules = document.querySelectorAll('.syllabus-module-check:checked');
+  const checkedModuleIndices = new Set(Array.from(checkedModules).map(el => parseInt(el.dataset.moduleIndex)));
+
+  const checkedItems = document.querySelectorAll('.syllabus-item-check:checked');
+  const checkedItemsMap = {};
+  checkedItems.forEach(el => {
+    const modIdx = parseInt(el.dataset.moduleIndex);
+    const itemIdx = parseInt(el.dataset.itemIndex);
+    if (!checkedItemsMap[modIdx]) checkedItemsMap[modIdx] = new Set();
+    checkedItemsMap[modIdx].add(itemIdx);
+  });
+
+  parsedSyllabusData.modules.forEach((mod, modIndex) => {
+    if (!checkedModuleIndices.has(modIndex)) return;
+
+    const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
+    const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
+
+    const newModule = {
+      id: generateId(),
+      courseId: activeCourseId,
+      name: mod.name,
+      position: maxPosition + modulesCreated,
+      items: []
+    };
+
+    (mod.items || []).forEach((item, itemIndex) => {
+      if (!checkedItemsMap[modIndex] || !checkedItemsMap[modIndex].has(itemIndex)) return;
+
+      let refId = null;
+
+      if (item.type === 'quiz') {
+        // Create quiz
+        const newQuiz = {
+          id: generateId(),
+          courseId: activeCourseId,
+          title: item.title,
+          description: item.description || '',
+          status: 'draft',
+          dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
+          createdAt: new Date().toISOString(),
+          timeLimit: 30,
+          attempts: 1,
+          randomizeQuestions: false,
+          questionPoolEnabled: false,
+          questionSelectCount: 0,
+          questions: []
+        };
+        appData.quizzes.push(newQuiz);
+        refId = newQuiz.id;
+
+        newModule.items.push({
+          id: generateId(),
+          type: 'quiz',
+          refId: refId,
+          position: newModule.items.length
+        });
+      } else {
+        // Create assignment
+        const newAssignment = {
+          id: generateId(),
+          courseId: activeCourseId,
+          title: item.title,
+          description: item.description || '',
+          points: item.points || 100,
+          status: 'draft',
+          dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
+          createdAt: new Date().toISOString(),
+          allowLateSubmissions: true,
+          lateDeduction: 10,
+          allowResubmission: false,
+          category: 'homework',
+          rubric: null
+        };
+        appData.assignments.push(newAssignment);
+        refId = newAssignment.id;
+
+        newModule.items.push({
+          id: generateId(),
+          type: 'assignment',
+          refId: refId,
+          position: newModule.items.length
+        });
+      }
+
+      itemsCreated++;
+    });
+
+    appData.modules.push(newModule);
+    modulesCreated++;
+  });
+
+  saveData(appData);
+  closeModal('syllabusParserModal');
+  renderModules();
+  renderAssignments();
+  showToast(`Imported ${modulesCreated} modules with ${itemsCreated} items as drafts!`, 'success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI AUDIO INPUT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function openAudioInputModal() {
+  generateModals();
+  document.getElementById('audioFile').value = '';
+  document.getElementById('audioPreview').innerHTML = '';
+  document.getElementById('audioTranscription').value = '';
+  document.getElementById('audioOutputType').value = 'announcement';
+  document.getElementById('audioParsedPreview').innerHTML = '<div class="muted">Record or upload audio to transcribe and create LMS objects</div>';
+  updateAudioRecordingState(false);
+  openModal('audioInputModal');
+}
+
+function updateAudioRecordingState(isRecording) {
+  const startBtn = document.getElementById('audioStartRecording');
+  const stopBtn = document.getElementById('audioStopRecording');
+
+  if (startBtn) startBtn.style.display = isRecording ? 'none' : 'inline-flex';
+  if (stopBtn) stopBtn.style.display = isRecording ? 'inline-flex' : 'none';
+}
+
+async function startAudioRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = (event) => {
+      audioChunks.push(event.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      document.getElementById('audioPreview').innerHTML = `
+        <audio controls src="${audioUrl}" style="width:100%;"></audio>
+        <div class="muted" style="margin-top:8px;">Recording complete. Click "Transcribe" to process.</div>
+      `;
+
+      // Store blob for later use
+      document.getElementById('audioPreview').dataset.audioBlob = audioUrl;
+      window.lastRecordedAudioBlob = audioBlob;
+
+      stream.getTracks().forEach(track => track.stop());
+    };
+
+    mediaRecorder.start();
+    updateAudioRecordingState(true);
+    showToast('Recording started...', 'info');
+
+  } catch (err) {
+    console.error('Audio recording error:', err);
+    showToast('Could not access microphone: ' + err.message, 'error');
+  }
+}
+
+function stopAudioRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    updateAudioRecordingState(false);
+    showToast('Recording stopped', 'success');
+  }
+}
+
+async function transcribeAudio() {
+  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  if (!apiKey) {
+    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    return;
+  }
+
+  let audioData = null;
+  let mimeType = 'audio/webm';
+
+  // Check for uploaded file first
+  const fileInput = document.getElementById('audioFile');
+  if (fileInput.files.length > 0) {
+    const file = fileInput.files[0];
+    mimeType = file.type || 'audio/webm';
+    audioData = await fileToBase64(file);
+  } else if (window.lastRecordedAudioBlob) {
+    audioData = await fileToBase64(window.lastRecordedAudioBlob);
+  }
+
+  if (!audioData) {
+    showToast('Please record or upload audio first', 'error');
+    return;
+  }
+
+  const outputType = document.getElementById('audioOutputType').value;
+
+  let systemPrompt = '';
+  if (outputType === 'announcement') {
+    systemPrompt = `Transcribe this audio and convert it into a course announcement. The user may specify timing like "send at midnight tomorrow" or "post this now". Return ONLY valid JSON:
+{
+  "transcription": "The full transcription of the audio",
+  "announcement": {
+    "title": "A clear title for the announcement",
+    "content": "The announcement content in natural paragraphs, professional tone",
+    "scheduledFor": "ISO date string if a specific time was mentioned, or null for immediate"
+  }
+}`;
+  } else {
+    systemPrompt = `Transcribe this audio and convert it into a quiz. The user may specify details like "five questions", "due at 2pm on Dec 18", "available immediately", "randomized order", "pull from question bank". Return ONLY valid JSON:
+{
+  "transcription": "The full transcription of the audio",
+  "quiz": {
+    "title": "Quiz title",
+    "description": "Quiz description",
+    "dueDate": "ISO date string if mentioned",
+    "availableFrom": "ISO date string if mentioned, or null for immediate",
+    "timeLimit": "number in minutes if mentioned, or 0 for unlimited",
+    "randomizeQuestions": true/false,
+    "questionBankName": "Name of question bank if mentioned, or null",
+    "questionCount": "number of questions to include"
+  }
+}`;
+  }
+
+  try {
+    showToast('Transcribing audio with Gemini...', 'info');
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: audioData
+              }
+            },
+            { text: systemPrompt }
+          ]
+        }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.2
+        }
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(data.error.message);
+    }
+
+    const text = data.candidates[0].content.parts[0].text;
+    const parsed = parseAiJsonResponse(text);
+
+    // Show transcription
+    document.getElementById('audioTranscription').value = parsed.transcription || '';
+
+    // Render preview
+    renderAudioParsedPreview(parsed, outputType);
+    showToast('Audio transcribed successfully!', 'success');
+
+  } catch (err) {
+    console.error('Audio transcription error:', err);
+    showToast('Transcription failed: ' + err.message, 'error');
+  }
+}
+
+async function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+let parsedAudioData = null;
+
+function renderAudioParsedPreview(parsed, outputType) {
+  parsedAudioData = { ...parsed, outputType };
+  const preview = document.getElementById('audioParsedPreview');
+
+  if (outputType === 'announcement' && parsed.announcement) {
+    const ann = parsed.announcement;
+    preview.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">${escapeHtml(ann.title || 'Untitled')}</div>
+        </div>
+        <div class="markdown-content">${renderMarkdown(ann.content || '')}</div>
+        ${ann.scheduledFor ? `<div class="muted" style="margin-top:12px;">📅 Scheduled for: ${new Date(ann.scheduledFor).toLocaleString()}</div>` : '<div class="muted" style="margin-top:12px;">📤 Ready to post immediately</div>'}
+      </div>
+      <button class="btn btn-primary" onclick="applyAudioParsedResult()" style="margin-top:16px;">Create Announcement</button>
+    `;
+  } else if (outputType === 'quiz' && parsed.quiz) {
+    const quiz = parsed.quiz;
+    preview.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">${escapeHtml(quiz.title || 'Untitled Quiz')}</div>
+        </div>
+        <div class="markdown-content">${renderMarkdown(quiz.description || '')}</div>
+        <div style="margin-top:12px;">
+          ${quiz.dueDate ? `<div class="muted">📅 Due: ${new Date(quiz.dueDate).toLocaleString()}</div>` : ''}
+          ${quiz.availableFrom ? `<div class="muted">🔓 Available from: ${new Date(quiz.availableFrom).toLocaleString()}</div>` : '<div class="muted">🔓 Available immediately</div>'}
+          ${quiz.timeLimit ? `<div class="muted">⏱️ Time limit: ${quiz.timeLimit} minutes</div>` : ''}
+          ${quiz.randomizeQuestions ? '<div class="muted">🔀 Questions randomized</div>' : ''}
+          ${quiz.questionBankName ? `<div class="muted">📚 Pull from: ${escapeHtml(quiz.questionBankName)}</div>` : ''}
+          ${quiz.questionCount ? `<div class="muted">📝 ${quiz.questionCount} questions</div>` : ''}
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="applyAudioParsedResult()" style="margin-top:16px;">Create Quiz</button>
+    `;
+  } else {
+    preview.innerHTML = '<div class="muted">Could not parse audio content</div>';
+  }
+}
+
+function applyAudioParsedResult() {
+  if (!parsedAudioData) {
+    showToast('No parsed data to apply', 'error');
+    return;
+  }
+
+  if (parsedAudioData.outputType === 'announcement' && parsedAudioData.announcement) {
+    const ann = parsedAudioData.announcement;
+
+    appData.announcements.push({
+      id: generateId(),
+      courseId: activeCourseId,
+      title: ann.title || 'Untitled Announcement',
+      content: ann.content || '',
+      pinned: false,
+      authorId: appData.currentUser.id,
+      createdAt: new Date().toISOString(),
+      scheduledFor: ann.scheduledFor || null
+    });
+
+    saveData(appData);
+    closeModal('audioInputModal');
+    renderUpdates();
+    showToast('Announcement created!', 'success');
+
+  } else if (parsedAudioData.outputType === 'quiz' && parsedAudioData.quiz) {
+    const quiz = parsedAudioData.quiz;
+
+    const newQuiz = {
+      id: generateId(),
+      courseId: activeCourseId,
+      title: quiz.title || 'Untitled Quiz',
+      description: quiz.description || '',
+      status: 'draft',
+      dueDate: quiz.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
+      createdAt: new Date().toISOString(),
+      timeLimit: quiz.timeLimit || 0,
+      attempts: 1,
+      randomizeQuestions: quiz.randomizeQuestions || false,
+      questionPoolEnabled: !!quiz.questionBankName,
+      questionSelectCount: quiz.questionCount || 5,
+      questions: []
+    };
+
+    appData.quizzes.push(newQuiz);
+    saveData(appData);
+    closeModal('audioInputModal');
+
+    // Open quiz editor
+    openQuizModal(newQuiz.id);
+    showToast('Quiz created! Add questions to complete it.', 'success');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPEEDGRADER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function openSpeedGrader(assignmentId) {
+  currentSpeedGraderAssignmentId = assignmentId;
+
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment) {
+    showToast('Assignment not found', 'error');
+    return;
+  }
+
+  // Get all students who have submitted
+  const submissions = appData.submissions.filter(s => s.assignmentId === assignmentId);
+  const studentIds = [...new Set(submissions.map(s => s.userId))];
+
+  // Get all enrolled students for this course
+  const enrolledStudents = appData.enrollments
+    .filter(e => e.courseId === assignment.courseId && e.role === 'student')
+    .map(e => e.userId);
+
+  // Create list of all students (submitted + not submitted)
+  speedGraderStudents = enrolledStudents.map(userId => {
+    const user = getUserById(userId);
+    const submission = submissions.find(s => s.userId === userId);
+    const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
+
+    return {
+      userId,
+      user,
+      submission,
+      grade
+    };
+  }).sort((a, b) => {
+    // Sort by: ungraded with submission first, then graded, then no submission
+    const aScore = a.submission ? (a.grade ? 2 : 0) : 3;
+    const bScore = b.submission ? (b.grade ? 2 : 0) : 3;
+    return aScore - bScore;
+  });
+
+  currentSpeedGraderStudentIndex = 0;
+
+  generateModals();
+  renderSpeedGrader();
+  openModal('speedGraderModal');
+}
+
+function renderSpeedGrader() {
+  const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
+  if (!assignment || speedGraderStudents.length === 0) {
+    showToast('No students to grade', 'error');
+    closeModal('speedGraderModal');
+    return;
+  }
+
+  const current = speedGraderStudents[currentSpeedGraderStudentIndex];
+  const student = current.user;
+  const submission = current.submission;
+  const grade = current.grade;
+
+  // Count graded vs total
+  const gradedCount = speedGraderStudents.filter(s => s.grade).length;
+  const submittedCount = speedGraderStudents.filter(s => s.submission).length;
+
+  document.getElementById('speedGraderTitle').textContent = `SpeedGrader: ${assignment.title}`;
+
+  document.getElementById('speedGraderNav').innerHTML = `
+    <button class="btn btn-secondary" onclick="speedGraderPrev()" ${currentSpeedGraderStudentIndex === 0 ? 'disabled' : ''}>← Previous</button>
+    <div class="speedgrader-progress">
+      <span>${currentSpeedGraderStudentIndex + 1} of ${speedGraderStudents.length}</span>
+      <span class="muted">(${gradedCount} graded / ${submittedCount} submitted)</span>
+    </div>
+    <button class="btn btn-secondary" onclick="speedGraderNext()" ${currentSpeedGraderStudentIndex === speedGraderStudents.length - 1 ? 'disabled' : ''}>Next →</button>
+  `;
+
+  // Student selector dropdown
+  document.getElementById('speedGraderStudentSelect').innerHTML = speedGraderStudents.map((s, i) => {
+    const status = s.grade ? '✓' : (s.submission ? '○' : '—');
+    return `<option value="${i}" ${i === currentSpeedGraderStudentIndex ? 'selected' : ''}>${status} ${s.user ? s.user.name : 'Unknown'}</option>`;
+  }).join('');
+
+  // Student info
+  document.getElementById('speedGraderStudentInfo').innerHTML = `
+    <div class="user-avatar" style="width:48px; height:48px; font-size:1.2rem;">${student ? student.avatar : '?'}</div>
+    <div>
+      <div style="font-weight:600; font-size:1.1rem;">${student ? student.name : 'Unknown Student'}</div>
+      <div class="muted">${student ? student.email : ''}</div>
+    </div>
+  `;
+
+  // Submission content
+  if (submission) {
+    const lateDeduction = calculateLateDeduction(assignment, submission.submittedAt);
+    const isLate = lateDeduction > 0;
+
+    document.getElementById('speedGraderSubmission').innerHTML = `
+      <div class="submission-header">
+        <span>Submitted: ${formatDate(submission.submittedAt)}</span>
+        ${isLate ? `<span class="status-badge" style="background:var(--warning);">⚠️ LATE (-${lateDeduction}%)</span>` : ''}
+        ${submission.fileName ? `<span class="muted">📎 ${submission.fileName}</span>` : ''}
+      </div>
+      <div class="submission-content">${submission.text || '<em class="muted">No text submission</em>'}</div>
+    `;
+  } else {
+    document.getElementById('speedGraderSubmission').innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">📭</div>
+        <div class="empty-state-text">No submission yet</div>
+      </div>
+    `;
+  }
+
+  // Rubric if exists
+  const rubric = assignment.rubric ? appData.rubrics.find(r => r.id === assignment.rubric) : null;
+  if (rubric && rubric.criteria) {
+    document.getElementById('speedGraderRubric').innerHTML = `
+      <div class="rubric-section">
+        <h4>Rubric</h4>
+        ${rubric.criteria.map((c, i) => `
+          <div class="rubric-criterion">
+            <div class="rubric-criterion-header">
+              <span>${escapeHtml(c.name)}</span>
+              <span>${c.points} pts</span>
+            </div>
+            <input type="number" class="form-input rubric-score-input" id="rubricScore_${i}"
+                   data-max="${c.points}" min="0" max="${c.points}"
+                   value="${grade ? (grade.rubricScores && grade.rubricScores[i] !== undefined ? grade.rubricScores[i] : '') : ''}"
+                   placeholder="0-${c.points}">
+            <div class="muted" style="font-size:0.85rem;">${escapeHtml(c.description || '')}</div>
+          </div>
+        `).join('')}
+        <button class="btn btn-secondary btn-sm" onclick="calculateSpeedGraderRubricTotal()" style="margin-top:8px;">Calculate Total</button>
+      </div>
+    `;
+  } else {
+    document.getElementById('speedGraderRubric').innerHTML = '';
+  }
+
+  // Grade form
+  document.getElementById('speedGraderScore').value = grade ? grade.score : '';
+  document.getElementById('speedGraderScore').max = assignment.points;
+  document.getElementById('speedGraderScoreMax').textContent = `/ ${assignment.points}`;
+  document.getElementById('speedGraderFeedback').value = grade ? grade.feedback : '';
+  document.getElementById('speedGraderRelease').checked = grade ? grade.released : false;
+
+  // Disable grading if no submission
+  const gradeBtn = document.getElementById('speedGraderSaveBtn');
+  const aiBtn = document.getElementById('speedGraderAiBtn');
+  if (!submission) {
+    gradeBtn.disabled = true;
+    aiBtn.disabled = true;
+  } else {
+    gradeBtn.disabled = false;
+    aiBtn.disabled = false;
+  }
+}
+
+function speedGraderSelectStudent(index) {
+  currentSpeedGraderStudentIndex = parseInt(index);
+  renderSpeedGrader();
+}
+
+function speedGraderPrev() {
+  if (currentSpeedGraderStudentIndex > 0) {
+    currentSpeedGraderStudentIndex--;
+    renderSpeedGrader();
+  }
+}
+
+function speedGraderNext() {
+  if (currentSpeedGraderStudentIndex < speedGraderStudents.length - 1) {
+    currentSpeedGraderStudentIndex++;
+    renderSpeedGrader();
+  }
+}
+
+function calculateSpeedGraderRubricTotal() {
+  const rubricInputs = document.querySelectorAll('.rubric-score-input');
+  let total = 0;
+
+  rubricInputs.forEach(input => {
+    const val = parseFloat(input.value) || 0;
+    const max = parseFloat(input.dataset.max) || 0;
+    total += Math.min(val, max);
+  });
+
+  document.getElementById('speedGraderScore').value = total;
+}
+
+async function speedGraderDraftWithAI() {
+  const current = speedGraderStudents[currentSpeedGraderStudentIndex];
+  if (!current.submission) {
+    showToast('No submission to grade', 'error');
+    return;
+  }
+
+  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  if (!apiKey) {
+    showToast('Gemini API key not configured', 'error');
+    return;
+  }
+
+  const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
+  const rubric = assignment.rubric ? appData.rubrics.find(r => r.id === assignment.rubric) : null;
+
+  let rubricContext = '';
+  if (rubric && rubric.criteria) {
+    rubricContext = '\n\nRubric criteria:\n' + rubric.criteria.map(c => `- ${c.name} (${c.points} pts): ${c.description}`).join('\n');
+  }
+
+  const prompt = `Grade this student submission for the assignment "${assignment.title}".
+Assignment description: ${assignment.description}
+Max points: ${assignment.points}
+${rubricContext}
+
+Student submission:
+${current.submission.text || 'No text submitted'}
+
+Provide a score (0-${assignment.points}) and constructive feedback. Return JSON:
+{"score": <number>, "feedback": "<string>"}`;
+
+  try {
+    showToast('Drafting grade with AI...', 'info');
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.2
+        }
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const result = parseAiJsonResponse(data.candidates[0].content.parts[0].text);
+
+    document.getElementById('speedGraderScore').value = result.score;
+    document.getElementById('speedGraderFeedback').value = result.feedback;
+    showToast('AI draft ready! Review and save.', 'success');
+
+  } catch (err) {
+    console.error('AI grading error:', err);
+    showToast('AI drafting failed: ' + err.message, 'error');
+  }
+}
+
+function saveSpeedGraderGrade() {
+  const current = speedGraderStudents[currentSpeedGraderStudentIndex];
+  if (!current.submission) {
+    showToast('No submission to grade', 'error');
+    return;
+  }
+
+  const score = parseFloat(document.getElementById('speedGraderScore').value);
+  const feedback = document.getElementById('speedGraderFeedback').value.trim();
+  const release = document.getElementById('speedGraderRelease').checked;
+
+  if (isNaN(score)) {
+    showToast('Please enter a valid score', 'error');
+    return;
+  }
+
+  const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
+
+  // Apply late deduction if applicable
+  let finalScore = score;
+  const lateDeduction = calculateLateDeduction(assignment, current.submission.submittedAt);
+  if (lateDeduction > 0) {
+    finalScore = Math.round(score * (1 - lateDeduction / 100) * 10) / 10;
+  }
+
+  // Get rubric scores if applicable
+  let rubricScores = null;
+  const rubricInputs = document.querySelectorAll('.rubric-score-input');
+  if (rubricInputs.length > 0) {
+    rubricScores = Array.from(rubricInputs).map(input => parseFloat(input.value) || 0);
+  }
+
+  // Remove existing grade
+  appData.grades = appData.grades.filter(g => g.submissionId !== current.submission.id);
+
+  // Add new grade
+  const gradeObj = {
+    submissionId: current.submission.id,
+    score: finalScore,
+    feedback: feedback,
+    released: release,
+    gradedBy: appData.currentUser.id,
+    gradedAt: new Date().toISOString()
+  };
+
+  if (rubricScores) {
+    gradeObj.rubricScores = rubricScores;
+  }
+
+  appData.grades.push(gradeObj);
+
+  // Update local state
+  current.grade = gradeObj;
+
+  // Notify if released
+  if (release) {
+    addNotification(current.userId, 'grade', 'Grade Released',
+      `Your grade for ${assignment.title} is now available`,
+      assignment.courseId
+    );
+  }
+
+  saveData(appData);
+  showToast(`Grade saved${lateDeduction > 0 ? ` (${lateDeduction}% late penalty applied)` : ''}!`, 'success');
+
+  // Auto-advance to next ungraded
+  const nextUngraded = speedGraderStudents.findIndex((s, i) => i > currentSpeedGraderStudentIndex && s.submission && !s.grade);
+  if (nextUngraded !== -1) {
+    currentSpeedGraderStudentIndex = nextUngraded;
+    renderSpeedGrader();
+  } else {
+    renderSpeedGrader();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4055,6 +5298,179 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('rubricModal')">Cancel</button>
           <button class="btn btn-primary" onclick="saveRubric()">Save Rubric</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module Modal -->
+    <div class="modal-overlay" id="moduleModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title" id="moduleModalTitle">New Module</h2>
+          <button class="modal-close" onclick="closeModal('moduleModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="moduleId">
+          <div class="form-group">
+            <label class="form-label">Module Name</label>
+            <input type="text" class="form-input" id="moduleName" placeholder="e.g., Week 1: Introduction">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('moduleModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveModule()">Save Module</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Module Item Modal -->
+    <div class="modal-overlay" id="addModuleItemModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Add Item to Module</h2>
+          <button class="modal-close" onclick="closeModal('addModuleItemModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="addItemModuleId">
+          <div class="form-group">
+            <label class="form-label">Item Type</label>
+            <select class="form-select" id="addItemType" onchange="updateAddItemOptions()">
+              <option value="assignment">Assignment</option>
+              <option value="quiz">Quiz</option>
+              <option value="file">File</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Select Item</label>
+            <select class="form-select" id="addItemRef"></select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('addModuleItemModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="addModuleItem()">Add Item</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Syllabus Parser Modal -->
+    <div class="modal-overlay" id="syllabusParserModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Import from Syllabus</h2>
+          <button class="modal-close" onclick="closeModal('syllabusParserModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="hint" style="margin-bottom:16px;">
+            Upload a syllabus file or paste syllabus text. AI will extract modules, assignments, and quizzes as drafts.
+          </div>
+          <div class="form-group">
+            <label class="form-label">Upload Syllabus (PDF, DOC, TXT)</label>
+            <input type="file" class="form-input" id="syllabusFile" accept=".pdf,.doc,.docx,.txt">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Or Paste Syllabus Text</label>
+            <textarea class="form-textarea" id="syllabusText" rows="8" placeholder="Paste syllabus content here..."></textarea>
+          </div>
+          <button class="btn btn-primary" onclick="parseSyllabus()" style="margin-bottom:16px;">Parse with AI</button>
+          <div class="card" style="padding:16px; max-height:400px; overflow-y:auto;">
+            <div class="card-title">Parsed Content</div>
+            <div id="syllabusParsedPreview"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('syllabusParserModal')">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio Input Modal -->
+    <div class="modal-overlay" id="audioInputModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Voice Command</h2>
+          <button class="modal-close" onclick="closeModal('audioInputModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="hint" style="margin-bottom:16px;">
+            Record or upload audio to create announcements or quizzes. Say things like "send an announcement at midnight tomorrow about the exam" or "create a quiz with five questions, due at 2pm on Dec 18".
+          </div>
+          <div class="form-group">
+            <label class="form-label">Output Type</label>
+            <select class="form-select" id="audioOutputType">
+              <option value="announcement">Announcement</option>
+              <option value="quiz">Quiz</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Record Audio</label>
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <button class="btn btn-primary" id="audioStartRecording" onclick="startAudioRecording()">🎤 Start Recording</button>
+              <button class="btn btn-secondary" id="audioStopRecording" onclick="stopAudioRecording()" style="display:none;">⏹️ Stop Recording</button>
+            </div>
+            <div id="audioPreview"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Or Upload Audio File</label>
+            <input type="file" class="form-input" id="audioFile" accept="audio/*">
+          </div>
+          <button class="btn btn-primary" onclick="transcribeAudio()" style="margin-bottom:16px;">Transcribe with AI</button>
+          <div class="form-group">
+            <label class="form-label">Transcription</label>
+            <textarea class="form-textarea" id="audioTranscription" rows="3" readonly placeholder="Transcription will appear here..."></textarea>
+          </div>
+          <div class="card" style="padding:16px;">
+            <div class="card-title">Preview</div>
+            <div id="audioParsedPreview"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('audioInputModal')">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SpeedGrader Modal -->
+    <div class="modal-overlay" id="speedGraderModal">
+      <div class="modal" style="max-width:1100px; height:90vh;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="speedGraderTitle">SpeedGrader</h2>
+          <button class="modal-close" onclick="closeModal('speedGraderModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="display:flex; flex-direction:column; height:calc(100% - 120px); overflow:hidden;">
+          <div id="speedGraderNav" style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border-color);"></div>
+          <div style="margin:12px 0;">
+            <select class="form-select" id="speedGraderStudentSelect" onchange="speedGraderSelectStudent(this.value)" style="width:100%;"></select>
+          </div>
+          <div style="display:flex; gap:24px; flex:1; overflow:hidden;">
+            <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+              <div id="speedGraderStudentInfo" style="display:flex; align-items:center; gap:12px; padding:12px 0;"></div>
+              <div id="speedGraderSubmission" style="flex:1; overflow-y:auto; padding:16px; background:var(--bg-color); border-radius:var(--radius);"></div>
+            </div>
+            <div style="width:350px; display:flex; flex-direction:column; gap:16px; overflow-y:auto;">
+              <div id="speedGraderRubric"></div>
+              <div class="form-group">
+                <label class="form-label">Score</label>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <input type="number" class="form-input" id="speedGraderScore" min="0" style="width:100px;">
+                  <span id="speedGraderScoreMax">/ 100</span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Feedback</label>
+                <textarea class="form-textarea" id="speedGraderFeedback" rows="5" placeholder="Provide feedback..."></textarea>
+              </div>
+              <div class="form-group">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="speedGraderRelease">
+                  <span>Release grade to student</span>
+                </label>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-secondary" id="speedGraderAiBtn" onclick="speedGraderDraftWithAI()">✨ AI Draft</button>
+                <button class="btn btn-primary" id="speedGraderSaveBtn" onclick="saveSpeedGraderGrade()">Save & Next</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

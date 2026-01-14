@@ -961,6 +961,184 @@ body {
 .toast.success { background: var(--success); }
 .toast.error { background: var(--danger); }
 
+/* ───── Modules ───── */
+.module-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+
+.module-card:hover {
+  box-shadow: var(--shadow);
+}
+
+.module-card.dragging {
+  opacity: 0.5;
+  box-shadow: var(--shadow-lg);
+}
+
+.module-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--bg-color);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.module-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.module-drag-handle {
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none;
+  font-size: 1.2rem;
+  letter-spacing: 2px;
+}
+
+.module-drag-handle:active {
+  cursor: grabbing;
+}
+
+.module-title {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.module-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.module-items {
+  padding: 8px;
+}
+
+.module-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.module-item:hover {
+  background: var(--bg-color);
+}
+
+.module-item.dragging {
+  opacity: 0.5;
+  box-shadow: var(--shadow);
+}
+
+.module-item-handle {
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none;
+  font-size: 0.9rem;
+}
+
+.module-item-handle:active {
+  cursor: grabbing;
+}
+
+.module-item-icon {
+  font-size: 1.1rem;
+}
+
+.module-item-title {
+  flex: 1;
+  font-size: 0.95rem;
+}
+
+.module-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* ───── SpeedGrader ───── */
+.speedgrader-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.submission-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.submission-content {
+  white-space: pre-wrap;
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+.rubric-section h4 {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  margin-bottom: 12px;
+}
+
+.rubric-criterion {
+  background: var(--bg-color);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.rubric-criterion-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.rubric-score-input {
+  width: 80px;
+  margin-bottom: 4px;
+}
+
+/* ───── Status Badges ───── */
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.status-badge.draft {
+  background: var(--warning-light);
+  color: var(--warning);
+}
+
+.status-badge.published {
+  background: var(--success-light);
+  color: var(--success);
+}
+
 /* ───── Empty States ───── */
 .empty-state {
   text-align: center;
