@@ -3,6 +3,38 @@
    Local-first LMS with Google SSO, courses, assignments, gradebook, AI
 ═══════════════════════════════════════════════════════════════════════════════ */
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Style Theme Switcher - Check URL query ?style=1, ?style=2, or ?style=3
+// ═══════════════════════════════════════════════════════════════════════════════
+(function initStyleTheme() {
+  const params = new URLSearchParams(window.location.search);
+  const style = params.get('style');
+
+  if (style === '1' || style === '2' || style === '3') {
+    // Apply style class to body as early as possible
+    document.documentElement.classList.add(`style-${style}`);
+
+    // Also apply to body once it's available
+    if (document.body) {
+      document.body.classList.add(`style-${style}`);
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        document.body.classList.add(`style-${style}`);
+        // Add style indicator for testing
+        const indicator = document.createElement('div');
+        indicator.className = 'style-indicator';
+        const styleNames = {
+          '1': 'Style 1: Editorial',
+          '2': 'Style 2: Minimal Luxe',
+          '3': 'Style 3: Contemporary'
+        };
+        indicator.textContent = styleNames[style];
+        document.body.appendChild(indicator);
+      });
+    }
+  }
+})();
+
 const STORAGE_KEY = 'campus_lms_data_v3';
 const ALLOWED_DOMAINS = ['university.edu', 'demo.edu'];
 
