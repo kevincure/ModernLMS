@@ -3,6 +3,38 @@
    Local-first LMS with Google SSO, courses, assignments, gradebook, AI
 ═══════════════════════════════════════════════════════════════════════════════ */
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Style Theme Switcher - Check URL query ?style=1, ?style=2, or ?style=3
+// ═══════════════════════════════════════════════════════════════════════════════
+(function initStyleTheme() {
+  const params = new URLSearchParams(window.location.search);
+  const style = params.get('style');
+
+  if (style === '1' || style === '2' || style === '3') {
+    // Apply style class to body as early as possible
+    document.documentElement.classList.add(`style-${style}`);
+
+    // Also apply to body once it's available
+    if (document.body) {
+      document.body.classList.add(`style-${style}`);
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        document.body.classList.add(`style-${style}`);
+        // Add style indicator for testing
+        const indicator = document.createElement('div');
+        indicator.className = 'style-indicator';
+        const styleNames = {
+          '1': 'Style 1: Editorial',
+          '2': 'Style 2: Minimal Luxe',
+          '3': 'Style 3: Contemporary'
+        };
+        indicator.textContent = styleNames[style];
+        document.body.appendChild(indicator);
+      });
+    }
+  }
+})();
+
 const STORAGE_KEY = 'campus_lms_data_v3';
 const ALLOWED_DOMAINS = ['university.edu', 'demo.edu'];
 
@@ -165,6 +197,8 @@ let speedGraderStudents = [];
 let mediaRecorder = null;
 let audioChunks = [];
 let draggedModuleItem = null;
+let studentViewMode = false; // For professor/TA to toggle student view
+let aiProcessing = false; // Track AI processing state
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATA PERSISTENCE
@@ -688,6 +722,8 @@ function renderTopBarCourse() {
   if (!activeCourseId) {
     titleEl.textContent = 'Select a course';
     subtitleEl.textContent = 'Choose a course from the Courses tab';
+    studentViewMode = false; // Reset view mode when no course selected
+    renderTopBarViewToggle();
     return;
   }
 
@@ -695,11 +731,15 @@ function renderTopBarCourse() {
   const role = getUserRole(appData.currentUser?.id, activeCourseId);
   if (course) {
     titleEl.textContent = course.name;
-    subtitleEl.textContent = `${course.code} · ${role}`;
+    const viewModeText = studentViewMode ? ' (Student View)' : '';
+    subtitleEl.textContent = `${course.code} · ${role}${viewModeText}`;
   } else {
     titleEl.textContent = 'Select a course';
     subtitleEl.textContent = 'Choose a course from the Courses tab';
   }
+
+  // Update view toggle button
+  renderTopBarViewToggle();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1228,23 +1268,25 @@ function renderAssignments() {
   
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
   
-  if (isStaffUser) {
+  if (isStaffUser && !studentViewMode) {
     setHTML('assignmentsActions', `
-      <button class="btn btn-primary" onclick="openAssignmentModal()">New Assignment</button>
-      <button class="btn btn-secondary" onclick="openQuizModal()">New Quiz</button>
+      <button class="btn btn-primary" onclick="openUnifiedContentModal()">+ New Content</button>
     `);
   } else {
     setHTML('assignmentsActions', '');
   }
   
+  // When in student view mode, show as student would see
+  const effectiveStaff = isStaffUser && !studentViewMode;
+
   const assignments = appData.assignments
     .filter(a => a.courseId === activeCourseId)
-    .filter(a => isStaffUser || a.status === 'published')
+    .filter(a => effectiveStaff || a.status === 'published')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const quizzes = appData.quizzes
     .filter(q => q.courseId === activeCourseId)
-    .filter(q => isStaffUser || q.status === 'published')
+    .filter(q => effectiveStaff || q.status === 'published')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   
   if (assignments.length === 0 && quizzes.length === 0) {
@@ -1257,20 +1299,25 @@ function renderAssignments() {
     const isPast = dueDate < new Date();
     const mySubmission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
     const submissionCount = appData.submissions.filter(s => s.assignmentId === a.id).length;
-    
+    const isPlaceholder = a.isPlaceholder;
+
     let statusBadge = '';
     if (a.status === 'draft') statusBadge = '<span style="padding:4px 8px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.75rem; font-weight:600;">DRAFT</span>';
     if (a.status === 'closed') statusBadge = '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>';
-    
+
+    // Visibility indicator for staff
+    const visibilityBadge = effectiveStaff && a.status !== 'published' ?
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleAssignmentVisibility('${a.id}')" title="Click to publish">👁️‍🗨️ Hidden</span>` : '';
+
     return `
-      <div class="card">
+      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
         <div class="card-header">
           <div>
-            <div class="card-title">${a.title} ${statusBadge}</div>
-            <div class="muted">Due ${formatDate(a.dueDate)} ${isPast ? '(Past due)' : ''} · ${a.points} points</div>
+            <div class="card-title">${escapeHtml(a.title)} ${statusBadge} ${visibilityBadge}</div>
+            <div class="muted">Due ${formatDate(a.dueDate)} ${isPast ? '(Past due)' : ''} · ${a.points} points${a.externalUrl ? ' · 🔗 External Link' : ''}</div>
           </div>
           <div style="display:flex; gap:8px;">
-            ${isStaffUser ? `
+            ${effectiveStaff ? `
               <button class="btn btn-secondary btn-sm" onclick="viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
               <button class="btn btn-secondary btn-sm" onclick="editAssignment('${a.id}')">Edit</button>
             ` : mySubmission ? `
@@ -1281,6 +1328,7 @@ function renderAssignments() {
           </div>
         </div>
         <div class="markdown-content">${renderMarkdown(a.description)}</div>
+        ${a.externalUrl ? `<div style="margin-top:8px;"><a href="${escapeHtml(a.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">🔗 Open External Link</a></div>` : ''}
       </div>
     `;
   }).join('');
@@ -1295,10 +1343,15 @@ function renderAssignments() {
     const attemptsUsed = mySubmissions.length;
     const attemptsAllowed = q.attempts ? q.attempts : null;
     const attemptsLeft = attemptsAllowed ? Math.max(attemptsAllowed - attemptsUsed, 0) : null;
-    
+    const isPlaceholder = q.isPlaceholder;
+
     let statusBadge = '';
     if (q.status === 'draft') statusBadge = '<span style="padding:4px 8px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.75rem; font-weight:600;">DRAFT</span>';
     if (q.status === 'closed') statusBadge = '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>';
+
+    // Visibility indicator for staff
+    const visibilityBadge = effectiveStaff && q.status !== 'published' ?
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">👁️‍🗨️ Hidden</span>` : '';
 
     const timeLimitLabel = q.timeLimit ? `${q.timeLimit} min` : 'No time limit';
     const attemptsLabel = attemptsAllowed ? `${attemptsLeft} of ${attemptsAllowed} left` : 'Unlimited attempts';
@@ -1307,17 +1360,18 @@ function renderAssignments() {
       : 'Not started';
 
     return `
-      <div class="card">
+      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
         <div class="card-header">
           <div>
-            <div class="card-title">${q.title} ${statusBadge}</div>
+            <div class="card-title">${escapeHtml(q.title)} ${statusBadge} ${visibilityBadge}</div>
             <div class="muted">Due ${formatDate(q.dueDate)} ${isPast ? '(Past due)' : ''} · ${quizPoints} points · ${timeLimitLabel}</div>
             <div class="muted" style="font-size:0.85rem;">${attemptsLabel} · ${submissionStatus}</div>
           </div>
           <div style="display:flex; gap:8px;">
-            ${isStaffUser ? `
+            ${effectiveStaff ? `
               <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
               <button class="btn btn-secondary btn-sm" onclick="openQuizModal('${q.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="viewQuizDetails('${q.id}')" title="View full quiz details">👁️ Preview</button>
             ` : latestSubmission ? `
               <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmission('${q.id}')">View Submission</button>
               ${!isPast && (!attemptsAllowed || attemptsLeft > 0) ? `<button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Retake</button>` : ''}
@@ -3092,13 +3146,27 @@ Mark all items as drafts by default. If the syllabus mentions exams, quizzes, or
   }
 
   try {
-    showToast('Parsing syllabus with AI...', 'info');
+    // Show processing notification with warning
+    const preview = document.getElementById('syllabusParsedPreview');
+    preview.innerHTML = `
+      <div style="text-align:center; padding:40px;">
+        <div class="ai-spinner" style="margin:0 auto 16px;"></div>
+        <div style="font-weight:600; margin-bottom:8px;">🔄 Parsing syllabus with AI...</div>
+        <div class="muted">This may take up to a minute. Please do not close this window.</div>
+      </div>
+    `;
+    showToast('Parsing syllabus... please wait', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    // Use retry logic
+    const response = await fetchWithRetry(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      },
+      3
+    );
 
     const data = await response.json();
     if (data.error) {
@@ -3114,6 +3182,8 @@ Mark all items as drafts by default. If the syllabus mentions exams, quizzes, or
   } catch (err) {
     console.error('Syllabus parsing error:', err);
     showToast('Syllabus parsing failed: ' + err.message, 'error');
+    const preview = document.getElementById('syllabusParsedPreview');
+    preview.innerHTML = `<div class="muted">Parsing failed. Please try again.</div>`;
   }
 }
 
@@ -3137,6 +3207,24 @@ function renderSyllabusParsedPreview(parsed) {
     return;
   }
 
+  const getItemIcon = (type) => {
+    switch(type) {
+      case 'quiz': return '❓';
+      case 'reading':
+      case 'file': return '📄';
+      default: return '📝';
+    }
+  };
+
+  const getItemLabel = (type) => {
+    switch(type) {
+      case 'quiz': return 'Quiz placeholder';
+      case 'reading':
+      case 'file': return 'File placeholder';
+      default: return 'Assignment placeholder';
+    }
+  };
+
   const html = parsed.modules.map((mod, modIndex) => `
     <div class="card" style="margin-bottom:12px;">
       <div class="card-header">
@@ -3147,12 +3235,12 @@ function renderSyllabusParsedPreview(parsed) {
       </div>
       <div style="padding:12px;">
         ${(mod.items || []).map((item, itemIndex) => `
-          <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+          <label style="display:flex; align-items:center; gap:8px; padding:4px 0; flex-wrap:wrap;">
             <input type="checkbox" checked data-module-index="${modIndex}" data-item-index="${itemIndex}" class="syllabus-item-check">
-            <span class="muted">${item.type === 'quiz' ? '❓' : '📝'}</span>
+            <span class="muted">${getItemIcon(item.type)}</span>
             <span>${escapeHtml(item.title)}</span>
-            <span class="status-badge draft">(draft)</span>
-            ${item.dueDate ? `<span class="muted">Due: ${new Date(item.dueDate).toLocaleDateString()}</span>` : ''}
+            <span style="padding:2px 6px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.7rem;">${getItemLabel(item.type)}</span>
+            ${item.dueDate ? `<span class="muted" style="font-size:0.85rem;">Due: ${new Date(item.dueDate).toLocaleDateString()}</span>` : ''}
           </label>
         `).join('')}
       </div>
@@ -3160,7 +3248,11 @@ function renderSyllabusParsedPreview(parsed) {
   `).join('');
 
   preview.innerHTML = html + `
-    <button class="btn btn-primary" onclick="importParsedSyllabus()" style="margin-top:16px;">Import Selected Items as Drafts</button>
+    <div class="hint" style="margin:16px 0; padding:12px; background:var(--primary-light); border-radius:var(--radius);">
+      <strong>💡 Placeholders will be created as hidden (draft) by default.</strong><br>
+      You can edit them, use AI to fill in content, or upload files. Click the visibility badge on each item to publish when ready.
+    </div>
+    <button class="btn btn-primary" onclick="importParsedSyllabus()" style="margin-top:8px;">Import Selected Items as Placeholders</button>
   `;
 }
 
@@ -3174,6 +3266,7 @@ function importParsedSyllabus() {
 
   let modulesCreated = 0;
   let itemsCreated = 0;
+  let placeholdersCreated = 0;
 
   const checkedModules = document.querySelectorAll('.syllabus-module-check:checked');
   const checkedModuleIndices = new Set(Array.from(checkedModules).map(el => parseInt(el.dataset.moduleIndex)));
@@ -3207,12 +3300,12 @@ function importParsedSyllabus() {
       let refId = null;
 
       if (item.type === 'quiz') {
-        // Create quiz
+        // Create quiz placeholder
         const newQuiz = {
           id: generateId(),
           courseId: activeCourseId,
           title: item.title,
-          description: item.description || '',
+          description: item.description || '📌 Placeholder - use AI or edit manually to add questions',
           status: 'draft',
           dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
           createdAt: new Date().toISOString(),
@@ -3221,10 +3314,12 @@ function importParsedSyllabus() {
           randomizeQuestions: false,
           questionPoolEnabled: false,
           questionSelectCount: 0,
-          questions: []
+          questions: [],
+          isPlaceholder: true  // Mark as placeholder
         };
         appData.quizzes.push(newQuiz);
         refId = newQuiz.id;
+        placeholdersCreated++;
 
         newModule.items.push({
           id: generateId(),
@@ -3232,13 +3327,37 @@ function importParsedSyllabus() {
           refId: refId,
           position: newModule.items.length
         });
+      } else if (item.type === 'reading' || item.type === 'file') {
+        // Create file placeholder
+        const newFile = {
+          id: generateId(),
+          courseId: activeCourseId,
+          name: item.title,
+          type: 'placeholder',
+          size: 0,
+          visible: false,  // Hidden by default
+          isPlaceholder: true,
+          description: item.description || '',
+          uploadedBy: appData.currentUser.id,
+          uploadedAt: new Date().toISOString()
+        };
+        appData.files.push(newFile);
+        refId = newFile.id;
+        placeholdersCreated++;
+
+        newModule.items.push({
+          id: generateId(),
+          type: 'file',
+          refId: refId,
+          position: newModule.items.length
+        });
       } else {
-        // Create assignment
+        // Create assignment placeholder
         const newAssignment = {
           id: generateId(),
           courseId: activeCourseId,
           title: item.title,
-          description: item.description || '',
+          description: item.description || '📌 Placeholder - edit to add full assignment details',
           points: item.points || 100,
           status: 'draft',
           dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
@@ -3247,10 +3366,12 @@ function importParsedSyllabus() {
           lateDeduction: 10,
           allowResubmission: false,
           category: 'homework',
-          rubric: null
+          rubric: null,
+          isPlaceholder: true  // Mark as placeholder
         };
         appData.assignments.push(newAssignment);
         refId = newAssignment.id;
+        placeholdersCreated++;
 
         newModule.items.push({
           id: generateId(),
@@ -3271,7 +3392,8 @@ function importParsedSyllabus() {
   closeModal('syllabusParserModal');
   renderModules();
   renderAssignments();
-  showToast(`Imported ${modulesCreated} modules with ${itemsCreated} items as drafts!`, 'success');
+  renderFiles();
+  showToast(`Imported ${modulesCreated} modules with ${placeholdersCreated} placeholders! Click visibility badges to publish.`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3951,22 +4073,100 @@ function renderFiles() {
     return;
   }
 
+  const effectiveStaff = isStaffUser && !studentViewMode;
+
   const html = files.map(f => {
     const uploader = getUserById(f.uploadedBy);
+    const isExternal = f.externalUrl;
+    const isPlaceholder = f.isPlaceholder;
+    const isVisible = f.visible !== false;
+
+    // Visibility badge for staff
+    const visibilityBadge = effectiveStaff && !isVisible
+      ? `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer; margin-left:8px;" onclick="toggleFileVisibility('${f.id}')" title="Click to make visible">👁️‍🗨️ Hidden</span>`
+      : effectiveStaff && isVisible
+      ? `<span style="padding:4px 8px; background:var(--success-light); color:var(--success); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer; margin-left:8px;" onclick="toggleFileVisibility('${f.id}')" title="Click to hide">✓ Visible</span>`
+      : '';
+
+    const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
+
     return `
-      <div class="card">
+      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
         <div class="card-header">
-          <div>
-            <div class="card-title">📄 ${escapeHtml(f.name)}</div>
-            <div class="muted">${formatFileSize(f.size)} · Uploaded by ${uploader ? uploader.name : 'Unknown'} on ${formatDate(f.uploadedAt)}</div>
+          <div style="flex:1;">
+            <div class="card-title">${icon} ${escapeHtml(f.name)} ${visibilityBadge}</div>
+            <div class="muted">
+              ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
+              · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
+            </div>
           </div>
-          ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="deleteFile('${f.id}')">Delete</button>` : ''}
+          <div style="display:flex; gap:8px;">
+            ${isExternal && f.externalUrl ? `
+              <a href="${escapeHtml(f.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
+                ${f.isYouTube ? '▶ Watch' : '🔗 Open'}
+              </a>
+            ` : ''}
+            ${effectiveStaff && isPlaceholder ? `
+              <button class="btn btn-secondary btn-sm" onclick="convertPlaceholderToFile('${f.id}')">📎 Upload File</button>
+              <button class="btn btn-secondary btn-sm" onclick="convertPlaceholderToLink('${f.id}')">🔗 Add Link</button>
+            ` : ''}
+            ${effectiveStaff ? `<button class="btn btn-secondary btn-sm" onclick="deleteFile('${f.id}')">Delete</button>` : ''}
+          </div>
         </div>
+        ${isExternal && f.isYouTube ? `
+          <div style="margin-top:12px;">
+            <iframe width="100%" height="315" src="${escapeHtml(f.externalUrl)}" frameborder="0" allowfullscreen style="border-radius:var(--radius);"></iframe>
+          </div>
+        ` : ''}
       </div>
     `;
   }).join('');
 
   setHTML('filesList', html);
+}
+
+function convertPlaceholderToFile(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  // Open file upload and associate with this placeholder
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.onchange = (e) => {
+    const uploadedFile = e.target.files[0];
+    if (uploadedFile) {
+      file.name = uploadedFile.name;
+      file.type = uploadedFile.name.split('.').pop();
+      file.size = uploadedFile.size;
+      file.isPlaceholder = false;
+      file.visible = true;
+      saveData(appData);
+      renderFiles();
+      renderModules();
+      showToast('File uploaded!', 'success');
+    }
+  };
+  input.click();
+}
+
+function convertPlaceholderToLink(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  // Open prompt for URL
+  const url = prompt('Enter external URL (YouTube links will auto-convert to embed):');
+  if (url) {
+    const convertedUrl = convertYouTubeUrl(url);
+    file.externalUrl = convertedUrl;
+    file.isYouTube = convertedUrl !== url;
+    file.isPlaceholder = false;
+    file.type = 'external';
+    file.visible = true;
+    saveData(appData);
+    renderFiles();
+    renderModules();
+    showToast('External link added!', 'success');
+  }
 }
 
 function uploadFile() {
@@ -4455,11 +4655,14 @@ function renderAiThread() {
     } else if (msg.role === 'action') {
       // Pending action with HITL confirmation - editable before acceptance
       const isLatest = idx === aiThread.length - 1 && !msg.confirmed && !msg.rejected;
+      const actionIcon = msg.actionType === 'announcement' ? '📢' : msg.actionType === 'quiz' ? '❓' : msg.actionType === 'assignment' ? '📝' : '🔧';
+      const actionLabel = msg.actionType === 'announcement' ? 'Create Announcement' : msg.actionType === 'quiz' ? 'Create Quiz' : msg.actionType === 'assignment' ? 'Create Assignment' : 'Action';
+
       return `
         <div style="margin-bottom:16px;">
           <div style="background:var(--primary-light); padding:16px; border-radius:var(--radius); border:2px solid var(--primary);">
             <div style="font-weight:600; margin-bottom:8px; color:var(--primary);">
-              ${msg.actionType === 'announcement' ? '📢 Create Announcement' : msg.actionType === 'quiz' ? '📝 Create Quiz' : '🔧 Action'}
+              ${actionIcon} ${actionLabel}
             </div>
             <div style="background:white; padding:12px; border-radius:var(--radius); margin-bottom:12px;">
               ${msg.confirmed || msg.rejected ? `
@@ -4469,6 +4672,10 @@ function renderAiThread() {
                 ` : msg.actionType === 'quiz' ? `
                   <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
                   <div class="muted">${(msg.data.questions || []).length} questions</div>
+                  <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="viewQuizDetails('${msg.createdId || ''}')">View Quiz Details</button>
+                ` : msg.actionType === 'assignment' ? `
+                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
+                  <div class="muted">${msg.data.points} points · ${msg.data.category}</div>
                 ` : ''}
               ` : `
                 ${msg.actionType === 'announcement' ? `
@@ -4490,16 +4697,40 @@ function renderAiThread() {
                     <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
                   </div>
                   <div class="muted" style="font-size:0.85rem;">${(msg.data.questions || []).length} questions will be created</div>
+                ` : msg.actionType === 'assignment' ? `
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Title</label>
+                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
+                  </div>
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Description</label>
+                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="3" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
+                  </div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                    <div class="form-group" style="margin-bottom:0;">
+                      <label class="form-label" style="font-size:0.85rem;">Points</label>
+                      <input type="number" class="form-input" value="${msg.data.points || 100}" onchange="updateAiActionField(${idx}, 'points', parseInt(this.value))">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                      <label class="form-label" style="font-size:0.85rem;">Category</label>
+                      <select class="form-select" onchange="updateAiActionField(${idx}, 'category', this.value)">
+                        <option value="homework" ${msg.data.category === 'homework' ? 'selected' : ''}>Homework</option>
+                        <option value="project" ${msg.data.category === 'project' ? 'selected' : ''}>Project</option>
+                        <option value="essay" ${msg.data.category === 'essay' ? 'selected' : ''}>Essay</option>
+                        <option value="exam" ${msg.data.category === 'exam' ? 'selected' : ''}>Exam</option>
+                      </select>
+                    </div>
+                  </div>
                 ` : ''}
               `}
             </div>
             ${msg.confirmed ? `
-              <div style="color:var(--success); font-weight:500;">✓ Created successfully</div>
+              <div style="color:var(--success); font-weight:500;">✓ Created successfully as draft</div>
             ` : msg.rejected ? `
               <div style="color:var(--text-muted);">✗ Cancelled</div>
             ` : isLatest ? `
               <div style="display:flex; gap:8px;">
-                <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx})">Create</button>
+                <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx})">Create as Draft</button>
                 <button class="btn btn-secondary btn-sm" onclick="rejectAiAction(${idx})">Cancel</button>
               </div>
             ` : ''}
@@ -4559,7 +4790,26 @@ function confirmAiAction(idx) {
     appData.quizzes.push(newQuiz);
     saveData(appData);
     renderAssignments();
-    showToast('Quiz created as draft!', 'success');
+    showToast('Quiz created as draft! Click Preview to see full details.', 'success');
+  } else if (msg.actionType === 'assignment') {
+    const newAssignment = {
+      id: generateId(),
+      courseId: activeCourseId,
+      title: msg.data.title,
+      description: msg.data.description || '',
+      points: msg.data.points || 100,
+      status: 'draft',
+      dueDate: msg.data.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
+      createdAt: new Date().toISOString(),
+      category: msg.data.category || 'homework',
+      allowLateSubmissions: false,
+      lateDeduction: 0,
+      allowResubmission: false
+    };
+    appData.assignments.push(newAssignment);
+    saveData(appData);
+    renderAssignments();
+    showToast('Assignment created as draft!', 'success');
   }
 
   msg.confirmed = true;
@@ -4587,33 +4837,15 @@ async function sendAiMessage(audioBase64 = null) {
     return;
   }
 
+  // Prevent double-sends while processing
+  if (aiProcessing) return;
+  aiProcessing = true;
+  updateAiProcessingState();
+
   const isStaffUser = activeCourseId && isStaff(appData.currentUser.id, activeCourseId);
 
-  // Build rich context about current course
-  let context = '';
-  if (activeCourseId) {
-    const course = getCourseById(activeCourseId);
-    const role = getUserRole(appData.currentUser.id, activeCourseId);
-    const students = appData.enrollments.filter(e => e.courseId === activeCourseId && e.role === 'student');
-    const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
-    const modules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
-    const instructor = appData.enrollments.find(e => e.courseId === activeCourseId && e.role === 'instructor');
-    const instructorUser = instructor ? getUserById(instructor.userId) : null;
-
-    context = `
-COURSE CONTEXT (use this for accurate spelling and context):
-- Course Name: ${course.name}
-- Course Code: ${course.code}
-- Course Description: ${course.description || 'No description'}
-- Instructor: ${instructorUser ? instructorUser.name : 'Unknown'}
-- Your Role: ${role}
-- Number of Students: ${students.length}
-- Number of Assignments: ${assignments.length}
-- Modules: ${modules.map(m => m.name).join(', ') || 'None'}
-${assignments.length > 0 ? `- Assignments: ${assignments.map(a => a.title).join(', ')}` : ''}
-
-`;
-  }
+  // Use enhanced context builder
+  const context = buildAiContext();
 
   const systemPrompt = `You are an AI assistant for a Learning Management System (LMS). You help instructors and students with course-related tasks.
 
@@ -4621,14 +4853,28 @@ ${isStaffUser ? `The user is an INSTRUCTOR/TA. You can help them create content.
 
 IMPORTANT: If the user asks you to CREATE an announcement or quiz, you MUST respond with a JSON object in this EXACT format:
 - For announcements: {"action":"create_announcement","title":"...","content":"..."}
-- For quizzes: {"action":"create_quiz","title":"...","description":"...","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correctAnswer":0,"points":10},...]}
+- For quizzes: {"action":"create_quiz","title":"...","description":"...","dueDate":"ISO date string","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correctAnswer":0,"points":10},...]}
+- For assignments: {"action":"create_assignment","title":"...","description":"...","points":100,"dueDate":"ISO date string","category":"homework"}
+
+Question types: multiple_choice, true_false, short_answer
+For true_false, correctAnswer should be "True" or "False"
+For multiple_choice, correctAnswer should be the index (0-based)
 
 Only output the JSON when the user clearly wants to CREATE something. For questions about content or help drafting, respond normally.
-When creating content, make sure titles and content are professional and appropriate for an academic setting.` : 'The user is a STUDENT. Help them with course questions but do not create content.'}
+When creating content, make sure titles and content are professional and appropriate for an academic setting.
+Use the current date/time from context to set appropriate due dates (default to 1 week from now if not specified).` : `The user is a STUDENT. Help them with course questions, explain concepts, and provide guidance.
+
+You can help students with:
+- Understanding assignments and their requirements
+- Explaining course material and concepts
+- Answering questions about due dates and course structure
+- Providing study tips and guidance
+
+Do NOT create content for students. Redirect content creation requests to instructors.`}
 
 ${context}
 
-Respond helpfully and concisely. If asked to create content, output ONLY the JSON object with no additional text.`;
+Respond helpfully and concisely. If asked to create content (and you're an instructor), output ONLY the JSON object with no additional text.`;
 
   aiThread.push({ role: 'user', content: audioBase64 ? '🎤 Voice message' : message });
   if (!audioBase64) input.value = '';
@@ -4655,11 +4901,16 @@ Respond helpfully and concisely. If asked to create content, output ONLY the JSO
       };
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    // Use retry logic for API calls
+    const response = await fetchWithRetry(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      },
+      3
+    );
 
     const data = await response.json();
 
@@ -4688,7 +4939,22 @@ Respond helpfully and concisely. If asked to create content, output ONLY the JSO
             data: {
               title: action.title,
               description: action.description || '',
+              dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
               questions: action.questions || []
+            },
+            confirmed: false,
+            rejected: false
+          });
+        } else if (action.action === 'create_assignment') {
+          aiThread.push({
+            role: 'action',
+            actionType: 'assignment',
+            data: {
+              title: action.title,
+              description: action.description || '',
+              points: action.points || 100,
+              dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
+              category: action.category || 'homework'
             },
             confirmed: false,
             rejected: false
@@ -4710,6 +4976,26 @@ Respond helpfully and concisely. If asked to create content, output ONLY the JSO
     showToast('AI request failed: ' + err.message, 'error');
     aiThread.push({ role: 'assistant', content: `Sorry, I encountered an error: ${err.message}` });
     renderAiThread();
+  } finally {
+    aiProcessing = false;
+    updateAiProcessingState();
+  }
+}
+
+function updateAiProcessingState() {
+  const sendBtn = document.getElementById('aiSendBtn');
+  const spinner = document.getElementById('aiProcessingSpinner');
+  const input = document.getElementById('aiInput');
+
+  if (sendBtn) {
+    sendBtn.disabled = aiProcessing;
+    sendBtn.textContent = aiProcessing ? '⏳' : 'Send';
+  }
+  if (spinner) {
+    spinner.style.display = aiProcessing ? 'inline-flex' : 'none';
+  }
+  if (input) {
+    input.disabled = aiProcessing;
   }
 }
 
@@ -4768,6 +5054,9 @@ function stopAiRecording() {
     document.getElementById('aiRecordIcon').textContent = '🎤';
     document.getElementById('aiRecordText').textContent = 'Record';
     document.getElementById('aiRecordBtn').classList.remove('recording');
+
+    // Show sending notification
+    showToast('Sending voice message...', 'info');
   }
 }
 
@@ -5022,7 +5311,100 @@ function closeModal(id) {
 }
 
 function generateModals() {
+  // Get modules for external link dropdown
+  const modules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
+  const moduleOptions = modules.length
+    ? modules.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')
+    : '<option value="">No modules available</option>';
+
   setHTML('modalsContainer', `
+    <!-- Unified Content Creation Modal -->
+    <div class="modal-overlay" id="unifiedContentModal">
+      <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Create New Content</h2>
+          <button class="modal-close" onclick="closeModal('unifiedContentModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:12px;">
+            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('assignment')">
+              <div style="font-size:1.5rem; margin-bottom:8px;">📝</div>
+              <div class="demo-title">Assignment</div>
+              <div class="demo-sub">Homework, essays, projects</div>
+            </button>
+            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('quiz')">
+              <div style="font-size:1.5rem; margin-bottom:8px;">❓</div>
+              <div class="demo-title">Quiz</div>
+              <div class="demo-sub">Multiple choice, true/false</div>
+            </button>
+            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('announcement')">
+              <div style="font-size:1.5rem; margin-bottom:8px;">📢</div>
+              <div class="demo-title">Announcement</div>
+              <div class="demo-sub">Updates for students</div>
+            </button>
+            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('file')">
+              <div style="font-size:1.5rem; margin-bottom:8px;">📄</div>
+              <div class="demo-title">File</div>
+              <div class="demo-sub">Upload documents</div>
+            </button>
+            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('external-link')">
+              <div style="font-size:1.5rem; margin-bottom:8px;">🔗</div>
+              <div class="demo-title">External Link</div>
+              <div class="demo-sub">YouTube, websites</div>
+            </button>
+            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('ai-assist')">
+              <div style="font-size:1.5rem; margin-bottom:8px;">✨</div>
+              <div class="demo-title">AI Generate</div>
+              <div class="demo-sub">Draft with AI assistance</div>
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('unifiedContentModal')">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- External Link Modal -->
+    <div class="modal-overlay" id="externalLinkModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Add External Link</h2>
+          <button class="modal-close" onclick="closeModal('externalLinkModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="hint" style="margin-bottom:16px; padding:12px; background:var(--primary-light); border-radius:var(--radius);">
+            💡 YouTube links are automatically converted to embeds for inline viewing.
+          </div>
+          <div class="form-group">
+            <label class="form-label">Title</label>
+            <input type="text" class="form-input" id="externalLinkTitle" placeholder="e.g., Lecture Video #1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">URL</label>
+            <input type="url" class="form-input" id="externalLinkUrl" placeholder="https://...">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Add to</label>
+            <select class="form-select" id="externalLinkType" onchange="document.getElementById('externalLinkModuleGroup').style.display = this.value === 'module' ? 'block' : 'none';">
+              <option value="file">Files (as external link)</option>
+              <option value="module">Module item</option>
+            </select>
+          </div>
+          <div class="form-group" id="externalLinkModuleGroup" style="display:none;">
+            <label class="form-label">Select Module</label>
+            <select class="form-select" id="externalLinkModuleSelect">
+              ${moduleOptions}
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('externalLinkModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveExternalLink()">Add Link</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Announcement Modal -->
     <div class="modal-overlay" id="announcementModal">
       <div class="modal">
@@ -5398,11 +5780,15 @@ student2@university.edu" rows="5"></textarea>
               ${window.GEMINI ? '✓ Loaded from keys.js (masked for security)' : 'Get from Google AI Studio. Using Gemini 3.0 Flash Preview.'}
             </div>
           </div>
-          <div class="form-group">
+          <div class="form-group" style="padding:16px; background:var(--bg-color); border-radius:var(--radius); margin-top:8px;">
+            <div style="font-weight:600; margin-bottom:8px;">📧 Email Notifications</div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
               <input type="checkbox" id="settingsEmailNotifications" ${appData.settings.emailNotifications !== false ? 'checked' : ''}>
-              <span>Enable email notifications (simulated in demo)</span>
+              <span>Enable email notifications</span>
             </label>
+            <div class="hint" style="margin-top:8px; padding:8px; background:var(--warning-light); border-radius:4px; color:var(--warning);">
+              ⚠️ <strong>Simulated for demo:</strong> In production, connect to an email service (SendGrid, AWS SES, etc.) to send actual notifications.
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -6722,6 +7108,419 @@ function calculateLateDeduction(assignment, submittedAt) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// UNIFIED CONTENT CREATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function openUnifiedContentModal() {
+  ensureModalsRendered();
+  openModal('unifiedContentModal');
+}
+
+function createFromUnified(type) {
+  closeModal('unifiedContentModal');
+  if (type === 'assignment') {
+    openAssignmentModal();
+  } else if (type === 'quiz') {
+    openQuizModal();
+  } else if (type === 'announcement') {
+    openAnnouncementModal();
+  } else if (type === 'file') {
+    openModal('fileUploadModal');
+  } else if (type === 'external-link') {
+    openExternalLinkModal();
+  } else if (type === 'ai-assist') {
+    openAiCreateModal();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXTERNAL LINK SUPPORT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function openExternalLinkModal(prefillData = null) {
+  ensureModalsRendered();
+  document.getElementById('externalLinkTitle').value = prefillData?.title || '';
+  document.getElementById('externalLinkUrl').value = prefillData?.url || '';
+  document.getElementById('externalLinkType').value = prefillData?.type || 'module';
+  openModal('externalLinkModal');
+}
+
+function convertYouTubeUrl(url) {
+  if (!url) return url;
+
+  // Convert YouTube watch URLs to embed URLs
+  const watchMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+  if (watchMatch) {
+    return `https://www.youtube.com/embed/${watchMatch[1]}`;
+  }
+
+  // Already an embed URL
+  if (url.includes('youtube.com/embed/')) {
+    return url;
+  }
+
+  return url;
+}
+
+function saveExternalLink() {
+  const title = document.getElementById('externalLinkTitle').value.trim();
+  let url = document.getElementById('externalLinkUrl').value.trim();
+  const type = document.getElementById('externalLinkType').value;
+
+  if (!title || !url) {
+    showToast('Please fill in title and URL', 'error');
+    return;
+  }
+
+  // Auto-convert YouTube URLs to embed format
+  const convertedUrl = convertYouTubeUrl(url);
+  const isYouTube = convertedUrl !== url;
+
+  if (type === 'file') {
+    // Create a file entry with external URL
+    appData.files.push({
+      id: generateId(),
+      courseId: activeCourseId,
+      name: title,
+      type: 'external',
+      size: 0,
+      externalUrl: convertedUrl,
+      isYouTube: isYouTube,
+      uploadedBy: appData.currentUser.id,
+      uploadedAt: new Date().toISOString()
+    });
+    saveData(appData);
+    closeModal('externalLinkModal');
+    renderFiles();
+    showToast('External link added to files!', 'success');
+  } else if (type === 'module') {
+    // Create a module item with external URL
+    const moduleId = document.getElementById('externalLinkModuleSelect')?.value;
+    if (moduleId) {
+      const module = appData.modules.find(m => m.id === moduleId);
+      if (module) {
+        module.items.push({
+          id: generateId(),
+          type: 'external',
+          title: title,
+          externalUrl: convertedUrl,
+          isYouTube: isYouTube,
+          position: module.items.length
+        });
+        saveData(appData);
+        closeModal('externalLinkModal');
+        renderModules();
+        showToast('External link added to module!', 'success');
+        return;
+      }
+    }
+    showToast('Please select a module', 'error');
+  } else if (type === 'announcement') {
+    // Add link to announcement content
+    const linkMarkdown = isYouTube
+      ? `\n\n📺 **Video:** [${title}](${convertedUrl})`
+      : `\n\n🔗 **Link:** [${title}](${convertedUrl})`;
+
+    const contentArea = document.getElementById('announcementContent');
+    if (contentArea) {
+      contentArea.value += linkMarkdown;
+    }
+    closeModal('externalLinkModal');
+    showToast('Link added to announcement content', 'success');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISIBILITY TOGGLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function toggleAssignmentVisibility(assignmentId) {
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment) return;
+
+  const wasPublished = assignment.status === 'published';
+  assignment.status = wasPublished ? 'draft' : 'published';
+
+  if (!wasPublished && assignment.status === 'published') {
+    // Send notifications to students when publishing
+    const students = appData.enrollments
+      .filter(e => e.courseId === activeCourseId && e.role === 'student')
+      .map(e => e.userId);
+
+    students.forEach(studentId => {
+      addNotification(studentId, 'assignment', 'New Assignment Posted',
+        `${assignment.title} is now available`, activeCourseId);
+    });
+  }
+
+  saveData(appData);
+  renderAssignments();
+  showToast(wasPublished ? 'Assignment hidden from students' : 'Assignment published!', 'success');
+}
+
+function toggleQuizVisibility(quizId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  if (!quiz) return;
+
+  const wasPublished = quiz.status === 'published';
+  quiz.status = wasPublished ? 'draft' : 'published';
+
+  if (!wasPublished && quiz.status === 'published') {
+    // Send notifications to students when publishing
+    const students = appData.enrollments
+      .filter(e => e.courseId === activeCourseId && e.role === 'student')
+      .map(e => e.userId);
+
+    students.forEach(studentId => {
+      addNotification(studentId, 'quiz', 'New Quiz Posted',
+        `${quiz.title} is now available`, activeCourseId);
+    });
+  }
+
+  saveData(appData);
+  renderAssignments();
+  showToast(wasPublished ? 'Quiz hidden from students' : 'Quiz published!', 'success');
+}
+
+function toggleFileVisibility(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  file.visible = file.visible === false ? true : false;
+  saveData(appData);
+  renderFiles();
+  showToast(file.visible ? 'File visible to students' : 'File hidden from students', 'success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VIEW QUIZ DETAILS (Full Preview)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function viewQuizDetails(quizId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  if (!quiz) return;
+
+  const questions = quiz.questions || [];
+  const totalPoints = getQuizPoints(quiz);
+
+  const questionsHtml = questions.map((q, idx) => {
+    let optionsHtml = '';
+    if (q.type === 'multiple_choice') {
+      optionsHtml = `<div class="quiz-options" style="margin-top:8px;">
+        ${q.options.map((opt, i) => `
+          <div style="padding:4px 8px; ${i === q.correctAnswer ? 'background:var(--success-light); border-radius:4px;' : ''}">
+            ${i === q.correctAnswer ? '✓' : '○'} ${escapeHtml(opt)}
+          </div>
+        `).join('')}
+      </div>`;
+    } else if (q.type === 'true_false') {
+      optionsHtml = `<div style="margin-top:8px;">
+        <div style="padding:4px 8px; ${q.correctAnswer === 'True' ? 'background:var(--success-light); border-radius:4px;' : ''}">
+          ${q.correctAnswer === 'True' ? '✓' : '○'} True
+        </div>
+        <div style="padding:4px 8px; ${q.correctAnswer === 'False' ? 'background:var(--success-light); border-radius:4px;' : ''}">
+          ${q.correctAnswer === 'False' ? '✓' : '○'} False
+        </div>
+      </div>`;
+    } else {
+      optionsHtml = `<div class="muted" style="margin-top:8px; font-style:italic;">Short answer question${q.correctAnswer ? ` (Sample: ${escapeHtml(q.correctAnswer)})` : ''}</div>`;
+    }
+
+    return `
+      <div class="card" style="margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+          <strong>Q${idx + 1}. ${escapeHtml(q.prompt)}</strong>
+          <span class="muted">${q.points} pts</span>
+        </div>
+        <div class="muted" style="font-size:0.85rem;">${q.type.replace('_', ' ')}</div>
+        ${optionsHtml}
+      </div>
+    `;
+  }).join('');
+
+  const html = `
+    <div class="modal-overlay visible" id="quizDetailsModal">
+      <div class="modal" style="max-width:800px; max-height:90vh;">
+        <div class="modal-header">
+          <h2 class="modal-title">Quiz Preview: ${escapeHtml(quiz.title)}</h2>
+          <button class="modal-close" onclick="closeModal('quizDetailsModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
+          <div class="card" style="background:var(--primary-light); margin-bottom:16px;">
+            <div class="card-header">
+              <div>
+                <div class="card-title">Quiz Settings</div>
+              </div>
+              <div style="text-align:right;">
+                <div><strong>${totalPoints} points</strong></div>
+                <div class="muted">${questions.length} questions</div>
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-top:12px;">
+              <div><strong>Due:</strong> ${formatDate(quiz.dueDate)}</div>
+              <div><strong>Time Limit:</strong> ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'None'}</div>
+              <div><strong>Attempts:</strong> ${quiz.attempts || 'Unlimited'}</div>
+              <div><strong>Randomize:</strong> ${quiz.randomizeQuestions ? 'Yes' : 'No'}</div>
+              <div><strong>Status:</strong> ${quiz.status}</div>
+              ${quiz.questionPoolEnabled ? `<div><strong>Pool:</strong> ${quiz.questionSelectCount} of ${questions.length}</div>` : ''}
+            </div>
+          </div>
+
+          <div class="section-header">Questions</div>
+          ${questionsHtml || '<div class="muted">No questions added yet</div>'}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('quizDetailsModal')">Close</button>
+          <button class="btn btn-primary" onclick="closeModal('quizDetailsModal'); openQuizModal('${quizId}')">Edit Quiz</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('modalsContainer').innerHTML += html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUDENT VIEW TOGGLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function toggleStudentView() {
+  studentViewMode = !studentViewMode;
+  renderTopBarViewToggle();
+  renderAll();
+  showToast(studentViewMode ? 'Viewing as student' : 'Back to instructor view', 'info');
+}
+
+function renderTopBarViewToggle() {
+  const container = document.getElementById('viewToggleContainer');
+  if (!container) return;
+
+  const isStaffUser = activeCourseId && isStaff(appData.currentUser.id, activeCourseId);
+
+  if (isStaffUser) {
+    container.innerHTML = `
+      <button class="btn ${studentViewMode ? 'btn-primary' : 'btn-secondary'}" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
+        ${studentViewMode ? '👤 Student View' : '👨‍🏫 Instructor View'}
+      </button>
+    `;
+    container.style.display = 'block';
+  } else {
+    container.innerHTML = '';
+    container.style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// API RETRY LOGIC
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function fetchWithRetry(url, options, maxRetries = 3) {
+  let lastError;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+
+      // Retry on 503 Service Unavailable
+      if (response.status === 503 || response.status === 429) {
+        const waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+        showToast(`AI service busy, retrying in ${waitTime/1000}s...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries - 1) {
+        const waitTime = Math.pow(2, attempt) * 1000;
+        showToast(`Network error, retrying in ${waitTime/1000}s...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+  }
+
+  throw lastError || new Error('Max retries exceeded');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENHANCED AI CONTEXT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildAiContext() {
+  if (!activeCourseId) return '';
+
+  const course = getCourseById(activeCourseId);
+  const role = getUserRole(appData.currentUser.id, activeCourseId);
+  const students = appData.enrollments.filter(e => e.courseId === activeCourseId && e.role === 'student');
+  const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
+  const quizzes = appData.quizzes.filter(q => q.courseId === activeCourseId);
+  const modules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
+  const files = appData.files.filter(f => f.courseId === activeCourseId);
+  const instructor = appData.enrollments.find(e => e.courseId === activeCourseId && e.role === 'instructor');
+  const instructorUser = instructor ? getUserById(instructor.userId) : null;
+
+  // Get course timezone (default to user's local)
+  const now = new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const formattedDate = now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  });
+
+  // Build assignment list with due dates
+  const assignmentList = assignments.map(a => {
+    const dueDate = new Date(a.dueDate);
+    const isPast = dueDate < now;
+    return `- "${a.title}" (${a.points} pts, due ${dueDate.toLocaleDateString()}${isPast ? ' - PAST DUE' : ''}, status: ${a.status})`;
+  }).join('\n');
+
+  // Build quiz list with due dates
+  const quizList = quizzes.map(q => {
+    const dueDate = new Date(q.dueDate);
+    const isPast = dueDate < now;
+    return `- "${q.title}" (${getQuizPoints(q)} pts, due ${dueDate.toLocaleDateString()}${isPast ? ' - PAST DUE' : ''}, status: ${q.status})`;
+  }).join('\n');
+
+  // Build module list
+  const moduleList = modules.map(m => `- "${m.name}" (${m.items?.length || 0} items)`).join('\n');
+
+  // Build file list
+  const fileList = files.map(f => `- "${f.name}" (${f.type}${f.externalUrl ? ', external link' : ''})`).join('\n');
+
+  return `
+COURSE CONTEXT (use this for accurate information):
+- Course Name: ${course.name}
+- Course Code: ${course.code}
+- Course Description: ${course.description || 'No description'}
+- Instructor: ${instructorUser ? instructorUser.name : 'Unknown'}
+- Your Role: ${role}
+- Number of Students: ${students.length}
+
+CURRENT DATE/TIME: ${formattedDate}
+TIME ZONE: ${timeZone}
+
+MODULES (${modules.length}):
+${moduleList || 'No modules yet'}
+
+ASSIGNMENTS (${assignments.length}):
+${assignmentList || 'No assignments yet'}
+
+QUIZZES (${quizzes.length}):
+${quizList || 'No quizzes yet'}
+
+FILES (${files.length}):
+${fileList || 'No files yet'}
+
+`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // EVENT LISTENERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -6739,11 +7538,25 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
     
-    // Ctrl/Cmd+Enter sends AI message
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    // Ctrl/Cmd+Enter sends AI message (or just Enter when in AI input)
+    if (e.key === 'Enter' && !e.shiftKey) {
       if (document.activeElement?.id === 'aiInput') {
+        e.preventDefault();
         sendAiMessage();
       }
     }
   });
+
+  // Add keypress listener specifically for AI input
+  setTimeout(() => {
+    const aiInput = document.getElementById('aiInput');
+    if (aiInput) {
+      aiInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendAiMessage();
+        }
+      });
+    }
+  }, 500);
 });
