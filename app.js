@@ -697,12 +697,15 @@ function renderTopBarActions() {
     importToolBtn.style.display = isStaffUser && !studentViewMode ? 'inline-flex' : 'none';
   }
 
-  // Hide People, Files, Settings buttons in student view mode
+  // Hide People, Files, Settings buttons in student view mode OR for actual students
   const peopleBtn = document.querySelector('[data-page="people"]');
   const filesBtn = document.querySelector('[data-page="files"]');
   const settingsBtn = document.querySelector('[onclick="openModal(\'settingsModal\')"]');
 
-  if (studentViewMode) {
+  const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
+  const shouldHide = studentViewMode || (activeCourseId && !isStaffUser);
+
+  if (shouldHide) {
     if (peopleBtn) peopleBtn.style.display = 'none';
     if (filesBtn) filesBtn.style.display = 'none';
     if (settingsBtn) settingsBtn.style.display = 'none';
@@ -1130,18 +1133,17 @@ function renderUpdates() {
 
   const html = announcements.map(a => {
     const author = getUserById(a.authorId);
-    const visibilityIcon = a.hidden ? '👁️‍🗨️' : '👁️';
-    const visibilityTitle = a.hidden ? 'Hidden (click to publish)' : 'Visible (click to hide)';
+    const visibilityText = a.hidden ? 'Hidden' : 'Hide from Students';
     return `
       <div class="card" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''}">
         <div class="card-header">
           <div>
-            <div class="card-title">${a.title} ${a.pinned ? '📌' : ''} ${a.hidden && effectiveStaff ? '<span class="status-badge draft" style="font-size:0.75rem;">(hidden)</span>' : ''}</div>
+            <div class="card-title">${a.title} ${a.pinned ? '📌' : ''}</div>
             <div class="muted">${author ? author.name : 'Unknown'} · ${formatDate(a.createdAt)}</div>
           </div>
           ${effectiveStaff ? `
             <div style="display:flex; gap:8px; align-items:center;">
-              <button class="btn btn-secondary btn-sm" onclick="toggleAnnouncementVisibility('${a.id}')" title="${visibilityTitle}" style="padding:4px 8px;">${visibilityIcon}</button>
+              <button class="btn btn-secondary btn-sm" onclick="toggleAnnouncementVisibility('${a.id}')" style="padding:4px 8px;">${visibilityText}</button>
               <button class="btn btn-secondary btn-sm" onclick="editAnnouncement('${a.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="deleteAnnouncement('${a.id}')">Delete</button>
             </div>
@@ -1332,7 +1334,7 @@ function renderAssignments() {
 
     // Visibility indicator for staff
     const visibilityBadge = effectiveStaff && a.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleAssignmentVisibility('${a.id}')" title="Click to publish">👁️‍🗨️ Hidden</span>` : '';
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleAssignmentVisibility('${a.id}')" title="Click to publish">Hidden</span>` : '';
 
     return `
       <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
@@ -1376,7 +1378,7 @@ function renderAssignments() {
 
     // Visibility indicator for staff
     const visibilityBadge = effectiveStaff && q.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">👁️‍🗨️ Hidden</span>` : '';
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">Hidden</span>` : '';
 
     const timeLimitLabel = q.timeLimit ? `${q.timeLimit} min` : 'No time limit';
     const attemptsLabel = attemptsAllowed ? `${attemptsLeft} of ${attemptsAllowed} left` : 'Unlimited attempts';
@@ -2807,7 +2809,7 @@ function renderModules() {
       const fileHidden = item.type === 'file' && itemData && itemData.hidden;
       if (!effectiveStaff && fileHidden) return ''; // Hide hidden files from students
 
-      const fileVisIcon = fileHidden ? '👁️‍🗨️' : '👁️';
+      const fileVisText = fileHidden ? 'Hidden' : 'Hide from Students';
 
       return `
         <div class="module-item" style="${fileHidden ? 'opacity:0.6;' : ''}"
@@ -2820,16 +2822,16 @@ function renderModules() {
              ondragend="handleModuleItemDragEnd(event)">
           <span class="module-item-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
           <span class="module-item-icon">${itemIcon}</span>
-          <span class="module-item-title">${escapeHtml(itemTitle)} ${statusBadge} ${fileHidden ? '<span class="muted">(hidden)</span>' : ''}</span>
+          <span class="module-item-title">${escapeHtml(itemTitle)} ${statusBadge}</span>
           ${effectiveStaff ? `
-            ${item.type === 'file' ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${item.refId}')" title="${fileHidden ? 'Show file' : 'Hide file'}" style="padding:2px 6px;">${fileVisIcon}</button>` : ''}
+            ${item.type === 'file' ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${item.refId}')" style="padding:2px 6px;">${fileVisText}</button>` : ''}
             <button class="btn btn-secondary btn-sm" onclick="removeModuleItem('${mod.id}', '${item.id}')">×</button>
           ` : ''}
         </div>
       `;
     }).join('');
 
-    const moduleVisIcon = mod.hidden ? '👁️‍🗨️' : '👁️';
+    const moduleVisText = mod.hidden ? 'Hidden' : 'Hide from Students';
 
     return `
       <div class="module-card" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
@@ -2842,11 +2844,11 @@ function renderModules() {
         <div class="module-header">
           <div class="module-header-left">
             <span class="module-drag-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
-            <h3 class="module-title">${escapeHtml(mod.name)} ${mod.hidden ? '<span class="status-badge draft" style="font-size:0.75rem;">(hidden)</span>' : ''}</h3>
+            <h3 class="module-title">${escapeHtml(mod.name)}</h3>
           </div>
           ${effectiveStaff ? `
             <div class="module-actions">
-              <button class="btn btn-secondary btn-sm" onclick="toggleModuleVisibility('${mod.id}')" title="${mod.hidden ? 'Show module' : 'Hide module'}" style="padding:4px 8px;">${moduleVisIcon}</button>
+              <button class="btn btn-secondary btn-sm" onclick="toggleModuleVisibility('${mod.id}')" style="padding:4px 8px;">${moduleVisText}</button>
               <button class="btn btn-secondary btn-sm" onclick="openAddModuleItemModal('${mod.id}')">+ Add Item</button>
               <button class="btn btn-secondary btn-sm" onclick="editModule('${mod.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="deleteModule('${mod.id}')">Delete</button>
@@ -4151,19 +4153,18 @@ function renderFiles() {
     const isHidden = f.hidden;
 
     // Visibility badge for staff
-    const visibilityIcon = isHidden ? '👁️‍🗨️' : '👁️';
+    const visibilityText = isHidden ? 'Hidden' : 'Hide from Students';
     const visibilityBadge = effectiveStaff
-      ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${f.id}')" title="${isHidden ? 'Show file' : 'Hide file'}" style="padding:2px 8px; margin-left:8px;">${visibilityIcon}</button>`
+      ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${f.id}')" style="padding:2px 8px; margin-left:8px;">${visibilityText}</button>`
       : '';
 
     const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
-    const hiddenBadge = isHidden && effectiveStaff ? '<span class="status-badge draft" style="font-size:0.75rem; margin-left:8px;">(hidden)</span>' : '';
 
     return `
       <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}">
         <div class="card-header">
           <div style="flex:1;">
-            <div class="card-title">${icon} ${escapeHtml(f.name)} ${hiddenBadge} ${visibilityBadge}</div>
+            <div class="card-title">${icon} ${escapeHtml(f.name)} ${visibilityBadge}</div>
             <div class="muted">
               ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
               · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
@@ -4563,7 +4564,109 @@ let peopleSearch = '';
 
 function updatePeopleSearch(value) {
   peopleSearch = value.toLowerCase();
-  renderPeople();
+  renderPeopleList();
+}
+
+function renderPeopleList() {
+  if (!activeCourseId) return;
+
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+
+  let people = appData.enrollments
+    .filter(e => e.courseId === activeCourseId)
+    .map(e => ({ ...getUserById(e.userId), role: e.role }))
+    .filter(p => p.id)
+    .sort((a, b) => {
+      const roleOrder = { instructor: 0, ta: 1, student: 2 };
+      if (roleOrder[a.role] !== roleOrder[b.role]) return roleOrder[a.role] - roleOrder[b.role];
+      return a.name.localeCompare(b.name);
+    });
+
+  // Filter by search
+  if (peopleSearch) {
+    people = people.filter(p =>
+      p.name.toLowerCase().includes(peopleSearch) ||
+      p.email.toLowerCase().includes(peopleSearch)
+    );
+  }
+
+  let html = '';
+
+  const grouped = {
+    instructor: people.filter(p => p.role === 'instructor'),
+    ta: people.filter(p => p.role === 'ta'),
+    student: people.filter(p => p.role === 'student')
+  };
+
+  // Get pending invites (also filtered by search), grouped by role
+  let allPendingInvites = isStaffUser && appData.invites
+    ? appData.invites.filter(i => i.courseId === activeCourseId && i.status === 'pending')
+    : [];
+
+  if (peopleSearch) {
+    allPendingInvites = allPendingInvites.filter(inv =>
+      inv.email.toLowerCase().includes(peopleSearch)
+    );
+  }
+
+  // Group invites by role (default to 'student' if no role specified)
+  const invitesByRole = {
+    instructor: allPendingInvites.filter(i => i.role === 'instructor'),
+    ta: allPendingInvites.filter(i => i.role === 'ta'),
+    student: allPendingInvites.filter(i => !i.role || i.role === 'student')
+  };
+
+  // Helper function to render a single person row
+  const renderPersonRow = (p, idx, total, isInvite = false) => {
+    if (isInvite) {
+      return `
+        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; background:var(--warning-light); ${idx < total - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; font-size:0.95rem;">${p.email}</div>
+            <div style="font-size:0.8rem; color:var(--warning);">Invited ${formatDate(p.sentAt)} · Awaiting sign-up</div>
+          </div>
+        </div>
+      `;
+    } else {
+      return `
+        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; font-size:0.95rem;">${p.name}</div>
+            <div class="muted" style="font-size:0.8rem;">${p.email}</div>
+          </div>
+          ${isStaffUser && p.id !== appData.currentUser.id ? `
+            <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
+          ` : ''}
+        </div>
+      `;
+    }
+  };
+
+  // Helper function to render a section with invites at top
+  const renderSectionWithInvites = (title, members, invites) => {
+    const totalCount = members.length + invites.length;
+    if (totalCount === 0) return '';
+
+    const allItems = [...invites.map(i => ({ ...i, isInvite: true })), ...members.map(m => ({ ...m, isInvite: false }))];
+
+    return `
+      <div style="margin-bottom:32px;">
+        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color);">
+          ${title} (${members.length}${invites.length > 0 ? ` + ${invites.length} pending` : ''})
+        </h3>
+        <div style="background:white; border:1px solid var(--border-light); border-radius:var(--radius); overflow:hidden;">
+          ${allItems.map((item, idx) => renderPersonRow(item, idx, allItems.length, item.isInvite)).join('')}
+        </div>
+      </div>
+    `;
+  };
+
+  // Render in order: Instructors, TAs, Students - each with their pending invites at top
+  html += renderSectionWithInvites('Instructors', grouped.instructor, invitesByRole.instructor);
+  html += renderSectionWithInvites('Teaching Assistants', grouped.ta, invitesByRole.ta);
+  html += renderSectionWithInvites('Students', grouped.student, invitesByRole.student);
+
+  setHTML('peopleList', html || '<div class="empty-state-text">No people in this course</div>');
 }
 
 function renderPeople() {
@@ -4592,7 +4695,7 @@ function renderPeople() {
   // Actions with search
   setHTML('peopleActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" onkeyup="updatePeopleSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <input type="text" class="form-input" id="peopleSearchInput" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" oninput="updatePeopleSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       ${isStaffUser ? `
         <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
         <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
@@ -4644,7 +4747,6 @@ function renderPeople() {
     if (isInvite) {
       return `
         <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; background:var(--warning-light); ${idx < total - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
-          <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:var(--warning); color:white; flex-shrink:0;">?</div>
           <div style="flex:1; min-width:0;">
             <div style="font-weight:500; font-size:0.95rem;">${p.email}</div>
             <div style="font-size:0.8rem; color:var(--warning);">Invited ${formatDate(p.sentAt)} · Awaiting sign-up</div>
@@ -4654,7 +4756,6 @@ function renderPeople() {
     } else {
       return `
         <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
-          <div class="user-avatar" style="width:32px; height:32px; font-size:0.85rem; background:var(--primary-light); color:var(--primary); flex-shrink:0;">${p.avatar}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-weight:500; font-size:0.95rem;">${p.name}</div>
             <div class="muted" style="font-size:0.8rem;">${p.email}</div>
@@ -5138,16 +5239,39 @@ function updateAiProcessingState() {
   const sendBtn = document.getElementById('aiSendBtn');
   const spinner = document.getElementById('aiProcessingSpinner');
   const input = document.getElementById('aiInput');
+  const thread = document.getElementById('aiThread');
 
   if (sendBtn) {
     sendBtn.disabled = aiProcessing;
-    sendBtn.textContent = aiProcessing ? '⏳' : 'Send';
+    sendBtn.textContent = aiProcessing ? '...' : 'Send';
   }
   if (spinner) {
     spinner.style.display = aiProcessing ? 'inline-flex' : 'none';
   }
   if (input) {
     input.disabled = aiProcessing;
+  }
+
+  // Show/hide thinking indicator in the thread
+  let thinkingIndicator = document.getElementById('aiThinkingIndicator');
+  if (aiProcessing) {
+    if (!thinkingIndicator && thread) {
+      const indicator = document.createElement('div');
+      indicator.id = 'aiThinkingIndicator';
+      indicator.style.cssText = 'margin-bottom:16px; display:flex; align-items:center; gap:12px;';
+      indicator.innerHTML = `
+        <div style="background:var(--bg-color); padding:12px 16px; border-radius:16px 16px 16px 4px; border:1px solid var(--border-color); display:flex; align-items:center; gap:10px;">
+          <div class="ai-spinner-small" style="border-top-color:var(--primary);"></div>
+          <span class="muted">Thinking...</span>
+        </div>
+      `;
+      thread.appendChild(indicator);
+      thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
+    }
+  } else {
+    if (thinkingIndicator) {
+      thinkingIndicator.remove();
+    }
   }
 }
 
