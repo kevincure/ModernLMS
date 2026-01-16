@@ -21,6 +21,8 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+  <!-- Skip Link for keyboard users -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
 
   <!-- Login -->
   <div class="login-screen" id="loginScreen">
@@ -128,7 +130,7 @@
     </div>
 
     <!-- Main content -->
-    <main class="main">
+    <main class="main" id="main-content" tabindex="-1">
       
       <!-- Top bar with user info -->
       <div class="top-bar">

@@ -5292,23 +5292,68 @@ function ensureModalsRendered() {
   }
 }
 
+// Track the element that was focused before modal opened (for accessibility)
+let modalPreviousFocus = null;
+
 function openModal(id) {
   if (!document.getElementById(id)) {
     generateModals();
   }
   const modal = document.getElementById(id);
-  if (modal) modal.classList.add('visible');
+  if (modal) {
+    // Save currently focused element to restore later (WCAG 2.4.3)
+    modalPreviousFocus = document.activeElement;
+
+    modal.classList.add('visible');
+
+    // Set ARIA attributes for accessibility
+    const dialog = modal.querySelector('.modal');
+    if (dialog) {
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+
+      // Find the modal title and set aria-labelledby
+      const title = dialog.querySelector('.modal-title');
+      if (title) {
+        const titleId = title.id || `${id}-title`;
+        title.id = titleId;
+        dialog.setAttribute('aria-labelledby', titleId);
+      }
+    }
+
+    // Focus first focusable element (WCAG 2.4.3)
+    setTimeout(() => {
+      const focusable = modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      if (focusable.length > 0) focusable[0].focus();
+    }, 50);
+  }
 }
 
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (modal) modal.classList.remove('visible');
-  
+
   if (id === 'quizTakeModal' && quizTimerInterval) {
     clearInterval(quizTimerInterval);
     quizTimerInterval = null;
   }
+
+  // Restore focus to previously focused element (WCAG 2.4.3)
+  if (modalPreviousFocus && typeof modalPreviousFocus.focus === 'function') {
+    modalPreviousFocus.focus();
+    modalPreviousFocus = null;
+  }
 }
+
+// Escape key handler for modals (WCAG 2.1.1 - Keyboard)
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    const visibleModal = document.querySelector('.modal-overlay.visible');
+    if (visibleModal) {
+      closeModal(visibleModal.id);
+    }
+  }
+});
 
 function generateModals() {
   // Get modules for external link dropdown
@@ -5763,19 +5808,21 @@ student2@university.edu" rows="5"></textarea>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Google Client ID</label>
-            <input type="password" class="form-input" id="settingsGoogleClientId" 
-                   placeholder="your-client-id.apps.googleusercontent.com" 
-                   value="${window.GOOGLE_CLIENT_ID || appData.settings.googleClientId || ''}">
+            <label class="form-label" for="settingsGoogleClientId">Google Client ID</label>
+            <input type="password" class="form-input" id="settingsGoogleClientId"
+                   placeholder="your-client-id.apps.googleusercontent.com"
+                   value="${window.GOOGLE_CLIENT_ID || appData.settings.googleClientId || ''}"
+                   autocomplete="off" spellcheck="false">
             <div class="hint">
               ${window.GOOGLE_CLIENT_ID ? '✓ Loaded from keys.js (masked for security)' : 'For Google SSO. Get from Google Cloud Console.'}
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Gemini API Key</label>
-            <input type="password" class="form-input" id="settingsGeminiKey" 
-                   placeholder="AIza..." 
-                   value="${window.GEMINI || appData.settings.geminiKey || ''}">
+            <label class="form-label" for="settingsGeminiKey">Gemini API Key</label>
+            <input type="password" class="form-input" id="settingsGeminiKey"
+                   placeholder="AIza..."
+                   value="${window.GEMINI || appData.settings.geminiKey || ''}"
+                   autocomplete="off" spellcheck="false">
             <div class="hint">
               ${window.GEMINI ? '✓ Loaded from keys.js (masked for security)' : 'Get from Google AI Studio. Using Gemini 3.0 Flash Preview.'}
             </div>
@@ -5974,8 +6021,8 @@ student2@university.edu" rows="5"></textarea>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Email Address</label>
-            <input type="email" class="form-input" id="addPersonEmail" placeholder="student@university.edu">
+            <label class="form-label" for="addPersonEmail">Email Address</label>
+            <input type="email" class="form-input" id="addPersonEmail" placeholder="student@university.edu" autocomplete="email">
           </div>
           <div class="form-group">
             <label class="form-label">Role</label>

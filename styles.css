@@ -37,6 +37,49 @@
   box-sizing: border-box;
 }
 
+/* ───── Skip Link (WCAG 2.4.1) ───── */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-color);
+  color: white;
+  padding: 12px 24px;
+  border-radius: var(--radius);
+  font-weight: 500;
+  z-index: 10000;
+  text-decoration: none;
+  transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+  top: 12px;
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ───── Enhanced Focus Indicators (WCAG 2.4.7) ───── */
+:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Remove default outline only when using mouse */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Ensure buttons have visible focus */
+.btn:focus-visible,
+.tool-btn:focus-visible,
+.demo-btn:focus-visible,
+.modal-close:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--primary-light);
+}
+
 body {
   font-family: var(--font-sans);
   background-color: var(--bg-color);
