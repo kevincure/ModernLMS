@@ -4,34 +4,18 @@
 ═══════════════════════════════════════════════════════════════════════════════ */
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Style Theme Switcher - Check URL query ?style=1, ?style=2, or ?style=3
+// Style Theme - Always use Editorial style
 // ═══════════════════════════════════════════════════════════════════════════════
 (function initStyleTheme() {
-  const params = new URLSearchParams(window.location.search);
-  const style = params.get('style');
+  // Always apply style-1 (Editorial) as the default and only style
+  document.documentElement.classList.add('style-1');
 
-  if (style === '1' || style === '2' || style === '3') {
-    // Apply style class to body as early as possible
-    document.documentElement.classList.add(`style-${style}`);
-
-    // Also apply to body once it's available
-    if (document.body) {
-      document.body.classList.add(`style-${style}`);
-    } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        document.body.classList.add(`style-${style}`);
-        // Add style indicator for testing
-        const indicator = document.createElement('div');
-        indicator.className = 'style-indicator';
-        const styleNames = {
-          '1': 'Style 1: Editorial',
-          '2': 'Style 2: Minimal Luxe',
-          '3': 'Style 3: Contemporary'
-        };
-        indicator.textContent = styleNames[style];
-        document.body.appendChild(indicator);
-      });
-    }
+  if (document.body) {
+    document.body.classList.add('style-1');
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      document.body.classList.add('style-1');
+    });
   }
 })();
 
@@ -693,6 +677,7 @@ function renderAll() {
   populateCourseSelector(); // Update dropdown
   renderTopBarCourse();
   renderTopBarActions();
+  renderTopBarViewToggle();
   renderCourses();
   renderHome();
   renderUpdates();
@@ -702,7 +687,6 @@ function renderAll() {
   renderFiles();
   renderGradebook();
   renderPeople();
-  updateNotificationBadge();
 }
 
 function renderTopBarActions() {
@@ -710,7 +694,22 @@ function renderTopBarActions() {
   const importToolBtn = document.getElementById('importToolBtn');
   if (importToolBtn) {
     const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
-    importToolBtn.style.display = isStaffUser ? 'inline-flex' : 'none';
+    importToolBtn.style.display = isStaffUser && !studentViewMode ? 'inline-flex' : 'none';
+  }
+
+  // Hide People, Files, Settings buttons in student view mode
+  const peopleBtn = document.querySelector('[data-page="people"]');
+  const filesBtn = document.querySelector('[data-page="files"]');
+  const settingsBtn = document.querySelector('[onclick="openModal(\'settingsModal\')"]');
+
+  if (studentViewMode) {
+    if (peopleBtn) peopleBtn.style.display = 'none';
+    if (filesBtn) filesBtn.style.display = 'none';
+    if (settingsBtn) settingsBtn.style.display = 'none';
+  } else {
+    if (peopleBtn) peopleBtn.style.display = 'inline-flex';
+    if (filesBtn) filesBtn.style.display = 'inline-flex';
+    if (settingsBtn) settingsBtn.style.display = 'inline-flex';
   }
 }
 
@@ -1096,44 +1095,53 @@ function renderUpdates() {
     setHTML('updatesList', '<div class="empty-state-text">No active course</div>');
     return;
   }
-  
+
   const course = getCourseById(activeCourseId);
   setText('updatesSubtitle', course.name);
-  
+
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-  
-  if (isStaffUser) {
+  const effectiveStaff = isStaffUser && !studentViewMode;
+
+  if (effectiveStaff) {
     setHTML('updatesActions', `
       <button class="btn btn-primary" onclick="openModal('announcementModal')">New Update</button>
     `);
   } else {
     setHTML('updatesActions', '');
   }
-  
-  const announcements = appData.announcements
+
+  let announcements = appData.announcements
     .filter(a => a.courseId === activeCourseId)
     .sort((a, b) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
-  
+
+  // Hide hidden announcements from students
+  if (!effectiveStaff) {
+    announcements = announcements.filter(a => !a.hidden);
+  }
+
   if (announcements.length === 0) {
     setHTML('updatesList', '<div class="empty-state"><div class="empty-state-icon">📢</div><div class="empty-state-title">No updates yet</div></div>');
     return;
   }
-  
+
   const html = announcements.map(a => {
     const author = getUserById(a.authorId);
+    const visibilityIcon = a.hidden ? '👁️‍🗨️' : '👁️';
+    const visibilityTitle = a.hidden ? 'Hidden (click to publish)' : 'Visible (click to hide)';
     return `
-      <div class="card">
+      <div class="card" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''}">
         <div class="card-header">
           <div>
-            <div class="card-title">${a.title} ${a.pinned ? '📌' : ''}</div>
+            <div class="card-title">${a.title} ${a.pinned ? '📌' : ''} ${a.hidden && effectiveStaff ? '<span class="status-badge draft" style="font-size:0.75rem;">(hidden)</span>' : ''}</div>
             <div class="muted">${author ? author.name : 'Unknown'} · ${formatDate(a.createdAt)}</div>
           </div>
-          ${isStaffUser ? `
-            <div style="display:flex; gap:8px;">
+          ${effectiveStaff ? `
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button class="btn btn-secondary btn-sm" onclick="toggleAnnouncementVisibility('${a.id}')" title="${visibilityTitle}" style="padding:4px 8px;">${visibilityIcon}</button>
               <button class="btn btn-secondary btn-sm" onclick="editAnnouncement('${a.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="deleteAnnouncement('${a.id}')">Delete</button>
             </div>
@@ -1143,8 +1151,19 @@ function renderUpdates() {
       </div>
     `;
   }).join('');
-  
+
   setHTML('updatesList', html);
+}
+
+function toggleAnnouncementVisibility(id) {
+  const announcement = appData.announcements.find(a => a.id === id);
+  if (announcement) {
+    announcement.hidden = !announcement.hidden;
+    saveData(appData);
+    renderUpdates();
+    renderHome();
+    showToast(announcement.hidden ? 'Announcement hidden' : 'Announcement published', 'info');
+  }
 }
 
 function createAnnouncement() {
@@ -1270,7 +1289,13 @@ function renderAssignments() {
   
   if (isStaffUser && !studentViewMode) {
     setHTML('assignmentsActions', `
-      <button class="btn btn-primary" onclick="openUnifiedContentModal()">+ New Content</button>
+      <div style="position:relative; display:inline-block;">
+        <button class="btn btn-primary" onclick="toggleNewAssignmentDropdown()" id="newAssignmentBtn">New Assignment</button>
+        <div id="newAssignmentDropdown" style="display:none; position:absolute; top:100%; left:0; margin-top:4px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); z-index:100; min-width:160px;">
+          <button class="btn btn-secondary" style="width:100%; border:none; border-radius:var(--radius) var(--radius) 0 0; justify-content:flex-start;" onclick="closeNewAssignmentDropdown(); openAssignmentModal();">Assignment</button>
+          <button class="btn btn-secondary" style="width:100%; border:none; border-radius:0 0 var(--radius) var(--radius); justify-content:flex-start; border-top:1px solid var(--border-light);" onclick="closeNewAssignmentDropdown(); openQuizModal();">Quiz</button>
+        </div>
+      </div>
     `);
   } else {
     setHTML('assignmentsActions', '');
@@ -2680,16 +2705,17 @@ function renderModules() {
   setText('modulesSubtitle', course.name);
 
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isStaffUser && !studentViewMode;
 
   if (!appData.modules) appData.modules = [];
 
   // Actions with search
   setHTML('modulesActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" onkeyup="updateModulesSearch(this.value)" style="width:200px;">
-      ${isStaffUser ? `
+      <input type="text" class="form-input" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" onkeyup="updateModulesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      ${effectiveStaff ? `
         <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
-        <button class="btn btn-secondary" onclick="openSyllabusParserModal()">📄 Import from Syllabus</button>
+        <button class="btn btn-secondary" onclick="openSyllabusParserModal()">Import from Syllabus</button>
       ` : ''}
     </div>
   `);
@@ -2697,6 +2723,11 @@ function renderModules() {
   let modules = appData.modules
     .filter(m => m.courseId === activeCourseId)
     .sort((a, b) => a.position - b.position);
+
+  // Hide hidden modules from students
+  if (!effectiveStaff) {
+    modules = modules.filter(m => !m.hidden);
+  }
 
   // Filter by search - search module names and item titles
   if (modulesSearch) {
@@ -2772,26 +2803,37 @@ function renderModules() {
         return ''; // Item was deleted
       }
 
+      // Check if file is hidden
+      const fileHidden = item.type === 'file' && itemData && itemData.hidden;
+      if (!effectiveStaff && fileHidden) return ''; // Hide hidden files from students
+
+      const fileVisIcon = fileHidden ? '👁️‍🗨️' : '👁️';
+
       return `
-        <div class="module-item"
-             draggable="${isStaffUser}"
+        <div class="module-item" style="${fileHidden ? 'opacity:0.6;' : ''}"
+             draggable="${effectiveStaff}"
              data-module-id="${mod.id}"
              data-item-id="${item.id}"
              ondragstart="handleModuleItemDragStart(event)"
              ondragover="handleModuleItemDragOver(event)"
              ondrop="handleModuleItemDrop(event)"
              ondragend="handleModuleItemDragEnd(event)">
-          <span class="module-item-handle">${isStaffUser ? '⋮⋮' : ''}</span>
+          <span class="module-item-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
           <span class="module-item-icon">${itemIcon}</span>
-          <span class="module-item-title">${escapeHtml(itemTitle)} ${statusBadge}</span>
-          ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="removeModuleItem('${mod.id}', '${item.id}')">×</button>` : ''}
+          <span class="module-item-title">${escapeHtml(itemTitle)} ${statusBadge} ${fileHidden ? '<span class="muted">(hidden)</span>' : ''}</span>
+          ${effectiveStaff ? `
+            ${item.type === 'file' ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${item.refId}')" title="${fileHidden ? 'Show file' : 'Hide file'}" style="padding:2px 6px;">${fileVisIcon}</button>` : ''}
+            <button class="btn btn-secondary btn-sm" onclick="removeModuleItem('${mod.id}', '${item.id}')">×</button>
+          ` : ''}
         </div>
       `;
     }).join('');
 
+    const moduleVisIcon = mod.hidden ? '👁️‍🗨️' : '👁️';
+
     return `
-      <div class="module-card"
-           draggable="${isStaffUser}"
+      <div class="module-card" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
+           draggable="${effectiveStaff}"
            data-module-id="${mod.id}"
            ondragstart="handleModuleDragStart(event)"
            ondragover="handleModuleDragOver(event)"
@@ -2799,11 +2841,12 @@ function renderModules() {
            ondragend="handleModuleDragEnd(event)">
         <div class="module-header">
           <div class="module-header-left">
-            <span class="module-drag-handle">${isStaffUser ? '⋮⋮' : ''}</span>
-            <h3 class="module-title">${escapeHtml(mod.name)}</h3>
+            <span class="module-drag-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
+            <h3 class="module-title">${escapeHtml(mod.name)} ${mod.hidden ? '<span class="status-badge draft" style="font-size:0.75rem;">(hidden)</span>' : ''}</h3>
           </div>
-          ${isStaffUser ? `
+          ${effectiveStaff ? `
             <div class="module-actions">
+              <button class="btn btn-secondary btn-sm" onclick="toggleModuleVisibility('${mod.id}')" title="${mod.hidden ? 'Show module' : 'Hide module'}" style="padding:4px 8px;">${moduleVisIcon}</button>
               <button class="btn btn-secondary btn-sm" onclick="openAddModuleItemModal('${mod.id}')">+ Add Item</button>
               <button class="btn btn-secondary btn-sm" onclick="editModule('${mod.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="deleteModule('${mod.id}')">Delete</button>
@@ -2983,6 +3026,27 @@ function deleteModule(moduleId) {
     renderModules();
     showToast('Module deleted', 'success');
   });
+}
+
+function toggleModuleVisibility(moduleId) {
+  const module = appData.modules.find(m => m.id === moduleId);
+  if (module) {
+    module.hidden = !module.hidden;
+    saveData(appData);
+    renderModules();
+    showToast(module.hidden ? 'Module hidden from students' : 'Module visible to students', 'info');
+  }
+}
+
+function toggleFileVisibility(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (file) {
+    file.hidden = !file.hidden;
+    saveData(appData);
+    renderModules();
+    renderFiles();
+    showToast(file.hidden ? 'File hidden from students' : 'File visible to students', 'info');
+  }
 }
 
 function openAddModuleItemModal(moduleId) {
@@ -4033,7 +4097,7 @@ function renderFiles() {
   // Actions with search and sort
   setHTML('filesActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search files..." value="${escapeHtml(filesSearch)}" onkeyup="updateFilesSearch(this.value)" style="width:200px;">
+      <input type="text" class="form-input" placeholder="Search files..." value="${escapeHtml(filesSearch)}" onkeyup="updateFilesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       <select class="form-select" onchange="updateFilesSort(this.value)" style="width:150px;">
         <option value="date-desc" ${filesSort === 'date-desc' ? 'selected' : ''}>Newest first</option>
         <option value="date-asc" ${filesSort === 'date-asc' ? 'selected' : ''}>Oldest first</option>
@@ -4046,7 +4110,14 @@ function renderFiles() {
     </div>
   `);
 
+  const effectiveStaff = isStaffUser && !studentViewMode;
+
   let files = appData.files.filter(f => f.courseId === activeCourseId);
+
+  // Hide hidden files from students
+  if (!effectiveStaff) {
+    files = files.filter(f => !f.hidden);
+  }
 
   // Filter by search
   if (filesSearch) {
@@ -4073,28 +4144,26 @@ function renderFiles() {
     return;
   }
 
-  const effectiveStaff = isStaffUser && !studentViewMode;
-
   const html = files.map(f => {
     const uploader = getUserById(f.uploadedBy);
     const isExternal = f.externalUrl;
     const isPlaceholder = f.isPlaceholder;
-    const isVisible = f.visible !== false;
+    const isHidden = f.hidden;
 
     // Visibility badge for staff
-    const visibilityBadge = effectiveStaff && !isVisible
-      ? `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer; margin-left:8px;" onclick="toggleFileVisibility('${f.id}')" title="Click to make visible">👁️‍🗨️ Hidden</span>`
-      : effectiveStaff && isVisible
-      ? `<span style="padding:4px 8px; background:var(--success-light); color:var(--success); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer; margin-left:8px;" onclick="toggleFileVisibility('${f.id}')" title="Click to hide">✓ Visible</span>`
+    const visibilityIcon = isHidden ? '👁️‍🗨️' : '👁️';
+    const visibilityBadge = effectiveStaff
+      ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${f.id}')" title="${isHidden ? 'Show file' : 'Hide file'}" style="padding:2px 8px; margin-left:8px;">${visibilityIcon}</button>`
       : '';
 
     const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
+    const hiddenBadge = isHidden && effectiveStaff ? '<span class="status-badge draft" style="font-size:0.75rem; margin-left:8px;">(hidden)</span>' : '';
 
     return `
-      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
+      <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}">
         <div class="card-header">
           <div style="flex:1;">
-            <div class="card-title">${icon} ${escapeHtml(f.name)} ${visibilityBadge}</div>
+            <div class="card-title">${icon} ${escapeHtml(f.name)} ${hiddenBadge} ${visibilityBadge}</div>
             <div class="muted">
               ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
               · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
@@ -4523,7 +4592,7 @@ function renderPeople() {
   // Actions with search
   setHTML('peopleActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" onkeyup="updatePeopleSearch(this.value)" style="width:200px;">
+      <input type="text" class="form-input" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" onkeyup="updatePeopleSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       ${isStaffUser ? `
         <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
         <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
@@ -4655,14 +4724,14 @@ function renderAiThread() {
     } else if (msg.role === 'action') {
       // Pending action with HITL confirmation - editable before acceptance
       const isLatest = idx === aiThread.length - 1 && !msg.confirmed && !msg.rejected;
-      const actionIcon = msg.actionType === 'announcement' ? '📢' : msg.actionType === 'quiz' ? '❓' : msg.actionType === 'assignment' ? '📝' : '🔧';
-      const actionLabel = msg.actionType === 'announcement' ? 'Create Announcement' : msg.actionType === 'quiz' ? 'Create Quiz' : msg.actionType === 'assignment' ? 'Create Assignment' : 'Action';
+      const actionIcon = msg.actionType === 'announcement' ? '' : msg.actionType === 'quiz' ? '' : msg.actionType === 'assignment' ? '' : msg.actionType === 'module' ? '' : '';
+      const actionLabel = msg.actionType === 'announcement' ? 'Create Announcement' : msg.actionType === 'quiz' ? 'Create Quiz' : msg.actionType === 'assignment' ? 'Create Assignment' : msg.actionType === 'module' ? 'Create Module' : 'Action';
 
       return `
         <div style="margin-bottom:16px;">
           <div style="background:var(--primary-light); padding:16px; border-radius:var(--radius); border:2px solid var(--primary);">
             <div style="font-weight:600; margin-bottom:8px; color:var(--primary);">
-              ${actionIcon} ${actionLabel}
+              ${actionLabel}
             </div>
             <div style="background:white; padding:12px; border-radius:var(--radius); margin-bottom:12px;">
               ${msg.confirmed || msg.rejected ? `
@@ -4676,6 +4745,9 @@ function renderAiThread() {
                 ` : msg.actionType === 'assignment' ? `
                   <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
                   <div class="muted">${msg.data.points} points · ${msg.data.category}</div>
+                ` : msg.actionType === 'module' ? `
+                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.name)}</div>
+                  ${msg.data.description ? `<div class="muted">${escapeHtml(msg.data.description)}</div>` : ''}
                 ` : ''}
               ` : `
                 ${msg.actionType === 'announcement' ? `
@@ -4696,7 +4768,27 @@ function renderAiThread() {
                     <label class="form-label" style="font-size:0.85rem;">Description</label>
                     <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
                   </div>
-                  <div class="muted" style="font-size:0.85rem;">${(msg.data.questions || []).length} questions will be created</div>
+                  <div style="margin-top:12px; border-top:1px solid var(--border-light); padding-top:12px;">
+                    <div class="form-label" style="font-size:0.85rem; margin-bottom:8px;">Questions (${(msg.data.questions || []).length})</div>
+                    <div style="max-height:300px; overflow-y:auto;">
+                    ${(msg.data.questions || []).map((q, qIdx) => `
+                      <div style="background:var(--bg-color); padding:10px; border-radius:var(--radius); margin-bottom:8px;">
+                        <div style="font-weight:500; margin-bottom:4px;">Q${qIdx + 1}. ${escapeHtml(q.prompt)}</div>
+                        <div class="muted" style="font-size:0.8rem;">${q.type.replace('_', ' ')} - ${q.points} pts</div>
+                        ${q.type === 'multiple_choice' ? `
+                          <div style="margin-top:6px; font-size:0.85rem;">
+                            ${q.options.map((opt, i) => `<div style="${i === q.correctAnswer ? 'color:var(--success); font-weight:500;' : ''}">${i === q.correctAnswer ? '✓' : '○'} ${escapeHtml(opt)}</div>`).join('')}
+                          </div>
+                        ` : q.type === 'true_false' ? `
+                          <div style="margin-top:6px; font-size:0.85rem;">
+                            <div style="${q.correctAnswer === 'True' ? 'color:var(--success); font-weight:500;' : ''}">○ True</div>
+                            <div style="${q.correctAnswer === 'False' ? 'color:var(--success); font-weight:500;' : ''}">○ False</div>
+                          </div>
+                        ` : `<div class="muted" style="font-size:0.85rem; margin-top:4px; font-style:italic;">Short answer question</div>`}
+                      </div>
+                    `).join('')}
+                    </div>
+                  </div>
                 ` : msg.actionType === 'assignment' ? `
                   <div class="form-group" style="margin-bottom:12px;">
                     <label class="form-label" style="font-size:0.85rem;">Title</label>
@@ -4721,16 +4813,28 @@ function renderAiThread() {
                       </select>
                     </div>
                   </div>
+                ` : msg.actionType === 'module' ? `
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Module Name</label>
+                    <input type="text" class="form-input" id="aiAction${idx}Name" value="${escapeHtml(msg.data.name)}" onchange="updateAiActionField(${idx}, 'name', this.value)">
+                  </div>
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" style="font-size:0.85rem;">Description (optional)</label>
+                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
+                  </div>
                 ` : ''}
               `}
             </div>
             ${msg.confirmed ? `
-              <div style="color:var(--success); font-weight:500;">✓ Created successfully as draft</div>
+              <div style="color:var(--success); font-weight:500;">✓ Created successfully${msg.wasPublished ? '' : ' as draft'}</div>
             ` : msg.rejected ? `
               <div style="color:var(--text-muted);">✗ Cancelled</div>
             ` : isLatest ? `
-              <div style="display:flex; gap:8px;">
-                <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx})">Create as Draft</button>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx}, false)">Create this</button>
+                ${msg.actionType === 'announcement' ? `
+                  <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx}, true)">Create and Publish</button>
+                ` : ''}
                 <button class="btn btn-secondary btn-sm" onclick="rejectAiAction(${idx})">Cancel</button>
               </div>
             ` : ''}
@@ -4753,7 +4857,7 @@ function updateAiActionField(idx, field, value) {
   msg.data[field] = value;
 }
 
-function confirmAiAction(idx) {
+function confirmAiAction(idx, publish = false) {
   const msg = aiThread[idx];
   if (!msg || msg.role !== 'action') return;
 
@@ -4764,13 +4868,15 @@ function confirmAiAction(idx) {
       title: msg.data.title,
       content: msg.data.content,
       pinned: false,
+      hidden: !publish,
       authorId: appData.currentUser.id,
       createdAt: new Date().toISOString()
     });
+    msg.wasPublished = publish;
     saveData(appData);
     renderUpdates();
     renderHome();
-    showToast('Announcement created!', 'success');
+    showToast(publish ? 'Announcement published!' : 'Announcement created as draft!', 'success');
   } else if (msg.actionType === 'quiz') {
     const newQuiz = {
       id: generateId(),
@@ -4810,6 +4916,22 @@ function confirmAiAction(idx) {
     saveData(appData);
     renderAssignments();
     showToast('Assignment created as draft!', 'success');
+  } else if (msg.actionType === 'module') {
+    if (!appData.modules) appData.modules = [];
+    const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
+    const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
+
+    const newModule = {
+      id: generateId(),
+      courseId: activeCourseId,
+      name: msg.data.name,
+      position: maxPosition,
+      items: []
+    };
+    appData.modules.push(newModule);
+    saveData(appData);
+    renderModules();
+    showToast('Module created!', 'success');
   }
 
   msg.confirmed = true;
@@ -4847,18 +4969,29 @@ async function sendAiMessage(audioBase64 = null) {
   // Use enhanced context builder
   const context = buildAiContext();
 
+  // Build conversation context from last 3 exchanges
+  const conversationContext = aiThread.slice(-6).map(msg => {
+    if (msg.role === 'user') return `User: ${msg.content}`;
+    if (msg.role === 'assistant') return `Assistant: ${msg.content}`;
+    if (msg.role === 'action') return `Assistant: [Created ${msg.actionType}]`;
+    return '';
+  }).filter(Boolean).join('\n');
+
   const systemPrompt = `You are an AI assistant for a Learning Management System (LMS). You help instructors and students with course-related tasks.
 
 ${isStaffUser ? `The user is an INSTRUCTOR/TA. You can help them create content.
 
-IMPORTANT: If the user asks you to CREATE an announcement or quiz, you MUST respond with a JSON object in this EXACT format:
+IMPORTANT: If the user asks you to CREATE an announcement, quiz, assignment, or module, you MUST respond with a JSON object in this EXACT format:
 - For announcements: {"action":"create_announcement","title":"...","content":"..."}
 - For quizzes: {"action":"create_quiz","title":"...","description":"...","dueDate":"ISO date string","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correctAnswer":0,"points":10},...]}
 - For assignments: {"action":"create_assignment","title":"...","description":"...","points":100,"dueDate":"ISO date string","category":"homework"}
+- For modules: {"action":"create_module","name":"...","description":"..."}
 
 Question types: multiple_choice, true_false, short_answer
 For true_false, correctAnswer should be "True" or "False"
 For multiple_choice, correctAnswer should be the index (0-based)
+
+IMPORTANT: If you cannot fully complete the request (e.g., missing information, ambiguous requirements, or limitations), include a "notes" field in your JSON response explaining what was done and what might need adjustment. Example: {"action":"create_quiz",...,"notes":"Created 5 questions. Some topics were unclear, please review question 3."}
 
 Only output the JSON when the user clearly wants to CREATE something. For questions about content or help drafting, respond normally.
 When creating content, make sure titles and content are professional and appropriate for an academic setting.
@@ -4873,6 +5006,8 @@ You can help students with:
 Do NOT create content for students. Redirect content creation requests to instructors.`}
 
 ${context}
+
+${conversationContext ? `Current_conversation_context:\n${conversationContext}\n` : ''}
 
 Respond helpfully and concisely. If asked to create content (and you're an instructor), output ONLY the JSON object with no additional text.`;
 
@@ -4954,13 +5089,30 @@ Respond helpfully and concisely. If asked to create content (and you're an instr
               description: action.description || '',
               points: action.points || 100,
               dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-              category: action.category || 'homework'
+              category: action.category || 'homework',
+              notes: action.notes || ''
+            },
+            confirmed: false,
+            rejected: false
+          });
+        } else if (action.action === 'create_module') {
+          aiThread.push({
+            role: 'action',
+            actionType: 'module',
+            data: {
+              name: action.name,
+              description: action.description || '',
+              notes: action.notes || ''
             },
             confirmed: false,
             rejected: false
           });
         } else {
           aiThread.push({ role: 'assistant', content: reply });
+        }
+        // Show notes if present
+        if (action.notes) {
+          aiThread.push({ role: 'assistant', content: `**Note:** ${action.notes}` });
         }
       } catch (e) {
         aiThread.push({ role: 'assistant', content: reply });
@@ -7133,6 +7285,30 @@ function createFromUnified(type) {
   }
 }
 
+// New Assignment dropdown functions
+function toggleNewAssignmentDropdown() {
+  const dropdown = document.getElementById('newAssignmentDropdown');
+  if (dropdown) {
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+  }
+}
+
+function closeNewAssignmentDropdown() {
+  const dropdown = document.getElementById('newAssignmentDropdown');
+  if (dropdown) {
+    dropdown.style.display = 'none';
+  }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const dropdown = document.getElementById('newAssignmentDropdown');
+  const btn = document.getElementById('newAssignmentBtn');
+  if (dropdown && btn && !dropdown.contains(e.target) && !btn.contains(e.target)) {
+    dropdown.style.display = 'none';
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXTERNAL LINK SUPPORT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -7398,9 +7574,10 @@ function renderTopBarViewToggle() {
   const isStaffUser = activeCourseId && isStaff(appData.currentUser.id, activeCourseId);
 
   if (isStaffUser) {
+    // Button shows where you're going TO, not where you ARE
     container.innerHTML = `
       <button class="btn ${studentViewMode ? 'btn-primary' : 'btn-secondary'}" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
-        ${studentViewMode ? '👤 Student View' : '👨‍🏫 Instructor View'}
+        ${studentViewMode ? 'Instructor View' : 'Student View'}
       </button>
     `;
     container.style.display = 'block';
