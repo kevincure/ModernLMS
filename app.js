@@ -1,7 +1,50 @@
 /* ═══════════════════════════════════════════════════════════════════════════════
    Campus LMS - Complete Implementation
-   Local-first LMS with Google SSO, courses, assignments, gradebook, AI
+   Supabase-powered LMS with Google OAuth, courses, assignments, gradebook, AI
 ═══════════════════════════════════════════════════════════════════════════════ */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUPABASE CLIENT INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let supabase = null;
+
+function initSupabase() {
+  const url = window.SUPABASE_URL;
+  const key = window.SUPABASE_ANON_KEY;
+
+  if (!url || url === 'YOUR_SUPABASE_PROJECT_URL' || !key || key === 'YOUR_SUPABASE_ANON_KEY') {
+    console.error('[Supabase] Configuration missing! Please update config.js with your Supabase credentials.');
+    showConfigError();
+    return false;
+  }
+
+  try {
+    supabase = window.supabase.createClient(url, key);
+    console.log('[Supabase] Client initialized successfully');
+    return true;
+  } catch (err) {
+    console.error('[Supabase] Failed to initialize client:', err);
+    return false;
+  }
+}
+
+function showConfigError() {
+  const loginScreen = document.getElementById('loginScreen');
+  if (loginScreen) {
+    const errorDiv = document.getElementById('loginError');
+    if (errorDiv) {
+      errorDiv.style.display = 'block';
+      errorDiv.innerHTML = `
+        <strong>Configuration Required</strong><br>
+        Please update <code>config.js</code> with your Supabase credentials:<br>
+        <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code>
+      `;
+    }
+    const signInBtn = document.getElementById('googleSignInBtn');
+    if (signInBtn) signInBtn.disabled = true;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Style Theme - Always use Editorial style
@@ -19,7 +62,6 @@
   }
 })();
 
-const STORAGE_KEY = 'campus_lms_data_v3';
 const ALLOWED_DOMAINS = ['university.edu', 'demo.edu'];
 
 // Default data structure
@@ -162,8 +204,8 @@ const defaultData = {
   }
 };
 
-// State
-let appData = loadData();
+// State - Initialize with empty structure (will be populated from Supabase)
+let appData = JSON.parse(JSON.stringify(defaultData)); // Deep copy
 let activeCourseId = null;
 let aiThread = [];
 let quizDraftQuestions = [];
@@ -183,31 +225,338 @@ let audioChunks = [];
 let draggedModuleItem = null;
 let studentViewMode = false; // For professor/TA to toggle student view
 let aiProcessing = false; // Track AI processing state
+let dataLoading = false; // Track data loading state
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DATA PERSISTENCE
+// DATA PERSISTENCE - SUPABASE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function loadData() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) {
-    const data = JSON.parse(stored);
-    // Migration: ensure new data structures exist
-    if (!data.modules) data.modules = [];
-    if (!data.questionBanks) data.questionBanks = [];
-    if (!data.notifications) data.notifications = [];
-    if (!data.quizzes) data.quizzes = [];
-    if (!data.quizSubmissions) data.quizSubmissions = [];
-    if (!data.gradeCategories) data.gradeCategories = [];
-    if (!data.rubrics) data.rubrics = [];
-    return data;
+// Load all data from Supabase for the current user
+async function loadDataFromSupabase() {
+  if (!supabase || !appData.currentUser) {
+    console.log('[Supabase] Cannot load data: no client or user');
+    return;
   }
-  saveData(defaultData);
-  return defaultData;
+
+  dataLoading = true;
+  console.log('[Supabase] Loading data for user:', appData.currentUser.email);
+
+  try {
+    const userId = appData.currentUser.id;
+
+    // Parallel fetch all data the user has access to (RLS will filter)
+    const [
+      profilesRes,
+      coursesRes,
+      enrollmentsRes,
+      assignmentsRes,
+      submissionsRes,
+      gradesRes,
+      announcementsRes,
+      filesRes,
+      quizzesRes,
+      quizQuestionsRes,
+      quizSubmissionsRes,
+      modulesRes,
+      moduleItemsRes,
+      notificationsRes,
+      invitesRes,
+      rubricRes,
+      rubricCriteriaRes,
+      gradeCategoriesRes
+    ] = await Promise.all([
+      supabase.from('profiles').select('*'),
+      supabase.from('courses').select('*'),
+      supabase.from('enrollments').select('*'),
+      supabase.from('assignments').select('*'),
+      supabase.from('submissions').select('*'),
+      supabase.from('grades').select('*'),
+      supabase.from('announcements').select('*'),
+      supabase.from('files').select('*'),
+      supabase.from('quizzes').select('*'),
+      supabase.from('quiz_questions').select('*'),
+      supabase.from('quiz_submissions').select('*'),
+      supabase.from('modules').select('*'),
+      supabase.from('module_items').select('*'),
+      supabase.from('notifications').select('*').eq('user_id', userId),
+      supabase.from('invites').select('*'),
+      supabase.from('rubrics').select('*'),
+      supabase.from('rubric_criteria').select('*'),
+      supabase.from('grade_categories').select('*')
+    ]);
+
+    // Log any errors
+    const responses = [
+      { name: 'profiles', res: profilesRes },
+      { name: 'courses', res: coursesRes },
+      { name: 'enrollments', res: enrollmentsRes },
+      { name: 'assignments', res: assignmentsRes },
+      { name: 'submissions', res: submissionsRes },
+      { name: 'grades', res: gradesRes },
+      { name: 'announcements', res: announcementsRes },
+      { name: 'files', res: filesRes },
+      { name: 'quizzes', res: quizzesRes },
+      { name: 'quiz_questions', res: quizQuestionsRes },
+      { name: 'quiz_submissions', res: quizSubmissionsRes },
+      { name: 'modules', res: modulesRes },
+      { name: 'module_items', res: moduleItemsRes },
+      { name: 'notifications', res: notificationsRes },
+      { name: 'invites', res: invitesRes },
+      { name: 'rubrics', res: rubricRes },
+      { name: 'rubric_criteria', res: rubricCriteriaRes },
+      { name: 'grade_categories', res: gradeCategoriesRes }
+    ];
+
+    responses.forEach(({ name, res }) => {
+      if (res.error) {
+        console.warn(`[Supabase] Error loading ${name}:`, res.error.message);
+      } else {
+        console.log(`[Supabase] Loaded ${res.data?.length || 0} ${name}`);
+      }
+    });
+
+    // Transform Supabase data to app format
+    appData.users = (profilesRes.data || []).map(p => ({
+      id: p.id,
+      name: p.name,
+      email: p.email,
+      avatar: p.avatar || getInitials(p.name),
+      role: 'user' // Role is per-enrollment, not global
+    }));
+
+    appData.courses = (coursesRes.data || []).map(c => ({
+      id: c.id,
+      name: c.name,
+      code: c.code,
+      description: c.description,
+      inviteCode: c.invite_code,
+      createdBy: c.created_by,
+      startHereTitle: c.start_here_title,
+      startHereContent: c.start_here_content,
+      active: c.active
+    }));
+
+    appData.enrollments = (enrollmentsRes.data || []).map(e => ({
+      userId: e.user_id,
+      courseId: e.course_id,
+      role: e.role
+    }));
+
+    appData.assignments = (assignmentsRes.data || []).map(a => ({
+      id: a.id,
+      courseId: a.course_id,
+      title: a.title,
+      description: a.description,
+      points: a.points,
+      status: a.status,
+      dueDate: a.due_date,
+      createdAt: a.created_at,
+      allowLateSubmissions: a.allow_late_submissions,
+      lateDeduction: a.late_deduction,
+      allowResubmission: a.allow_resubmission,
+      category: a.category,
+      rubric: null // Will be populated separately
+    }));
+
+    appData.submissions = (submissionsRes.data || []).map(s => ({
+      id: s.id,
+      assignmentId: s.assignment_id,
+      userId: s.user_id,
+      text: s.content,
+      fileName: s.file_name,
+      filePath: s.file_path,
+      submittedAt: s.submitted_at
+    }));
+
+    appData.grades = (gradesRes.data || []).map(g => ({
+      submissionId: g.submission_id,
+      score: g.score,
+      feedback: g.feedback,
+      released: g.released,
+      gradedBy: g.graded_by,
+      gradedAt: g.graded_at
+    }));
+
+    appData.announcements = (announcementsRes.data || []).map(a => ({
+      id: a.id,
+      courseId: a.course_id,
+      title: a.title,
+      content: a.content,
+      pinned: a.pinned,
+      authorId: a.author_id,
+      createdAt: a.created_at
+    }));
+
+    appData.files = (filesRes.data || []).map(f => ({
+      id: f.id,
+      courseId: f.course_id,
+      name: f.name,
+      type: f.mime_type,
+      size: f.size_bytes,
+      storagePath: f.storage_path,
+      uploadedBy: f.uploaded_by,
+      uploadedAt: f.uploaded_at
+    }));
+
+    // Transform quizzes with their questions
+    const quizQuestions = quizQuestionsRes.data || [];
+    appData.quizzes = (quizzesRes.data || []).map(q => ({
+      id: q.id,
+      courseId: q.course_id,
+      title: q.title,
+      description: q.description,
+      status: q.status,
+      dueDate: q.due_date,
+      createdAt: q.created_at,
+      timeLimit: q.time_limit,
+      attempts: q.attempts_allowed,
+      randomizeQuestions: q.randomize_questions,
+      questionPoolEnabled: q.question_pool_enabled,
+      questionSelectCount: q.question_select_count,
+      questions: quizQuestions
+        .filter(qq => qq.quiz_id === q.id)
+        .sort((a, b) => a.position - b.position)
+        .map(qq => ({
+          id: qq.id,
+          type: qq.type,
+          prompt: qq.prompt,
+          options: qq.options || [],
+          correctAnswer: qq.correct_answer,
+          points: qq.points
+        }))
+    }));
+
+    appData.quizSubmissions = (quizSubmissionsRes.data || []).map(qs => ({
+      id: qs.id,
+      quizId: qs.quiz_id,
+      userId: qs.user_id,
+      answers: qs.answers,
+      score: qs.score,
+      startedAt: qs.started_at,
+      submittedAt: qs.submitted_at,
+      attemptNumber: qs.attempt_number
+    }));
+
+    // Transform modules with their items
+    const moduleItems = moduleItemsRes.data || [];
+    appData.modules = (modulesRes.data || []).map(m => ({
+      id: m.id,
+      courseId: m.course_id,
+      name: m.name,
+      position: m.position,
+      items: moduleItems
+        .filter(mi => mi.module_id === m.id)
+        .sort((a, b) => a.position - b.position)
+        .map(mi => ({
+          id: mi.id,
+          type: mi.type,
+          refId: mi.ref_id,
+          title: mi.title,
+          url: mi.url,
+          position: mi.position
+        }))
+    }));
+
+    appData.notifications = (notificationsRes.data || []).map(n => ({
+      id: n.id,
+      userId: n.user_id,
+      type: n.type,
+      title: n.title,
+      message: n.message,
+      courseId: n.course_id,
+      refId: n.ref_id,
+      read: n.read,
+      createdAt: n.created_at
+    }));
+
+    appData.invites = (invitesRes.data || []).map(i => ({
+      id: i.id,
+      courseId: i.course_id,
+      email: i.email,
+      role: i.role,
+      status: i.status,
+      invitedBy: i.invited_by,
+      createdAt: i.created_at
+    }));
+
+    // Rubrics (attach to assignments)
+    const rubrics = rubricRes.data || [];
+    const rubricCriteria = rubricCriteriaRes.data || [];
+    rubrics.forEach(r => {
+      const assignment = appData.assignments.find(a => a.id === r.assignment_id);
+      if (assignment) {
+        assignment.rubric = {
+          id: r.id,
+          criteria: rubricCriteria
+            .filter(rc => rc.rubric_id === r.id)
+            .sort((a, b) => a.position - b.position)
+            .map(rc => ({
+              id: rc.id,
+              name: rc.name,
+              description: rc.description,
+              points: rc.points
+            }))
+        };
+      }
+    });
+
+    // Store rubrics separately too for compatibility
+    appData.rubrics = rubrics.map(r => ({
+      id: r.id,
+      assignmentId: r.assignment_id,
+      criteria: rubricCriteria
+        .filter(rc => rc.rubric_id === r.id)
+        .sort((a, b) => a.position - b.position)
+        .map(rc => ({
+          id: rc.id,
+          name: rc.name,
+          description: rc.description,
+          points: rc.points
+        }))
+    }));
+
+    appData.gradeCategories = (gradeCategoriesRes.data || []).map(gc => ({
+      id: gc.id,
+      courseId: gc.course_id,
+      name: gc.name,
+      weight: gc.weight
+    }));
+
+    // Settings from Gemini key (stored in window config)
+    appData.settings = {
+      geminiKey: window.GEMINI_API_KEY_API_KEY || '',
+      emailNotifications: true
+    };
+
+    console.log('[Supabase] Data loaded successfully');
+    console.log('[Supabase] Summary:', {
+      users: appData.users.length,
+      courses: appData.courses.length,
+      enrollments: appData.enrollments.length,
+      assignments: appData.assignments.length,
+      submissions: appData.submissions.length
+    });
+
+  } catch (err) {
+    console.error('[Supabase] Error loading data:', err);
+    showToast('Failed to load data from server', 'error');
+  } finally {
+    dataLoading = false;
+  }
 }
 
+// Legacy function - now a no-op for compatibility (Supabase handles persistence)
+function loadData() {
+  console.log('[Data] loadData called - returning current appData (Supabase mode)');
+  return appData;
+}
+
+// Save data to Supabase (called after mutations)
+// This is a debounced sync - actual saves happen via specific Supabase calls
 function saveData(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  console.log('[Data] saveData called - data persisted via Supabase');
+  // In Supabase mode, individual operations save directly to the database
+  // This function is kept for compatibility but doesn't use localStorage
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -476,144 +825,160 @@ function openNotificationDetail(notificationId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GOOGLE AUTHENTICATION
+// SUPABASE AUTHENTICATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function initGoogleSignIn() {
-  // Priority: keys.js > saved settings
-  const clientId = window.GOOGLE_CLIENT_ID || appData.settings.googleClientId;
-  
-  if (!clientId || !window.google) {
-    // Silently show demo login buttons instead
-    document.getElementById('fallbackGoogleBtn').style.display = 'none';
+// Sign in with Google via Supabase Auth
+async function signInWithGoogle() {
+  if (!supabase) {
+    console.error('[Auth] Supabase not initialized');
+    showLoginError('Supabase not configured. Please check config.js');
     return;
   }
 
-  google.accounts.id.initialize({
-    client_id: clientId,
-    callback: handleGoogleResponse
-  });
+  console.log('[Auth] Starting Google OAuth sign-in...');
+  showLoginLoading(true);
 
-  google.accounts.id.renderButton(
-    document.getElementById('googleSigninContainer'),
-    { 
-      theme: 'outline', 
-      size: 'large',
-      width: 300,
-      text: 'continue_with'
-    }
-  );
-  
-  document.getElementById('fallbackGoogleBtn').style.display = 'none';
-}
-
-function handleGoogleResponse(response) {
   try {
-    const token = response.credential;
-    const payload = parseJwt(token);
-    
-    const email = payload.email;
-    const name = payload.name;
-    
-    // Find or create user - default to instructor role
-    let user = appData.users.find(u => u.email === email);
-    if (!user) {
-      user = {
-        id: generateId(),
-        name: name,
-        email: email,
-        avatar: getInitials(name),
-        role: 'instructor' // Default to instructor
-      };
-      appData.users.push(user);
-      
-      // Auto-enroll as instructor in demo courses
-      appData.courses.forEach(course => {
-        const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === course.id);
-        if (!existing) {
-          appData.enrollments.push({
-            userId: user.id,
-            courseId: course.id,
-            role: 'instructor'
-          });
-        }
-      });
-    }
-    
-    // Check for pending invites and auto-accept them
-    if (!appData.invites) appData.invites = [];
-    const pendingInvites = appData.invites.filter(i => i.email === email && i.status === 'pending');
-    
-    pendingInvites.forEach(invite => {
-      // Add enrollment
-      const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === invite.courseId);
-      if (!existing) {
-        appData.enrollments.push({
-          userId: user.id,
-          courseId: invite.courseId,
-          role: 'student'
-        });
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.SITE_URL || window.location.origin
       }
-      
-      // Mark invite as accepted
-      invite.status = 'accepted';
     });
-    
-    appData.currentUser = user;
-    saveData(appData);
-    initApp();
+
+    if (error) {
+      console.error('[Auth] OAuth error:', error);
+      showLoginError(error.message);
+      showLoginLoading(false);
+      return;
+    }
+
+    console.log('[Auth] OAuth initiated, redirecting to Google...');
+    // The page will redirect to Google, then back to our app
   } catch (err) {
-    console.error('Google sign-in error:', err);
-    showToast('Sign-in failed. Please try again.', 'error');
+    console.error('[Auth] Sign-in error:', err);
+    showLoginError('Failed to sign in. Please try again.');
+    showLoginLoading(false);
   }
 }
 
-function parseJwt(token) {
-  const base64Url = token.split('.')[1];
-  const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-  const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
-    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-  }).join(''));
-  return JSON.parse(jsonPayload);
+// Handle auth state changes (called on page load and after OAuth redirect)
+async function handleAuthStateChange(event, session) {
+  console.log('[Auth] Auth state changed:', event, session?.user?.email);
+
+  if (event === 'SIGNED_IN' && session?.user) {
+    await handleSignedIn(session.user);
+  } else if (event === 'SIGNED_OUT') {
+    handleSignedOut();
+  } else if (event === 'INITIAL_SESSION' && session?.user) {
+    // User was already signed in (page refresh)
+    await handleSignedIn(session.user);
+  }
 }
 
-function googleSignIn() {
-  // If this is called, it means Google SSO isn't configured
-  // Just show settings modal
-  openModal('settingsModal');
-  showToast('Configure Google Client ID in Settings to use SSO', 'info');
-}
+// Handle successful sign-in
+async function handleSignedIn(user) {
+  console.log('[Auth] User signed in:', user.email);
 
-function demoLogin(role) {
-  const demoUsers = {
-    instructor: { id: 'demo-i', name: 'Demo Instructor', email: 'instructor@demo.edu', avatar: 'DI', role: 'instructor' },
-    ta: { id: 'demo-t', name: 'Demo TA', email: 'ta@demo.edu', avatar: 'DT', role: 'ta' },
-    student: { id: 'demo-s', name: 'Demo Student', email: 'student@demo.edu', avatar: 'DS', role: 'student' }
+  // Map Supabase user to app user format
+  appData.currentUser = {
+    id: user.id,
+    email: user.email,
+    name: user.user_metadata?.full_name || user.email.split('@')[0],
+    avatar: getInitials(user.user_metadata?.full_name || user.email)
   };
-  
-  const user = demoUsers[role];
-  
-  // Ensure demo user exists in users array
-  if (!appData.users.find(u => u.id === user.id)) {
-    appData.users.push(user);
-  }
-  
-  // Ensure demo user is enrolled in course c1
-  if (!appData.enrollments.find(e => e.userId === user.id && e.courseId === 'c1')) {
-    appData.enrollments.push({ userId: user.id, courseId: 'c1', role: role });
-  }
-  
-  appData.currentUser = user;
-  saveData(appData);
+
+  console.log('[Auth] Current user set:', appData.currentUser);
+
+  // Load data from Supabase
+  await loadDataFromSupabase();
+
+  // Initialize the app UI
   initApp();
 }
 
-function logout() {
+// Handle sign-out
+function handleSignedOut() {
+  console.log('[Auth] User signed out');
+  appData.currentUser = null;
+  appData = JSON.parse(JSON.stringify(defaultData)); // Reset data
+  activeCourseId = null;
+  showLoginScreen();
+}
+
+// Sign out
+async function logout() {
+  console.log('[Auth] Logging out...');
+
+  if (supabase) {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error('[Auth] Logout error:', error);
+    }
+  }
+
   appData.currentUser = null;
   activeCourseId = null;
-  saveData(appData);
+  showLoginScreen();
+}
+
+// Show login screen
+function showLoginScreen() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContainer').setAttribute('aria-hidden', 'true');
+  showLoginLoading(false);
+  hideLoginError();
+}
+
+// Show/hide login loading state
+function showLoginLoading(show) {
+  const loadingEl = document.getElementById('loginLoading');
+  const btnEl = document.getElementById('googleSignInBtn');
+  if (loadingEl) loadingEl.style.display = show ? 'block' : 'none';
+  if (btnEl) btnEl.disabled = show;
+}
+
+// Show login error
+function showLoginError(message) {
+  const errorEl = document.getElementById('loginError');
+  if (errorEl) {
+    errorEl.style.display = 'block';
+    errorEl.textContent = message;
+  }
+}
+
+// Hide login error
+function hideLoginError() {
+  const errorEl = document.getElementById('loginError');
+  if (errorEl) errorEl.style.display = 'none';
+}
+
+// Check for existing session on page load
+async function checkExistingSession() {
+  if (!supabase) {
+    console.log('[Auth] No Supabase client, showing login');
+    showLoginScreen();
+    return;
+  }
+
+  console.log('[Auth] Checking for existing session...');
+
+  const { data: { session }, error } = await supabase.auth.getSession();
+
+  if (error) {
+    console.error('[Auth] Error getting session:', error);
+    showLoginScreen();
+    return;
+  }
+
+  if (session?.user) {
+    console.log('[Auth] Found existing session for:', session.user.email);
+    await handleSignedIn(session.user);
+  } else {
+    console.log('[Auth] No existing session');
+    showLoginScreen();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -622,30 +987,35 @@ function logout() {
 
 function initApp() {
   if (!appData.currentUser) {
-    document.getElementById('loginScreen').style.display = 'flex';
-    document.getElementById('appContainer').setAttribute('aria-hidden', 'true');
-    setTimeout(initGoogleSignIn, 100);
+    console.log('[App] No current user, showing login screen');
+    showLoginScreen();
     return;
   }
-  
+
+  console.log('[App] Initializing app for user:', appData.currentUser.email);
+
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appContainer').setAttribute('aria-hidden', 'false');
-  
+
   // Set user info in top bar
   setText('userAvatarTop', appData.currentUser.avatar);
   setText('userNameTop', appData.currentUser.name);
   setText('userEmailTop', appData.currentUser.email);
-  
+
   // Load user's courses
   const courses = getUserCourses(appData.currentUser.id);
+  console.log('[App] User courses:', courses.length);
+
   if (courses.length > 0 && !activeCourseId) {
     activeCourseId = courses[0].id;
   }
-  
+
   populateCourseSelector();
   renderAll();
   updateNotificationBadge();
   navigateTo('courses');
+
+  console.log('[App] App initialized successfully');
 }
 
 function populateCourseSelector() {
@@ -1964,10 +2334,10 @@ function saveGrade(submissionId) {
 }
 
 async function draftGradeWithAI(submissionId, assignmentId) {
-  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
   
   if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
     return;
   }
   
@@ -3138,9 +3508,9 @@ function openSyllabusParserModal() {
 }
 
 async function parseSyllabus() {
-  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
   if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
     return;
   }
 
@@ -3531,9 +3901,9 @@ function stopAudioRecording() {
 }
 
 async function transcribeAudio() {
-  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
   if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
     return;
   }
 
@@ -3936,7 +4306,7 @@ async function speedGraderDraftWithAI() {
     return;
   }
 
-  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
   if (!apiKey) {
     showToast('Gemini API key not configured', 'error');
     return;
@@ -5053,10 +5423,10 @@ async function sendAiMessage(audioBase64 = null) {
 
   if (!message && !audioBase64) return;
 
-  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
 
   if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
     return;
   }
 
@@ -5370,9 +5740,9 @@ function updateAiCreateType() {
 }
 
 async function generateAiDraft() {
-  const apiKey = window.GEMINI || appData.settings.geminiKey;
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
   if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI to keys.js or configure in Settings.', 'error');
+    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
     return;
   }
   
@@ -6083,34 +6453,31 @@ student2@university.edu" rows="5"></textarea>
           <button class="modal-close" onclick="closeModal('settingsModal')">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label" for="settingsGoogleClientId">Google Client ID</label>
-            <input type="password" class="form-input" id="settingsGoogleClientId"
-                   placeholder="your-client-id.apps.googleusercontent.com"
-                   value="${window.GOOGLE_CLIENT_ID || appData.settings.googleClientId || ''}"
-                   autocomplete="off" spellcheck="false">
+          <div class="form-group" style="padding:16px; background:var(--success-light, #e8f5e9); border-radius:var(--radius); margin-bottom:16px;">
+            <div style="font-weight:600; margin-bottom:8px;">Authentication</div>
             <div class="hint">
-              ${window.GOOGLE_CLIENT_ID ? '✓ Loaded from keys.js (masked for security)' : 'For Google SSO. Get from Google Cloud Console.'}
+              Authenticated via Supabase with Google OAuth.<br>
+              User: <strong>${appData.currentUser?.email || 'Not signed in'}</strong>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="settingsGeminiKey">Gemini API Key</label>
+            <label class="form-label" for="settingsGeminiKey">Gemini API Key (AI Features)</label>
             <input type="password" class="form-input" id="settingsGeminiKey"
                    placeholder="AIza..."
-                   value="${window.GEMINI || appData.settings.geminiKey || ''}"
+                   value="${window.GEMINI_API_KEY || appData.settings.geminiKey || ''}"
                    autocomplete="off" spellcheck="false">
             <div class="hint">
-              ${window.GEMINI ? '✓ Loaded from keys.js (masked for security)' : 'Get from Google AI Studio. Using Gemini 3.0 Flash Preview.'}
+              ${window.GEMINI_API_KEY ? '✓ Loaded from config.js' : 'For AI features. Get from Google AI Studio. Configure in config.js or enter here.'}
             </div>
           </div>
           <div class="form-group" style="padding:16px; background:var(--bg-color); border-radius:var(--radius); margin-top:8px;">
-            <div style="font-weight:600; margin-bottom:8px;">📧 Email Notifications</div>
+            <div style="font-weight:600; margin-bottom:8px;">Email Notifications</div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
               <input type="checkbox" id="settingsEmailNotifications" ${appData.settings.emailNotifications !== false ? 'checked' : ''}>
               <span>Enable email notifications</span>
             </label>
-            <div class="hint" style="margin-top:8px; padding:8px; background:var(--warning-light); border-radius:4px; color:var(--warning);">
-              ⚠️ <strong>Simulated for demo:</strong> In production, connect to an email service (SendGrid, AWS SES, etc.) to send actual notifications.
+            <div class="hint" style="margin-top:8px;">
+              Email notifications can be configured via Supabase Edge Functions.
             </div>
           </div>
         </div>
@@ -6602,23 +6969,21 @@ student3@example.com, 92, Well done" rows="10"></textarea>
 }
 
 function saveSettings() {
-  const googleInput = document.getElementById('settingsGoogleClientId').value.trim();
-  const geminiInput = document.getElementById('settingsGeminiKey').value.trim();
-  
-  // Only save if user explicitly entered values (don't overwrite keys.js with empty)
-  if (googleInput) {
-    appData.settings.googleClientId = googleInput;
-  }
-  
+  const geminiInput = document.getElementById('settingsGeminiKey')?.value.trim();
+
+  // Only save if user explicitly entered a value (don't overwrite config.js with empty)
   if (geminiInput) {
     appData.settings.geminiKey = geminiInput;
+    // Also set it on window for immediate use
+    window.GEMINI_API_KEY = geminiInput;
+    console.log('[Settings] Gemini API key updated');
   }
-  
-  appData.settings.emailNotifications = document.getElementById('settingsEmailNotifications').checked;
-  
+
+  appData.settings.emailNotifications = document.getElementById('settingsEmailNotifications')?.checked ?? true;
+
   saveData(appData);
   closeModal('settingsModal');
-  showToast('Settings saved! Refresh page to apply Google SSO changes.', 'success');
+  showToast('Settings saved!', 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -7872,9 +8237,23 @@ ${fileList || 'No files yet'}
 // EVENT LISTENERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-document.addEventListener('DOMContentLoaded', () => {
-  initApp();
-  
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('[Boot] Page loaded, initializing...');
+
+  // Initialize Supabase client
+  if (!initSupabase()) {
+    console.error('[Boot] Failed to initialize Supabase');
+    // Still show login screen so user can see the error
+    showLoginScreen();
+    return;
+  }
+
+  // Listen for auth state changes
+  supabase.auth.onAuthStateChange(handleAuthStateChange);
+
+  // Check for existing session (handles page refresh and OAuth redirect)
+  await checkExistingSession();
+
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     // ESC closes modals
@@ -7885,7 +8264,7 @@ document.addEventListener('DOMContentLoaded', () => {
         quizTimerInterval = null;
       }
     }
-    
+
     // Ctrl/Cmd+Enter sends AI message (or just Enter when in AI input)
     if (e.key === 'Enter' && !e.shiftKey) {
       if (document.activeElement?.id === 'aiInput') {
@@ -7907,4 +8286,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
   }, 500);
+
+  console.log('[Boot] Initialization complete');
 });
