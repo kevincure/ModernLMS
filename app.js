@@ -7,7 +7,7 @@
 // SUPABASE CLIENT INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-let supabase = null;
+let supabaseClient = null;
 
 function initSupabase() {
   const url = window.SUPABASE_URL;
@@ -20,7 +20,7 @@ function initSupabase() {
   }
 
   try {
-    supabase = window.supabase.createClient(url, key);
+    supabaseClient = window.supabase.createClient(url, key);
     console.log('[Supabase] Client initialized successfully');
     return true;
   } catch (err) {
@@ -233,7 +233,7 @@ let dataLoading = false; // Track data loading state
 
 // Load all data from Supabase for the current user
 async function loadDataFromSupabase() {
-  if (!supabase || !appData.currentUser) {
+  if (!supabaseClient || !appData.currentUser) {
     console.log('[Supabase] Cannot load data: no client or user');
     return;
   }
@@ -265,24 +265,24 @@ async function loadDataFromSupabase() {
       rubricCriteriaRes,
       gradeCategoriesRes
     ] = await Promise.all([
-      supabase.from('profiles').select('*'),
-      supabase.from('courses').select('*'),
-      supabase.from('enrollments').select('*'),
-      supabase.from('assignments').select('*'),
-      supabase.from('submissions').select('*'),
-      supabase.from('grades').select('*'),
-      supabase.from('announcements').select('*'),
-      supabase.from('files').select('*'),
-      supabase.from('quizzes').select('*'),
-      supabase.from('quiz_questions').select('*'),
-      supabase.from('quiz_submissions').select('*'),
-      supabase.from('modules').select('*'),
-      supabase.from('module_items').select('*'),
-      supabase.from('notifications').select('*').eq('user_id', userId),
-      supabase.from('invites').select('*'),
-      supabase.from('rubrics').select('*'),
-      supabase.from('rubric_criteria').select('*'),
-      supabase.from('grade_categories').select('*')
+      supabaseClient.from('profiles').select('*'),
+      supabaseClient.from('courses').select('*'),
+      supabaseClient.from('enrollments').select('*'),
+      supabaseClient.from('assignments').select('*'),
+      supabaseClient.from('submissions').select('*'),
+      supabaseClient.from('grades').select('*'),
+      supabaseClient.from('announcements').select('*'),
+      supabaseClient.from('files').select('*'),
+      supabaseClient.from('quizzes').select('*'),
+      supabaseClient.from('quiz_questions').select('*'),
+      supabaseClient.from('quiz_submissions').select('*'),
+      supabaseClient.from('modules').select('*'),
+      supabaseClient.from('module_items').select('*'),
+      supabaseClient.from('notifications').select('*').eq('user_id', userId),
+      supabaseClient.from('invites').select('*'),
+      supabaseClient.from('rubrics').select('*'),
+      supabaseClient.from('rubric_criteria').select('*'),
+      supabaseClient.from('grade_categories').select('*')
     ]);
 
     // Log any errors
@@ -830,7 +830,7 @@ function openNotificationDetail(notificationId) {
 
 // Sign in with Google via Supabase Auth
 async function signInWithGoogle() {
-  if (!supabase) {
+  if (!supabaseClient) {
     console.error('[Auth] Supabase not initialized');
     showLoginError('Supabase not configured. Please check config.js');
     return;
@@ -840,7 +840,7 @@ async function signInWithGoogle() {
   showLoginLoading(true);
 
   try {
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabaseClient.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: window.SITE_URL || window.location.origin
@@ -912,7 +912,7 @@ async function logout() {
   console.log('[Auth] Logging out...');
 
   if (supabase) {
-    const { error } = await supabase.auth.signOut();
+    const { error } = await supabaseClient.auth.signOut();
     if (error) {
       console.error('[Auth] Logout error:', error);
     }
@@ -956,7 +956,7 @@ function hideLoginError() {
 
 // Check for existing session on page load
 async function checkExistingSession() {
-  if (!supabase) {
+  if (!supabaseClient) {
     console.log('[Auth] No Supabase client, showing login');
     showLoginScreen();
     return;
@@ -964,7 +964,7 @@ async function checkExistingSession() {
 
   console.log('[Auth] Checking for existing session...');
 
-  const { data: { session }, error } = await supabase.auth.getSession();
+  const { data: { session }, error } = await supabaseClient.auth.getSession();
 
   if (error) {
     console.error('[Auth] Error getting session:', error);
@@ -6456,7 +6456,7 @@ student2@university.edu" rows="5"></textarea>
           <div class="form-group" style="padding:16px; background:var(--success-light, #e8f5e9); border-radius:var(--radius); margin-bottom:16px;">
             <div style="font-weight:600; margin-bottom:8px;">Authentication</div>
             <div class="hint">
-              Authenticated via Supabase with Google OAuth.<br>
+              Signed in with Google.<br>
               User: <strong>${appData.currentUser?.email || 'Not signed in'}</strong>
             </div>
           </div>
@@ -6477,7 +6477,7 @@ student2@university.edu" rows="5"></textarea>
               <span>Enable email notifications</span>
             </label>
             <div class="hint" style="margin-top:8px;">
-              Email notifications can be configured via Supabase Edge Functions.
+              Email notifications require server-side configuration.
             </div>
           </div>
         </div>
@@ -8249,7 +8249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Listen for auth state changes
-  supabase.auth.onAuthStateChange(handleAuthStateChange);
+  supabaseClient.auth.onAuthStateChange(handleAuthStateChange);
 
   // Check for existing session (handles page refresh and OAuth redirect)
   await checkExistingSession();
