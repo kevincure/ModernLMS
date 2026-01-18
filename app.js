@@ -1,10 +1,24 @@
 /* ═══════════════════════════════════════════════════════════════════════════════
    Campus LMS - Complete Implementation
-   Local-first LMS with Google SSO, courses, assignments, gradebook, AI
+   Modern LMS with Supabase backend, Google SSO, AI features
 ═══════════════════════════════════════════════════════════════════════════════ */
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Style Theme - Always use Editorial style
+// Supabase Client Initialization
+// ═══════════════════════════════════════════════════════════════════════════════
+let supabase = null;
+
+function initSupabase() {
+  if (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY) {
+    supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+    return true;
+  }
+  console.warn('Supabase not configured. Running in offline mode.');
+  return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Style Theme Switcher - Check URL query ?style=1, ?style=2, or ?style=3
 // ═══════════════════════════════════════════════════════════════════════════════
 (function initStyleTheme() {
   // Always apply style-1 (Editorial) as the default and only style
@@ -19,148 +33,7 @@
   }
 })();
 
-const STORAGE_KEY = 'campus_lms_data_v3';
-const ALLOWED_DOMAINS = ['university.edu', 'demo.edu'];
-
-// Default data structure
-const defaultData = {
-  currentUser: null,
-  users: [
-    { id: 'u1', name: 'Dr. Sarah Chen', email: 'schen@university.edu', role: 'instructor', avatar: 'SC' },
-    { id: 'u2', name: 'Michael Park', email: 'mpark@university.edu', role: 'ta', avatar: 'MP' },
-    { id: 'u3', name: 'Emma Wilson', email: 'ewilson@student.edu', role: 'student', avatar: 'EW' },
-    { id: 'u4', name: 'James Rodriguez', email: 'jrodriguez@student.edu', role: 'student', avatar: 'JR' },
-    { id: 'u5', name: 'Aisha Patel', email: 'apatel@student.edu', role: 'student', avatar: 'AP' }
-  ],
-  courses: [
-    { id: 'c1', name: 'ECON 101 - Introduction to Economics', code: 'ECON101', inviteCode: 'ECON2025', createdBy: 'u1', description: 'An introduction to microeconomic and macroeconomic principles', startHereTitle: 'Start Here', startHereContent: 'Welcome to **ECON 101**! Begin by reviewing the syllabus and completing Quiz 1 before next week.' },
-    { id: 'c2', name: 'ECON 301 - Advanced Microeconomics', code: 'ECON301', inviteCode: 'MICRO25', createdBy: 'u1', description: 'Advanced topics in microeconomic theory and applications', startHereTitle: 'Start Here', startHereContent: 'Read the course overview, then jump into the first problem set.' }
-  ],
-  enrollments: [
-    { userId: 'u1', courseId: 'c1', role: 'instructor' },
-    { userId: 'u1', courseId: 'c2', role: 'instructor' },
-    { userId: 'u2', courseId: 'c1', role: 'ta' },
-    { userId: 'u3', courseId: 'c1', role: 'student' },
-    { userId: 'u4', courseId: 'c1', role: 'student' },
-    { userId: 'u5', courseId: 'c1', role: 'student' },
-    { userId: 'u3', courseId: 'c2', role: 'student' }
-  ],
-  assignments: [
-    { 
-      id: 'a1', 
-      courseId: 'c1', 
-      title: 'Problem Set 1: Supply and Demand', 
-      description: 'Complete problems 1-10 from Chapter 2. Show all work.',
-      points: 100,
-      status: 'published',
-      dueDate: new Date(Date.now() + 86400000 * 7).toISOString(),
-      createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-      allowLateSubmissions: true,
-      lateDeduction: 10,
-      allowResubmission: true,
-      category: 'homework',
-      rubric: null
-    },
-    { 
-      id: 'a2', 
-      courseId: 'c1', 
-      title: 'Economic Analysis Essay', 
-      description: 'Write a 1500-word analysis of a current economic issue.',
-      points: 150,
-      status: 'published',
-      dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
-      createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-      allowLateSubmissions: false,
-      lateDeduction: 0,
-      allowResubmission: false,
-      category: 'essay',
-      rubric: null
-    },
-    { 
-      id: 'a3', 
-      courseId: 'c2', 
-      title: 'Game Theory Problem Set', 
-      description: 'Solve the Nash equilibrium problems.',
-      points: 100,
-      status: 'draft',
-      dueDate: new Date(Date.now() + 86400000 * 10).toISOString(),
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-      allowLateSubmissions: true,
-      lateDeduction: 5,
-      allowResubmission: true,
-      category: 'homework',
-      rubric: null
-    }
-  ],
-  submissions: [
-    { id: 's1', assignmentId: 'a1', userId: 'u3', text: 'My solution to problem set 1...', fileName: null, fileData: null, submittedAt: new Date(Date.now() - 86400000).toISOString() },
-    { id: 's2', assignmentId: 'a1', userId: 'u4', text: 'Here are my answers...', fileName: 'answers.pdf', fileData: null, submittedAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-    { id: 's3', assignmentId: 'a2', userId: 'u3', text: 'Economic analysis essay draft...', fileName: null, fileData: null, submittedAt: new Date(Date.now() - 3600000).toISOString() }
-  ],
-  grades: [
-    { submissionId: 's1', score: 92, feedback: 'Excellent work! Clear explanations.', released: true, gradedBy: 'u1', gradedAt: new Date().toISOString() },
-    { submissionId: 's2', score: 78, feedback: 'Good effort, but problem 7 needs more detail.', released: false, gradedBy: 'u2', gradedAt: new Date().toISOString() }
-  ],
-  announcements: [
-    { id: 'an1', courseId: 'c1', title: 'Welcome to ECON 101!', content: 'Welcome! Please review the syllabus and complete the first assignment by next Friday.', pinned: true, authorId: 'u1', createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
-    { id: 'an2', courseId: 'c1', title: 'Office Hours Update', content: 'Office hours moved to Wednesdays 2-4pm.', pinned: false, authorId: 'u1', createdAt: new Date(Date.now() - 86400000).toISOString() }
-  ],
-  files: [
-    { id: 'f1', courseId: 'c1', name: 'Course Syllabus.pdf', type: 'pdf', size: 245000, uploadedBy: 'u1', uploadedAt: new Date(Date.now() - 86400000 * 10).toISOString() },
-    { id: 'f2', courseId: 'c1', name: 'Week 1 Slides.pptx', type: 'pptx', size: 1200000, uploadedBy: 'u1', uploadedAt: new Date(Date.now() - 86400000 * 7).toISOString() }
-  ],
-  rubrics: [
-    // { id, assignmentId, criteria: [{ name, points, description }] }
-  ],
-  quizzes: [
-    {
-      id: 'q1',
-      courseId: 'c1',
-      title: 'Quiz 1: Market Basics',
-      description: 'Short quiz on supply and demand basics.',
-      status: 'published',
-      dueDate: new Date(Date.now() + 86400000 * 5).toISOString(),
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-      timeLimit: 20,
-      attempts: 2,
-      randomizeQuestions: true,
-      questionPoolEnabled: true,
-      questionSelectCount: 3,
-      questions: [
-        { id: 'q1-1', type: 'multiple_choice', prompt: 'What happens to quantity demanded when price increases?', options: ['Increases', 'Decreases', 'Stays the same', 'Becomes zero'], correctAnswer: 1, points: 2 },
-        { id: 'q1-2', type: 'true_false', prompt: 'A price ceiling can create a shortage.', options: ['True', 'False'], correctAnswer: 'True', points: 2 },
-        { id: 'q1-3', type: 'multiple_choice', prompt: 'Equilibrium occurs where?', options: ['Supply equals demand', 'Demand exceeds supply', 'Supply exceeds demand', 'Demand is zero'], correctAnswer: 0, points: 2 },
-        { id: 'q1-4', type: 'short_answer', prompt: 'In one sentence, define opportunity cost.', options: [], correctAnswer: '', points: 4 }
-      ]
-    }
-  ],
-  quizQuestions: [
-    // { id, quizId, type: 'multiple_choice'|'true_false'|'short_answer', question, options: [], correctAnswer, points }
-  ],
-  quizSubmissions: [
-    // { id, quizId, userId, answers: {}, score, submittedAt }
-  ],
-  gradeCategories: [
-    // { courseId, name, weight } - e.g., { courseId: 'c1', name: 'Homework', weight: 0.3 }
-  ],
-  notifications: [
-    // { userId, type, title, message, courseId, read, createdAt }
-  ],
-  invites: [
-    // { courseId, email, status: 'pending'|'accepted', sentAt }
-  ],
-  modules: [
-    // { id, courseId, name, position, items: [{ id, type: 'assignment'|'quiz'|'file'|'page', refId, position }] }
-  ],
-  questionBanks: [
-    // { id, courseId, name, questions: [{ id, type, prompt, options, correctAnswer, points }] }
-  ],
-  settings: {
-    geminiKey: '',
-    googleClientId: '',
-    emailNotifications: true
-  }
-};
+// Storage key removed - using Supabase for data persistence
 
 // State
 let appData = loadData();
@@ -189,25 +62,35 @@ let aiProcessing = false; // Track AI processing state
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function loadData() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) {
-    const data = JSON.parse(stored);
-    // Migration: ensure new data structures exist
-    if (!data.modules) data.modules = [];
-    if (!data.questionBanks) data.questionBanks = [];
-    if (!data.notifications) data.notifications = [];
-    if (!data.quizzes) data.quizzes = [];
-    if (!data.quizSubmissions) data.quizSubmissions = [];
-    if (!data.gradeCategories) data.gradeCategories = [];
-    if (!data.rubrics) data.rubrics = [];
-    return data;
-  }
-  saveData(defaultData);
-  return defaultData;
+  // When using Supabase, data is loaded via loadUserData()
+  // This function provides initial empty state
+  return {
+    currentUser: null,
+    users: [],
+    courses: [],
+    enrollments: [],
+    assignments: [],
+    submissions: [],
+    grades: [],
+    announcements: [],
+    files: [],
+    quizzes: [],
+    quizSubmissions: [],
+    modules: [],
+    notifications: [],
+    gradeCategories: [],
+    rubrics: [],
+    questionBanks: [],
+    invites: [],
+    settings: {
+      emailNotifications: true
+    }
+  };
 }
 
 function saveData(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  // No-op when using Supabase - data is persisted via individual API calls
+  // Kept for backwards compatibility with existing code structure
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -577,43 +460,244 @@ function parseJwt(token) {
   return JSON.parse(jsonPayload);
 }
 
-function googleSignIn() {
-  // If this is called, it means Google SSO isn't configured
-  // Just show settings modal
-  openModal('settingsModal');
-  showToast('Configure Google Client ID in Settings to use SSO', 'info');
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUPABASE AUTHENTICATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function signInWithGoogle() {
+  if (!supabase) {
+    showToast('Supabase not configured. Check keys.js', 'error');
+    return;
+  }
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: window.location.origin + window.location.pathname
+    }
+  });
+
+  if (error) {
+    console.error('Sign in error:', error);
+    showToast('Sign in failed: ' + error.message, 'error');
+  }
 }
 
-function demoLogin(role) {
-  const demoUsers = {
-    instructor: { id: 'demo-i', name: 'Demo Instructor', email: 'instructor@demo.edu', avatar: 'DI', role: 'instructor' },
-    ta: { id: 'demo-t', name: 'Demo TA', email: 'ta@demo.edu', avatar: 'DT', role: 'ta' },
-    student: { id: 'demo-s', name: 'Demo Student', email: 'student@demo.edu', avatar: 'DS', role: 'student' }
-  };
-  
-  const user = demoUsers[role];
-  
-  // Ensure demo user exists in users array
-  if (!appData.users.find(u => u.id === user.id)) {
-    appData.users.push(user);
+async function handleAuthStateChange(event, session) {
+  if (event === 'SIGNED_IN' && session) {
+    // Fetch user profile
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single();
+
+    if (profile) {
+      appData.currentUser = {
+        id: profile.id,
+        name: profile.name,
+        email: profile.email,
+        avatar: profile.avatar
+      };
+
+      // Load user's enrollments and courses
+      await loadUserData();
+      initApp();
+    }
+  } else if (event === 'SIGNED_OUT') {
+    appData.currentUser = null;
+    activeCourseId = null;
+    document.getElementById('loginScreen').style.display = 'flex';
+    document.getElementById('appContainer').setAttribute('aria-hidden', 'true');
   }
-  
-  // Ensure demo user is enrolled in course c1
-  if (!appData.enrollments.find(e => e.userId === user.id && e.courseId === 'c1')) {
-    appData.enrollments.push({ userId: user.id, courseId: 'c1', role: role });
-  }
-  
-  appData.currentUser = user;
-  saveData(appData);
-  initApp();
 }
 
-function logout() {
+async function logout() {
+  if (supabase) {
+    await supabase.auth.signOut();
+  }
   appData.currentUser = null;
   activeCourseId = null;
-  saveData(appData);
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContainer').setAttribute('aria-hidden', 'true');
+}
+
+// Load all user data from Supabase
+async function loadUserData() {
+  if (!supabase || !appData.currentUser) return;
+
+  const userId = appData.currentUser.id;
+
+  // Load enrollments with course data
+  const { data: enrollments } = await supabase
+    .from('enrollments')
+    .select(`
+      id, role, enrolled_at,
+      courses:course_id (
+        id, name, code, description, invite_code,
+        start_here_title, start_here_content, active, created_by
+      )
+    `)
+    .eq('user_id', userId);
+
+  if (enrollments) {
+    appData.enrollments = enrollments.map(e => ({
+      userId: userId,
+      courseId: e.courses.id,
+      role: e.role
+    }));
+
+    appData.courses = enrollments.map(e => ({
+      id: e.courses.id,
+      name: e.courses.name,
+      code: e.courses.code,
+      description: e.courses.description,
+      inviteCode: e.courses.invite_code,
+      startHereTitle: e.courses.start_here_title,
+      startHereContent: e.courses.start_here_content,
+      active: e.courses.active,
+      createdBy: e.courses.created_by
+    }));
+  }
+
+  // Set active course if any
+  if (appData.courses.length > 0 && !activeCourseId) {
+    activeCourseId = appData.courses[0].id;
+    await loadCourseData(activeCourseId);
+  }
+}
+
+// Load course-specific data
+async function loadCourseData(courseId) {
+  if (!supabase) return;
+
+  // Load all course data in parallel
+  const [
+    { data: assignments },
+    { data: quizzes },
+    { data: announcements },
+    { data: files },
+    { data: modules },
+    { data: gradeCategories },
+    { data: people }
+  ] = await Promise.all([
+    supabase.from('assignments').select('*').eq('course_id', courseId).order('created_at', { ascending: false }),
+    supabase.from('quizzes').select('*, quiz_questions(*)').eq('course_id', courseId).order('created_at', { ascending: false }),
+    supabase.from('announcements').select('*').eq('course_id', courseId).order('created_at', { ascending: false }),
+    supabase.from('files').select('*').eq('course_id', courseId).order('uploaded_at', { ascending: false }),
+    supabase.from('modules').select('*, module_items(*)').eq('course_id', courseId).order('position'),
+    supabase.from('grade_categories').select('*').eq('course_id', courseId),
+    supabase.from('enrollments').select('*, profiles:user_id(*)').eq('course_id', courseId)
+  ]);
+
+  // Transform Supabase snake_case to camelCase
+  appData.assignments = (assignments || []).map(transformAssignment);
+  appData.quizzes = (quizzes || []).map(transformQuiz);
+  appData.announcements = (announcements || []).map(transformAnnouncement);
+  appData.files = (files || []).map(transformFile);
+  appData.modules = (modules || []).map(transformModule);
+  appData.gradeCategories = gradeCategories || [];
+
+  // Transform people/users for this course
+  const courseUsers = (people || []).map(e => ({
+    id: e.profiles.id,
+    name: e.profiles.name,
+    email: e.profiles.email,
+    avatar: e.profiles.avatar,
+    role: e.role
+  }));
+
+  // Merge with existing users (avoid duplicates)
+  courseUsers.forEach(u => {
+    if (!appData.users.find(existing => existing.id === u.id)) {
+      appData.users.push(u);
+    }
+  });
+}
+
+// Transform functions (snake_case to camelCase)
+function transformAssignment(a) {
+  return {
+    id: a.id,
+    courseId: a.course_id,
+    title: a.title,
+    description: a.description,
+    points: a.points,
+    status: a.status,
+    dueDate: a.due_date,
+    allowLateSubmissions: a.allow_late_submissions,
+    lateDeduction: a.late_deduction,
+    allowResubmission: a.allow_resubmission,
+    category: a.category,
+    createdAt: a.created_at
+  };
+}
+
+function transformQuiz(q) {
+  return {
+    id: q.id,
+    courseId: q.course_id,
+    title: q.title,
+    description: q.description,
+    status: q.status,
+    dueDate: q.due_date,
+    timeLimit: q.time_limit,
+    attempts: q.attempts_allowed,
+    randomizeQuestions: q.randomize_questions,
+    questionPoolEnabled: q.question_pool_enabled,
+    questionSelectCount: q.question_select_count,
+    createdAt: q.created_at,
+    questions: (q.quiz_questions || []).map(qq => ({
+      id: qq.id,
+      type: qq.type,
+      prompt: qq.prompt,
+      options: qq.options || [],
+      correctAnswer: qq.correct_answer,
+      points: qq.points
+    }))
+  };
+}
+
+function transformAnnouncement(a) {
+  return {
+    id: a.id,
+    courseId: a.course_id,
+    title: a.title,
+    content: a.content,
+    pinned: a.pinned,
+    authorId: a.author_id,
+    createdAt: a.created_at
+  };
+}
+
+function transformFile(f) {
+  return {
+    id: f.id,
+    courseId: f.course_id,
+    name: f.name,
+    type: f.mime_type,
+    size: f.size_bytes,
+    storagePath: f.storage_path,
+    uploadedBy: f.uploaded_by,
+    uploadedAt: f.uploaded_at
+  };
+}
+
+function transformModule(m) {
+  return {
+    id: m.id,
+    courseId: m.course_id,
+    name: m.name,
+    position: m.position,
+    items: (m.module_items || []).map(i => ({
+      id: i.id,
+      type: i.type,
+      refId: i.ref_id,
+      title: i.title,
+      url: i.url,
+      position: i.position
+    }))
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -7872,9 +7956,26 @@ ${fileList || 'No files yet'}
 // EVENT LISTENERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-document.addEventListener('DOMContentLoaded', () => {
-  initApp();
-  
+document.addEventListener('DOMContentLoaded', async () => {
+  // Initialize Supabase
+  initSupabase();
+
+  // Check for existing Supabase session
+  if (supabase) {
+    // Listen for auth state changes
+    supabase.auth.onAuthStateChange(handleAuthStateChange);
+
+    // Check current session
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      await handleAuthStateChange('SIGNED_IN', session);
+    } else {
+      initApp(); // Show login screen
+    }
+  } else {
+    initApp(); // Fallback to local mode
+  }
+
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     // ESC closes modals
