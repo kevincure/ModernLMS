@@ -1,0 +1,15 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Campus LMS - Configuration
+// Copy this file to keys.js and fill in your values
+// DO NOT commit keys.js to version control
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Supabase Configuration (required)
+window.SUPABASE_URL = 'https://your-project.supabase.co';
+window.SUPABASE_ANON_KEY = 'your-anon-key-here';
+
+// Google OAuth (optional - can configure in Supabase dashboard instead)
+window.GOOGLE_CLIENT_ID = '';
+
+// Gemini AI (optional - for AI features, use Edge Function in production)
+window.GEMINI = '';
