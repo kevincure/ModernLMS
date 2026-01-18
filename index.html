@@ -7,14 +7,8 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <!-- Default fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
-  <!-- Style 1: Editorial (Medium-inspired) - Playfair Display + Crimson Pro -->
+  <!-- Fonts for Editorial style -->
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Crimson+Pro:wght@300;400;500;600&display=swap" rel="stylesheet" />
-  <!-- Style 2: Minimal Luxe (Anthropic-inspired) - Inter -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <!-- Style 3: Contemporary - Instrument Sans + Fraunces -->
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 
   <!-- Supabase Client -->
@@ -131,9 +125,6 @@
         </div>
         <div class="top-bar-right">
           <div id="viewToggleContainer" style="margin-right:12px;"></div>
-          <button class="btn btn-secondary btn-sm notification-btn" onclick="openModal('notificationsModal')" title="Notifications" style="margin-right:12px; position:relative;">
-            🔔 <span id="notificationBadge" class="notification-badge" style="display:none;"></span>
-          </button>
           <div class="user-info-compact">
             <div class="user-avatar-small" id="userAvatarTop">U</div>
             <div class="user-details-compact">
@@ -292,25 +283,25 @@
             <div class="page-subtitle" id="aiSubtitle">Ask questions or create announcements, quizzes, and more</div>
           </div>
         </div>
-        <div class="page-body" style="display:flex; flex-direction:column; height:calc(100vh - 180px); padding-bottom:0;">
-          <div class="ai-thread-container" style="flex:1; overflow-y:auto; padding:16px; background:var(--bg-card); border-radius:var(--radius) var(--radius) 0 0; border:1px solid var(--border-color); border-bottom:none;">
+        <div class="page-body ai-page-body">
+          <div class="ai-thread-container">
             <div class="ai-thread" id="aiThread"></div>
           </div>
-          <div class="ai-composer-fixed" style="position:sticky; bottom:0; background:var(--bg-card); border:1px solid var(--border-color); border-radius:0 0 var(--radius) var(--radius); padding:16px; z-index:10;">
-            <div style="display:flex; gap:8px; align-items:flex-end;">
-              <textarea class="form-textarea ai-input" id="aiInput" placeholder="Ask a question or say 'create an announcement about...' or 'create a quiz on...'" rows="2" style="flex:1; resize:none;"></textarea>
-              <div style="display:flex; flex-direction:column; gap:8px;">
-                <button class="btn btn-secondary" id="aiRecordBtn" onclick="toggleAiRecording()" style="height:42px; display:flex; align-items:center; gap:4px;">
-                  <span id="aiRecordIcon">🎤</span> <span id="aiRecordText">Record</span>
+          <div class="ai-composer-fixed">
+            <div class="ai-composer-row">
+              <textarea class="form-textarea ai-input" id="aiInput" placeholder="Ask a question..." rows="2"></textarea>
+              <div class="ai-composer-buttons">
+                <button class="btn btn-secondary" id="aiRecordBtn" onclick="toggleAiRecording()">
+                  <span id="aiRecordIcon">🎤</span> <span id="aiRecordText" class="ai-btn-text">Record</span>
                 </button>
-                <button class="btn btn-primary" id="aiSendBtn" onclick="sendAiMessage()" style="height:42px; display:flex; align-items:center; gap:4px;">
+                <button class="btn btn-primary" id="aiSendBtn" onclick="sendAiMessage()">
                   <span id="aiProcessingSpinner" class="ai-spinner-small" style="display:none;"></span>
                   Send
                 </button>
               </div>
             </div>
-            <div class="muted" style="font-size:0.8rem; margin-top:8px;">
-              💡 Press Enter to send, or click Record to use voice input (auto-sends when stopped)
+            <div class="muted ai-hint">
+              Press Enter to send, or use voice input
             </div>
           </div>
         </div>
