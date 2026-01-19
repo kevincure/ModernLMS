@@ -946,6 +946,136 @@ async function supabaseLoadUserGeminiKey(userId) {
   return data?.gemini_key || null;
 }
 
+// Quiz operations
+async function supabaseCreateQuiz(quiz) {
+  if (!supabaseClient) return;
+
+  const { data, error } = await supabaseClient.from('quizzes').insert({
+    id: quiz.id,
+    course_id: quiz.courseId,
+    title: quiz.title,
+    description: quiz.description,
+    status: quiz.status,
+    due_date: quiz.dueDate,
+    created_at: quiz.createdAt,
+    time_limit: quiz.timeLimit,
+    attempts: quiz.attempts,
+    randomize_questions: quiz.randomizeQuestions,
+    question_pool_enabled: quiz.questionPoolEnabled,
+    question_select_count: quiz.questionSelectCount,
+    questions: quiz.questions
+  });
+
+  if (error) {
+    console.error('[Supabase] Error creating quiz:', error);
+    showToast('Failed to save quiz to database', 'error');
+    return null;
+  }
+  console.log('[Supabase] Quiz created:', quiz.id);
+  return data;
+}
+
+async function supabaseUpdateQuiz(quiz) {
+  if (!supabaseClient) return;
+
+  const { data, error } = await supabaseClient.from('quizzes').update({
+    title: quiz.title,
+    description: quiz.description,
+    status: quiz.status,
+    due_date: quiz.dueDate,
+    time_limit: quiz.timeLimit,
+    attempts: quiz.attempts,
+    randomize_questions: quiz.randomizeQuestions,
+    question_pool_enabled: quiz.questionPoolEnabled,
+    question_select_count: quiz.questionSelectCount,
+    questions: quiz.questions
+  }).eq('id', quiz.id);
+
+  if (error) {
+    console.error('[Supabase] Error updating quiz:', error);
+    showToast('Failed to update quiz in database', 'error');
+    return null;
+  }
+  console.log('[Supabase] Quiz updated:', quiz.id);
+  return data;
+}
+
+async function supabaseDeleteQuiz(quizId) {
+  if (!supabaseClient) return;
+
+  const { error } = await supabaseClient.from('quizzes').delete().eq('id', quizId);
+  if (error) {
+    console.error('[Supabase] Error deleting quiz:', error);
+    showToast('Failed to delete quiz from database', 'error');
+    return false;
+  }
+  console.log('[Supabase] Quiz deleted:', quizId);
+  return true;
+}
+
+// Quiz submission operations
+async function supabaseUpsertQuizSubmission(submission) {
+  if (!supabaseClient) return;
+
+  const { data, error } = await supabaseClient.from('quiz_submissions').upsert({
+    id: submission.id,
+    quiz_id: submission.quizId,
+    user_id: submission.userId,
+    answers: submission.answers,
+    score: submission.score,
+    auto_score: submission.autoScore,
+    graded: submission.graded,
+    submitted_at: submission.submittedAt
+  });
+
+  if (error) {
+    console.error('[Supabase] Error saving quiz submission:', error);
+    showToast('Failed to save quiz submission', 'error');
+    return null;
+  }
+  console.log('[Supabase] Quiz submission saved');
+  return data;
+}
+
+// File operations
+async function supabaseCreateFile(file) {
+  if (!supabaseClient) return;
+
+  const { data, error } = await supabaseClient.from('files').insert({
+    id: file.id,
+    course_id: file.courseId,
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    uploaded_by: file.uploadedBy,
+    uploaded_at: file.uploadedAt,
+    external_url: file.externalUrl,
+    description: file.description,
+    is_placeholder: file.isPlaceholder
+  });
+
+  if (error) {
+    console.error('[Supabase] Error creating file:', error);
+    showToast('Failed to save file to database', 'error');
+    return null;
+  }
+  console.log('[Supabase] File created:', file.id);
+  return data;
+}
+
+async function supabaseDeleteFile(fileId) {
+  if (!supabaseClient) return;
+
+  const { error } = await supabaseClient.from('files').delete().eq('id', fileId);
+  if (error) {
+    console.error('[Supabase] Error deleting file:', error);
+    showToast('Failed to delete file from database', 'error');
+    return false;
+  }
+  console.log('[Supabase] File deleted:', fileId);
+  return true;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -970,6 +1100,8 @@ function escapeHtml(value) {
 }
 
 // Content editor toolbar functions for inserting links, files, and videos
+let currentInsertTextareaId = null;
+
 function insertAtCursor(textareaId, text) {
   const textarea = document.getElementById(textareaId);
   if (!textarea) return;
@@ -984,67 +1116,246 @@ function insertAtCursor(textareaId, text) {
   textarea.selectionStart = textarea.selectionEnd = start + text.length;
 }
 
-function insertLink(textareaId) {
-  const url = prompt('Enter URL:');
-  if (!url) return;
-  const label = prompt('Enter link text:', 'Link');
-  if (label === null) return;
-  insertAtCursor(textareaId, `[${label}](${url})`);
+function openInsertLinkModal(textareaId) {
+  currentInsertTextareaId = textareaId;
+  ensureInsertModalsRendered();
+  document.getElementById('insertLinkUrl').value = '';
+  document.getElementById('insertLinkText').value = '';
+  openModal('insertLinkModal');
+  document.getElementById('insertLinkUrl').focus();
 }
 
-function insertVideo(textareaId) {
-  const url = prompt('Enter YouTube or Vimeo URL:');
-  if (!url) return;
+function confirmInsertLink() {
+  const url = document.getElementById('insertLinkUrl').value.trim();
+  const text = document.getElementById('insertLinkText').value.trim() || 'Link';
+  if (!url) {
+    showToast('Please enter a URL', 'error');
+    return;
+  }
+  insertAtCursor(currentInsertTextareaId, `[${text}](${url})`);
+  closeModal('insertLinkModal');
+}
 
-  // Extract video ID and create embed markdown
-  let embedCode = '';
-  if (url.includes('youtube.com') || url.includes('youtu.be')) {
-    let videoId = '';
-    if (url.includes('youtu.be/')) {
-      videoId = url.split('youtu.be/')[1].split('?')[0];
-    } else if (url.includes('v=')) {
-      videoId = url.split('v=')[1].split('&')[0];
-    }
-    if (videoId) {
-      embedCode = `\n\n[![Video](https://img.youtube.com/vi/${videoId}/0.jpg)](${url})\n\n`;
-    }
+function openInsertVideoModal(textareaId) {
+  currentInsertTextareaId = textareaId;
+  ensureInsertModalsRendered();
+  document.getElementById('insertVideoUrl').value = '';
+  document.getElementById('insertVideoPreview').innerHTML = '<div class="muted">Paste a YouTube or Vimeo URL to preview</div>';
+  openModal('insertVideoModal');
+  document.getElementById('insertVideoUrl').focus();
+}
+
+function previewInsertVideo() {
+  const url = document.getElementById('insertVideoUrl').value.trim();
+  const preview = document.getElementById('insertVideoPreview');
+
+  if (!url) {
+    preview.innerHTML = '<div class="muted">Paste a YouTube or Vimeo URL to preview</div>';
+    return;
+  }
+
+  const videoId = extractYouTubeId(url);
+  if (videoId) {
+    preview.innerHTML = `
+      <div style="position:relative; padding-bottom:56.25%; height:0; overflow:hidden; border-radius:var(--radius);">
+        <iframe src="https://www.youtube.com/embed/${videoId}"
+          style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen></iframe>
+      </div>
+    `;
   } else if (url.includes('vimeo.com')) {
-    embedCode = `\n\n[📹 Watch Video](${url})\n\n`;
+    const vimeoId = url.split('/').pop().split('?')[0];
+    preview.innerHTML = `
+      <div style="position:relative; padding-bottom:56.25%; height:0; overflow:hidden; border-radius:var(--radius);">
+        <iframe src="https://player.vimeo.com/video/${vimeoId}"
+          style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowfullscreen></iframe>
+      </div>
+    `;
+  } else {
+    preview.innerHTML = '<div class="muted">Could not detect video platform. Supported: YouTube, Vimeo</div>';
+  }
+}
+
+function extractYouTubeId(url) {
+  if (!url) return null;
+  if (url.includes('youtu.be/')) {
+    return url.split('youtu.be/')[1].split('?')[0].split('&')[0];
+  } else if (url.includes('v=')) {
+    return url.split('v=')[1].split('&')[0].split('?')[0];
+  } else if (url.includes('embed/')) {
+    return url.split('embed/')[1].split('?')[0].split('&')[0];
+  }
+  return null;
+}
+
+function confirmInsertVideo() {
+  const url = document.getElementById('insertVideoUrl').value.trim();
+  if (!url) {
+    showToast('Please enter a video URL', 'error');
+    return;
+  }
+
+  const videoId = extractYouTubeId(url);
+  let embedCode = '';
+
+  if (videoId) {
+    // YouTube embed - use iframe syntax that renderMarkdown will handle
+    embedCode = `\n\n<div class="video-embed"><iframe src="https://www.youtube.com/embed/${videoId}" frameborder="0" allowfullscreen></iframe></div>\n\n`;
+  } else if (url.includes('vimeo.com')) {
+    const vimeoId = url.split('/').pop().split('?')[0];
+    embedCode = `\n\n<div class="video-embed"><iframe src="https://player.vimeo.com/video/${vimeoId}" frameborder="0" allowfullscreen></iframe></div>\n\n`;
   } else {
     embedCode = `\n\n[📹 Watch Video](${url})\n\n`;
   }
 
-  insertAtCursor(textareaId, embedCode);
+  insertAtCursor(currentInsertTextareaId, embedCode);
+  closeModal('insertVideoModal');
+}
+
+function openInsertFileModal(textareaId) {
+  currentInsertTextareaId = textareaId;
+  ensureInsertModalsRendered();
+
+  // Populate file list from course
+  const fileList = document.getElementById('insertFileList');
+  const courseFiles = activeCourseId ? appData.files.filter(f => f.courseId === activeCourseId && !f.isPlaceholder) : [];
+
+  if (courseFiles.length === 0) {
+    fileList.innerHTML = '<div class="muted" style="padding:12px;">No files in this course yet. Use "External URL" below.</div>';
+  } else {
+    fileList.innerHTML = courseFiles.map(f => `
+      <div class="file-select-item" style="display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius); cursor:pointer; border:1px solid var(--border-light);"
+           onclick="selectFileForInsert('${f.id}', '${escapeHtml(f.name)}')"
+           onmouseover="this.style.background='var(--primary-light)'"
+           onmouseout="this.style.background=''">
+        <span>📄</span>
+        <span style="flex:1">${escapeHtml(f.name)}</span>
+        <span class="muted" style="font-size:0.8rem;">${f.type || 'file'}</span>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('insertFileExternalUrl').value = '';
+  document.getElementById('insertFileExternalName').value = '';
+  openModal('insertFileModal');
+}
+
+function selectFileForInsert(fileId, fileName) {
+  insertAtCursor(currentInsertTextareaId, `[📄 ${fileName}](#file-${fileId})`);
+  closeModal('insertFileModal');
+  showToast('File link inserted', 'success');
+}
+
+function confirmInsertExternalFile() {
+  const url = document.getElementById('insertFileExternalUrl').value.trim();
+  const name = document.getElementById('insertFileExternalName').value.trim() || 'File';
+  if (!url) {
+    showToast('Please enter a URL', 'error');
+    return;
+  }
+  insertAtCursor(currentInsertTextareaId, `[📄 ${name}](${url})`);
+  closeModal('insertFileModal');
+}
+
+// Ensure insert modals are in DOM
+function ensureInsertModalsRendered() {
+  if (document.getElementById('insertLinkModal')) return;
+
+  const modalsHtml = `
+    <!-- Insert Link Modal -->
+    <div class="modal-overlay" id="insertLinkModal">
+      <div class="modal" style="max-width:450px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Insert Link</h2>
+          <button class="modal-close" onclick="closeModal('insertLinkModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">URL</label>
+            <input type="url" class="form-input" id="insertLinkUrl" placeholder="https://example.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Link Text</label>
+            <input type="text" class="form-input" id="insertLinkText" placeholder="Click here">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('insertLinkModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="confirmInsertLink()">Insert</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Insert Video Modal -->
+    <div class="modal-overlay" id="insertVideoModal">
+      <div class="modal" style="max-width:550px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Insert Video</h2>
+          <button class="modal-close" onclick="closeModal('insertVideoModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">YouTube or Vimeo URL</label>
+            <input type="url" class="form-input" id="insertVideoUrl" placeholder="https://youtube.com/watch?v=..." oninput="previewInsertVideo()">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Preview</label>
+            <div id="insertVideoPreview" style="background:var(--bg-color); border-radius:var(--radius); min-height:100px; display:flex; align-items:center; justify-content:center;">
+              <div class="muted">Paste a YouTube or Vimeo URL to preview</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('insertVideoModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="confirmInsertVideo()">Insert Video</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Insert File Modal -->
+    <div class="modal-overlay" id="insertFileModal">
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Insert File Link</h2>
+          <button class="modal-close" onclick="closeModal('insertFileModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Course Files</label>
+            <div id="insertFileList" style="max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:4px;"></div>
+          </div>
+          <hr style="margin:16px 0; border:none; border-top:1px solid var(--border-light);">
+          <div class="form-group">
+            <label class="form-label">Or Link External URL</label>
+            <input type="url" class="form-input" id="insertFileExternalUrl" placeholder="https://example.com/document.pdf" style="margin-bottom:8px;">
+            <input type="text" class="form-input" id="insertFileExternalName" placeholder="File name (optional)">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('insertFileModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="confirmInsertExternalFile()">Insert External Link</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML('beforeend', modalsHtml);
+}
+
+// Legacy functions for compatibility - redirect to modals
+function insertLink(textareaId) {
+  openInsertLinkModal(textareaId);
+}
+
+function insertVideo(textareaId) {
+  openInsertVideoModal(textareaId);
 }
 
 function insertFileLink(textareaId) {
-  // Show available files from the course
-  if (!activeCourseId) {
-    showToast('No active course', 'error');
-    return;
-  }
-
-  const courseFiles = appData.files.filter(f => f.courseId === activeCourseId && !f.isPlaceholder);
-  if (courseFiles.length === 0) {
-    // Prompt for external URL instead
-    const url = prompt('No course files available. Enter external file URL:');
-    if (!url) return;
-    const fileName = prompt('Enter file name:', 'File');
-    if (fileName === null) return;
-    insertAtCursor(textareaId, `[📄 ${fileName}](${url})`);
-    return;
-  }
-
-  // Create a simple selection modal
-  const fileOptions = courseFiles.map(f => f.name).join('\n');
-  const selection = prompt(`Select file number (1-${courseFiles.length}):\n\n${courseFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n')}`);
-  if (!selection) return;
-
-  const index = parseInt(selection) - 1;
-  if (index >= 0 && index < courseFiles.length) {
-    const file = courseFiles[index];
-    insertAtCursor(textareaId, `[📄 ${file.name}](#file-${file.id})`);
-  }
+  openInsertFileModal(textareaId);
 }
 
 function renderEditorToolbar(textareaId) {
@@ -1068,24 +1379,50 @@ function formatInlineMarkdown(text) {
 
 function renderMarkdown(text) {
   if (!text) return '';
+
+  // Preserve video embeds and other safe HTML blocks
+  const preservedBlocks = [];
+  let working = text;
+
+  // Preserve video embeds (YouTube/Vimeo iframes)
+  working = working.replace(/<div class="video-embed">[\s\S]*?<\/div>/g, (match) => {
+    const index = preservedBlocks.length;
+    preservedBlocks.push(match);
+    return `@@PRESERVED${index}@@`;
+  });
+
+  // Also handle raw YouTube/Vimeo URLs and convert to embeds
+  working = working.replace(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[^\s]*)?/g, (match, videoId) => {
+    const index = preservedBlocks.length;
+    preservedBlocks.push(`<div class="video-embed"><iframe src="https://www.youtube.com/embed/${videoId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`);
+    return `@@PRESERVED${index}@@`;
+  });
+
+  working = working.replace(/(?:https?:\/\/)?(?:www\.)?vimeo\.com\/(\d+)/g, (match, videoId) => {
+    const index = preservedBlocks.length;
+    preservedBlocks.push(`<div class="video-embed"><iframe src="https://player.vimeo.com/video/${videoId}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe></div>`);
+    return `@@PRESERVED${index}@@`;
+  });
+
+  // Preserve code blocks
   const codeBlocks = [];
-  let working = text.replace(/```([\s\S]*?)```/g, (match, code) => {
+  working = working.replace(/```([\s\S]*?)```/g, (match, code) => {
     const index = codeBlocks.length;
     codeBlocks.push(code);
     return `@@CODEBLOCK${index}@@`;
   });
-  
+
   const lines = working.split('\n');
   let html = '';
   let inList = false;
-  
+
   const closeList = () => {
     if (inList) {
       html += '</ul>';
       inList = false;
     }
   };
-  
+
   lines.forEach(line => {
     if (/^###\s+/.test(line)) {
       closeList();
@@ -1117,13 +1454,21 @@ function renderMarkdown(text) {
     closeList();
     html += `<p>${formatInlineMarkdown(line)}</p>`;
   });
-  
+
   closeList();
+
+  // Restore code blocks
   codeBlocks.forEach((code, index) => {
     const safeCode = escapeHtml(code);
     html = html.replace(`@@CODEBLOCK${index}@@`, `<pre><code>${safeCode}</code></pre>`);
   });
-  
+
+  // Restore preserved blocks (video embeds, etc.)
+  preservedBlocks.forEach((block, index) => {
+    html = html.replace(`<p>@@PRESERVED${index}@@</p>`, block);
+    html = html.replace(`@@PRESERVED${index}@@`, block);
+  });
+
   return html;
 }
 
@@ -1396,7 +1741,7 @@ function handleSignedOut() {
 async function logout() {
   console.log('[Auth] Logging out...');
 
-  if (supabase) {
+  if (supabaseClient) {
     const { error } = await supabaseClient.auth.signOut();
     if (error) {
       console.error('[Auth] Logout error:', error);
@@ -1652,6 +1997,156 @@ function renderCourses() {
   `).join('');
   
   setHTML('coursesList', html);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DRAG AND DROP HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function handleDragOver(e, dropZoneId) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dropZone = document.getElementById(dropZoneId);
+  if (dropZone) {
+    dropZone.style.borderColor = 'var(--primary)';
+    dropZone.style.background = 'var(--primary-light)';
+  }
+}
+
+function handleDragLeave(e, dropZoneId) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dropZone = document.getElementById(dropZoneId);
+  if (dropZone) {
+    dropZone.style.borderColor = 'var(--border-color)';
+    dropZone.style.background = '';
+  }
+}
+
+function handleSyllabusDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dropZone = document.getElementById('syllabusDropZone');
+  if (dropZone) {
+    dropZone.style.borderColor = 'var(--border-color)';
+    dropZone.style.background = '';
+  }
+
+  const files = e.dataTransfer.files;
+  if (files.length > 0) {
+    const file = files[0];
+    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!validTypes.includes(ext)) {
+      showToast('Please upload a PDF, DOC, or TXT file', 'error');
+      return;
+    }
+    // Transfer dropped file to the hidden input
+    const input = document.getElementById('courseCreationSyllabus');
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    input.files = dataTransfer.files;
+    onSyllabusFileSelected();
+  }
+}
+
+function onSyllabusFileSelected() {
+  const input = document.getElementById('courseCreationSyllabus');
+  if (input.files.length > 0) {
+    const file = input.files[0];
+    const dropZone = document.getElementById('syllabusDropZone');
+    if (dropZone) {
+      dropZone.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:center; gap:12px;">
+          <span style="font-size:1.5rem;">📄</span>
+          <div style="text-align:left;">
+            <div style="font-weight:500;">${escapeHtml(file.name)}</div>
+            <div class="muted" style="font-size:0.8rem;">${(file.size / 1024).toFixed(1)} KB</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
+        </div>
+      `;
+    }
+  }
+}
+
+function clearSyllabusUpload() {
+  const input = document.getElementById('courseCreationSyllabus');
+  if (input) input.value = '';
+  const dropZone = document.getElementById('syllabusDropZone');
+  if (dropZone) {
+    dropZone.innerHTML = `
+      <div style="margin-bottom:8px;">📄</div>
+      <div style="font-weight:500;">Drag & drop syllabus here</div>
+      <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+    `;
+  }
+  const status = document.getElementById('courseCreationSyllabusStatus');
+  if (status) status.innerHTML = '';
+  courseCreationSyllabusData = null;
+}
+
+// Handlers for the syllabus parser modal drop zone
+function handleSyllabusParserDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dropZone = document.getElementById('syllabusParserDropZone');
+  if (dropZone) {
+    dropZone.style.borderColor = 'var(--border-color)';
+    dropZone.style.background = '';
+  }
+
+  const files = e.dataTransfer.files;
+  if (files.length > 0) {
+    const file = files[0];
+    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!validTypes.includes(ext)) {
+      showToast('Please upload a PDF, DOC, or TXT file', 'error');
+      return;
+    }
+    const input = document.getElementById('syllabusFile');
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    input.files = dataTransfer.files;
+    onSyllabusParserFileSelected();
+  }
+}
+
+function onSyllabusParserFileSelected() {
+  const input = document.getElementById('syllabusFile');
+  if (input.files.length > 0) {
+    const file = input.files[0];
+    const dropZone = document.getElementById('syllabusParserDropZone');
+    if (dropZone) {
+      dropZone.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:center; gap:12px;">
+          <span style="font-size:1.5rem;">📄</span>
+          <div style="text-align:left;">
+            <div style="font-weight:500;">${escapeHtml(file.name)}</div>
+            <div class="muted" style="font-size:0.8rem;">${(file.size / 1024).toFixed(1)} KB</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusParserUpload();">✕</button>
+        </div>
+      `;
+    }
+  }
+}
+
+function clearSyllabusParserUpload() {
+  const input = document.getElementById('syllabusFile');
+  if (input) input.value = '';
+  const dropZone = document.getElementById('syllabusParserDropZone');
+  if (dropZone) {
+    dropZone.innerHTML = `
+      <div style="margin-bottom:8px;">📄</div>
+      <div style="font-weight:500;">Drag & drop syllabus here</div>
+      <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
+      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusParserFileSelected()">
+    `;
+  }
 }
 
 // Store parsed syllabus data for course creation
@@ -3390,7 +3885,7 @@ function updateQuizPointsTotal() {
   if (el) el.textContent = total.toFixed(1);
 }
 
-function saveQuiz() {
+async function saveQuiz() {
   const title = document.getElementById('quizTitle').value.trim();
   const description = document.getElementById('quizDescription').value.trim();
   const dueDate = document.getElementById('quizDueDate').value;
@@ -3400,28 +3895,28 @@ function saveQuiz() {
   const randomizeQuestions = document.getElementById('quizRandomize').checked;
   const questionPoolEnabled = document.getElementById('quizPoolEnabled').checked;
   const questionSelectCount = parseInt(document.getElementById('quizPoolCount').value, 10) || 0;
-  
+
   if (!title || !dueDate) {
     showToast('Please fill in title and due date', 'error');
     return;
   }
-  
+
   if (quizDraftQuestions.length === 0) {
     showToast('Add at least one question', 'error');
     return;
   }
-  
+
   if (questionPoolEnabled && (!questionSelectCount || questionSelectCount > quizDraftQuestions.length)) {
     showToast('Question pool count must be between 1 and total questions', 'error');
     return;
   }
-  
+
   for (const question of quizDraftQuestions) {
     if (!question.prompt.trim() || !question.points) {
       showToast('Each question needs text and points', 'error');
       return;
     }
-    
+
     if (question.type === 'multiple_choice') {
       if (question.options.some(opt => !opt.trim())) {
         showToast('Fill in all multiple choice options', 'error');
@@ -3433,7 +3928,8 @@ function saveQuiz() {
       }
     }
   }
-  
+
+  const isNewQuiz = !currentEditQuizId;
   const quizData = {
     id: currentEditQuizId || generateId(),
     courseId: activeCourseId,
@@ -3449,10 +3945,17 @@ function saveQuiz() {
     questionSelectCount: questionPoolEnabled ? questionSelectCount : null,
     questions: JSON.parse(JSON.stringify(quizDraftQuestions))
   };
-  
+
+  // Save to Supabase
+  if (isNewQuiz) {
+    await supabaseCreateQuiz(quizData);
+  } else {
+    await supabaseUpdateQuiz(quizData);
+  }
+
   const existingIndex = appData.quizzes.findIndex(q => q.id === quizData.id);
   const previousStatus = existingIndex >= 0 ? appData.quizzes[existingIndex].status : null;
-  
+
   if (existingIndex >= 0) {
     appData.quizzes[existingIndex] = quizData;
   } else {
@@ -3588,14 +4091,14 @@ function startQuizTimer(timeLimit) {
   }, 1000);
 }
 
-function submitQuiz() {
+async function submitQuiz() {
   const quiz = appData.quizzes.find(q => q.id === currentQuizTakingId);
   const container = document.getElementById('quizTakeQuestions');
   if (!quiz || !container) return;
-  
+
   const questions = JSON.parse(container.dataset.questions || '[]');
   const answers = {};
-  
+
   questions.forEach((q, index) => {
     if (q.type === 'short_answer') {
       answers[q.id] = document.getElementById(`quizAnswer${index}`).value.trim();
@@ -3604,10 +4107,10 @@ function submitQuiz() {
       answers[q.id] = selected ? selected.value : null;
     }
   });
-  
+
   const { autoScore, needsManual } = calculateQuizAutoScore(questions, answers);
   const totalPoints = getQuizPoints({ questions });
-  
+
   const submission = {
     id: generateId(),
     quizId: quiz.id,
@@ -3617,13 +4120,17 @@ function submitQuiz() {
     autoScore,
     score: autoScore,
     needsManual,
+    graded: !needsManual,
     released: !needsManual,
     feedback: '',
     submittedAt: new Date().toISOString(),
     gradedAt: needsManual ? null : new Date().toISOString(),
     gradedBy: needsManual ? null : 'auto'
   };
-  
+
+  // Save to Supabase
+  await supabaseUpsertQuizSubmission(submission);
+
   appData.quizSubmissions.push(submission);
   saveData(appData);
   
@@ -4777,12 +5284,21 @@ async function transcribeAudio() {
 
   let systemPrompt = '';
   if (outputType === 'announcement') {
-    systemPrompt = `Transcribe this audio and convert it into a course announcement. The user may specify timing like "send at midnight tomorrow" or "post this now". Return ONLY valid JSON:
+    systemPrompt = `Transcribe this audio and convert it into a course announcement. The user may specify timing like "send at midnight tomorrow" or "post this now".
+
+FORMATTING for content (supports markdown):
+- Use **bold** for emphasis, *italic* for terms
+- Use bullet lists with "- item" format
+- Use headers with ## or ###
+- Embed YouTube videos by placing the full URL on its own line
+- Use \`code\` for inline code
+
+Return ONLY valid JSON:
 {
   "transcription": "The full transcription of the audio",
   "announcement": {
     "title": "A clear title for the announcement",
-    "content": "The announcement content in natural paragraphs, professional tone",
+    "content": "The announcement content with markdown formatting as appropriate",
     "scheduledFor": "ISO date string if a specific time was mentioned, or null for immediate"
   }
 }`;
@@ -5457,16 +5973,16 @@ function convertPlaceholderToLink(fileId) {
   }
 }
 
-function uploadFile() {
+async function uploadFile() {
   const fileInput = document.getElementById('fileUpload');
   const file = fileInput.files[0];
-  
+
   if (!file) {
     showToast('Please select a file', 'error');
     return;
   }
-  
-  appData.files.push({
+
+  const fileData = {
     id: generateId(),
     courseId: activeCourseId,
     name: file.name,
@@ -5474,17 +5990,24 @@ function uploadFile() {
     size: file.size,
     uploadedBy: appData.currentUser.id,
     uploadedAt: new Date().toISOString()
-  });
-  
+  };
+
+  // Save to Supabase
+  await supabaseCreateFile(fileData);
+
+  appData.files.push(fileData);
   saveData(appData);
   closeModal('fileUploadModal');
   renderFiles();
-  showToast('File uploaded! (Metadata only - implement Supabase storage for actual files)', 'success');
+  showToast('File uploaded!', 'success');
   fileInput.value = '';
 }
 
 function deleteFile(id) {
-  confirm('Delete this file?', () => {
+  confirm('Delete this file?', async () => {
+    // Delete from Supabase
+    await supabaseDeleteFile(id);
+
     appData.files = appData.files.filter(f => f.id !== id);
     saveData(appData);
     renderFiles();
@@ -6320,6 +6843,15 @@ IMPORTANT: If the user asks you to CREATE an announcement, quiz, assignment, or 
 - For assignments: {"action":"create_assignment","title":"...","description":"...","points":100,"dueDate":"ISO date string","category":"homework"}
 - For modules: {"action":"create_module","name":"...","description":"..."}
 
+FORMATTING for announcement/assignment content (supports markdown):
+- Use **bold** for emphasis, *italic* for terms
+- Use bullet lists with "- item" format
+- Use headers with ## or ###
+- Link to course files: [📄 filename](#file-FILE_ID) where FILE_ID is from the COURSE FILES list
+- Link to external URLs: [link text](https://url)
+- Embed YouTube videos: just paste the full YouTube URL on its own line, it will auto-embed
+- Use \`code\` for inline code or \`\`\` for code blocks
+
 Question types: multiple_choice, true_false, short_answer
 For true_false, correctAnswer should be "True" or "False"
 For multiple_choice, correctAnswer should be the index (0-based)
@@ -6328,7 +6860,8 @@ IMPORTANT: If you cannot fully complete the request (e.g., missing information, 
 
 Only output the JSON when the user clearly wants to CREATE something. For questions about content or help drafting, respond normally.
 When creating content, make sure titles and content are professional and appropriate for an academic setting.
-Use the current date/time from context to set appropriate due dates (default to 1 week from now if not specified).` : `The user is a STUDENT. Help them with course questions, explain concepts, and provide guidance.
+Use the current date/time from context to set appropriate due dates (default to 1 week from now if not specified).
+Reference relevant course files when helpful (see COURSE FILES in context).` : `The user is a STUDENT. Help them with course questions, explain concepts, and provide guidance.
 
 You can help students with:
 - Understanding assignments and their requirements
@@ -6616,9 +7149,18 @@ async function generateAiDraft() {
   
   const course = activeCourseId ? getCourseById(activeCourseId) : null;
   let systemPrompt = '';
-  
+
   if (aiDraftType === 'announcement') {
-    systemPrompt = `Create a course announcement. Return ONLY valid JSON with keys: title, content. Use markdown in content when helpful. Example: {"title":"...","content":"..."}. Do not wrap in code fences or extra text.`;
+    systemPrompt = `Create a course announcement. Return ONLY valid JSON with keys: title, content.
+
+FORMATTING for content (supports markdown):
+- Use **bold** for emphasis, *italic* for terms
+- Use bullet lists with "- item" format
+- Use headers with ## or ###
+- Embed YouTube videos by placing the full URL on its own line (it will auto-embed)
+- Use \`code\` for inline code
+
+Example: {"title":"...","content":"..."} - do not wrap in code fences or extra text.`;
   } else if (aiDraftType === 'quiz') {
     const count = parseInt(document.getElementById('aiQuestionCount').value, 10) || 5;
     systemPrompt = `Create a quiz as JSON with keys: title, description, questions (array). Each question must include type ("multiple_choice"|"true_false"|"short_answer"), prompt, options (array, for multiple_choice only), correctAnswer (index for multiple_choice, "True"/"False" for true_false, empty string for short_answer), points (number). Provide ${count} questions. Return only JSON (no markdown). Example: {"title":"...","description":"...","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B"],"correctAnswer":0,"points":2}]}.`;
@@ -7005,11 +7547,17 @@ function generateModals() {
         <div class="modal-body">
           <div class="form-group" style="padding:12px; background:var(--primary-light); border-radius:var(--radius); margin-bottom:16px;">
             <label class="form-label" style="margin-bottom:8px;">Quick Start: Upload Syllabus (optional)</label>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="flex:1;">
-              <button class="btn btn-secondary btn-sm" onclick="parseCourseSyllabus()">Parse</button>
+            <div id="syllabusDropZone" class="drop-zone"
+                 ondragover="handleDragOver(event, 'syllabusDropZone')"
+                 ondragleave="handleDragLeave(event, 'syllabusDropZone')"
+                 ondrop="handleSyllabusDrop(event)"
+                 onclick="document.getElementById('courseCreationSyllabus').click()"
+                 style="border:2px dashed var(--border-color); border-radius:var(--radius); padding:24px; text-align:center; cursor:pointer; transition:all 0.2s;">
+              <div style="margin-bottom:8px;">📄</div>
+              <div style="font-weight:500;">Drag & drop syllabus here</div>
+              <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
+              <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
             </div>
-            <div class="hint" style="margin-top:6px;">Upload a syllabus to auto-fill course info and create modules</div>
             <div id="courseCreationSyllabusStatus" style="margin-top:8px;"></div>
           </div>
           <div class="form-group">
@@ -7757,12 +8305,22 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             Upload a syllabus file or paste syllabus text. AI will extract modules, assignments, and quizzes as drafts.
           </div>
           <div class="form-group">
-            <label class="form-label">Upload Syllabus (PDF, DOC, TXT)</label>
-            <input type="file" class="form-input" id="syllabusFile" accept=".pdf,.doc,.docx,.txt">
+            <label class="form-label">Upload Syllabus</label>
+            <div id="syllabusParserDropZone" class="drop-zone"
+                 ondragover="handleDragOver(event, 'syllabusParserDropZone')"
+                 ondragleave="handleDragLeave(event, 'syllabusParserDropZone')"
+                 ondrop="handleSyllabusParserDrop(event)"
+                 onclick="document.getElementById('syllabusFile').click()"
+                 style="border:2px dashed var(--border-color); border-radius:var(--radius); padding:24px; text-align:center; cursor:pointer; transition:all 0.2s;">
+              <div style="margin-bottom:8px;">📄</div>
+              <div style="font-weight:500;">Drag & drop syllabus here</div>
+              <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
+              <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusParserFileSelected()">
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">Or Paste Syllabus Text</label>
-            <textarea class="form-textarea" id="syllabusText" rows="8" placeholder="Paste syllabus content here..."></textarea>
+            <textarea class="form-textarea" id="syllabusText" rows="6" placeholder="Paste syllabus content here..."></textarea>
           </div>
           <button class="btn btn-primary" onclick="parseSyllabus()" style="margin-bottom:16px;">Parse with AI</button>
           <div class="card" style="padding:16px; max-height:400px; overflow-y:auto;">
@@ -9110,8 +9668,11 @@ function buildAiContext() {
   // Build module list
   const moduleList = modules.map(m => `- "${m.name}" (${m.items?.length || 0} items)`).join('\n');
 
-  // Build file list
-  const fileList = files.map(f => `- "${f.name}" (${f.type}${f.externalUrl ? ', external link' : ''})`).join('\n');
+  // Build file list with IDs for reference
+  const fileList = files.map(f => {
+    const desc = f.description ? ` - ${f.description}` : '';
+    return `- "${f.name}" (id: ${f.id}, type: ${f.type}${f.externalUrl ? ', external' : ''}${desc})`;
+  }).join('\n');
 
   return `
 COURSE CONTEXT (use this for accurate information):
@@ -9134,7 +9695,7 @@ ${assignmentList || 'No assignments yet'}
 QUIZZES (${quizzes.length}):
 ${quizList || 'No quizzes yet'}
 
-FILES (${files.length}):
+COURSE FILES (${files.length}) - Use these file IDs to link to files in announcements/content:
 ${fileList || 'No files yet'}
 
 `;
