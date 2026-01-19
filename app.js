@@ -1186,7 +1186,8 @@ function getUserCourses(userId) {
 }
 
 function generateId() {
-  return 'id_' + Math.random().toString(36).substr(2, 9);
+  // Generate a proper UUID v4 for Supabase compatibility
+  return crypto.randomUUID();
 }
 
 function getQuizPoints(quiz) {
