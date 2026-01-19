@@ -912,6 +912,20 @@ async function supabaseCreateInvite(invite) {
   return data;
 }
 
+async function supabaseDeleteInvite(inviteId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting invite:', inviteId);
+
+  const { error } = await supabaseClient.from('invites').delete().eq('id', inviteId);
+  if (error) {
+    console.error('[Supabase] Error deleting invite:', error);
+    showToast('Failed to revoke invite', 'error');
+    return false;
+  }
+  console.log('[Supabase] Invite deleted:', inviteId);
+  return true;
+}
+
 // User profile operations
 async function supabaseUpdateUserGeminiKey(userId, geminiKey) {
   if (!supabaseClient) return false;
@@ -2811,18 +2825,26 @@ async function createAnnouncement() {
     createdAt: new Date().toISOString()
   };
 
-  // Save to Supabase
-  await supabaseCreateAnnouncement(announcement);
+  try {
+    // Save to Supabase
+    const result = await supabaseCreateAnnouncement(announcement);
+    if (!result) {
+      return; // Error already shown by supabase function
+    }
 
-  // Update local state
-  appData.announcements.push(announcement);
-  saveData(appData);
+    // Update local state
+    appData.announcements.push(announcement);
+    saveData(appData);
 
-  closeModal('announcementModal');
-  resetAnnouncementModal();
-  renderUpdates();
-  renderHome();
-  showToast('Update posted!', 'success');
+    closeModal('announcementModal');
+    resetAnnouncementModal();
+    renderUpdates();
+    renderHome();
+    showToast('Update posted!', 'success');
+  } catch (err) {
+    console.error('[createAnnouncement] Error:', err);
+    showToast('Failed to create announcement: ' + err.message, 'error');
+  }
 }
 
 function deleteAnnouncement(id) {
@@ -2869,11 +2891,11 @@ function resetAnnouncementModal() {
   document.getElementById('announcementPinned').checked = false;
 }
 
-function saveAnnouncementChanges() {
+async function saveAnnouncementChanges() {
   if (currentEditAnnouncementId) {
-    updateAnnouncement();
+    await updateAnnouncement();
   } else {
-    createAnnouncement();
+    await createAnnouncement();
   }
 }
 
@@ -2892,12 +2914,24 @@ async function updateAnnouncement() {
     return;
   }
 
+  // Store original values in case we need to rollback
+  const originalTitle = announcement.title;
+  const originalContent = announcement.content;
+  const originalPinned = announcement.pinned;
+
   announcement.title = title;
   announcement.content = content;
   announcement.pinned = pinned;
 
   // Save to Supabase
-  await supabaseUpdateAnnouncement(announcement);
+  const result = await supabaseUpdateAnnouncement(announcement);
+  if (!result) {
+    // Rollback local changes
+    announcement.title = originalTitle;
+    announcement.content = originalContent;
+    announcement.pinned = originalPinned;
+    return;
+  }
   saveData(appData);
 
   closeModal('announcementModal');
@@ -2927,12 +2961,9 @@ function renderAssignments() {
   
   if (isStaffUser && !studentViewMode) {
     setHTML('assignmentsActions', `
-      <div style="position:relative; display:inline-block;">
-        <button class="btn btn-primary" onclick="toggleNewAssignmentDropdown()" id="newAssignmentBtn">New Assignment</button>
-        <div id="newAssignmentDropdown" style="display:none; position:absolute; top:100%; left:0; margin-top:4px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); z-index:100; min-width:160px;">
-          <button class="btn btn-secondary" style="width:100%; border:none; border-radius:var(--radius) var(--radius) 0 0; justify-content:flex-start;" onclick="closeNewAssignmentDropdown(); openAssignmentModal();">Assignment</button>
-          <button class="btn btn-secondary" style="width:100%; border:none; border-radius:0 0 var(--radius) var(--radius); justify-content:flex-start; border-top:1px solid var(--border-light);" onclick="closeNewAssignmentDropdown(); openQuizModal();">Quiz</button>
-        </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" onclick="openAssignmentModal()">+ Assignment</button>
+        <button class="btn btn-secondary" onclick="openQuizModal()">+ Quiz</button>
       </div>
     `);
   } else {
@@ -3167,30 +3198,38 @@ async function createAssignment() {
     rubric: null
   };
 
-  // Save to Supabase
-  await supabaseCreateAssignment(assignment);
+  try {
+    // Save to Supabase
+    const result = await supabaseCreateAssignment(assignment);
+    if (!result) {
+      return; // Error already shown by supabase function
+    }
 
-  // Update local state
-  appData.assignments.push(assignment);
-  saveData(appData);
+    // Update local state
+    appData.assignments.push(assignment);
+    saveData(appData);
 
-  // Send notifications to enrolled students if published
-  if (status === 'published') {
-    const students = appData.enrollments
-      .filter(e => e.courseId === activeCourseId && e.role === 'student')
-      .map(e => e.userId);
+    // Send notifications to enrolled students if published
+    if (status === 'published') {
+      const students = appData.enrollments
+        .filter(e => e.courseId === activeCourseId && e.role === 'student')
+        .map(e => e.userId);
 
-    students.forEach(studentId => {
-      addNotification(studentId, 'assignment', 'New Assignment Posted',
-        `${title} is now available`, activeCourseId);
-    });
+      students.forEach(studentId => {
+        addNotification(studentId, 'assignment', 'New Assignment Posted',
+          `${title} is now available`, activeCourseId);
+      });
+    }
+
+    closeModal('assignmentModal');
+    resetAssignmentModal();
+    renderAssignments();
+    renderHome();
+    showToast('Assignment created!', 'success');
+  } catch (err) {
+    console.error('[createAssignment] Error:', err);
+    showToast('Failed to create assignment: ' + err.message, 'error');
   }
-
-  closeModal('assignmentModal');
-  resetAssignmentModal();
-  renderAssignments();
-  renderHome();
-  showToast('Assignment created!', 'success');
 }
 
 let currentEditAssignmentId = null;
@@ -3230,11 +3269,11 @@ function resetAssignmentModal() {
   document.getElementById('assignmentAllowResubmit').checked = true;
 }
 
-function saveAssignmentChanges() {
+async function saveAssignmentChanges() {
   if (currentEditAssignmentId) {
-    updateAssignment();
+    await updateAssignment();
   } else {
-    createAssignment();
+    await createAssignment();
   }
 }
 
@@ -3261,6 +3300,9 @@ async function updateAssignment() {
 
   const previousStatus = assignment.status;
 
+  // Store original values for rollback
+  const original = { ...assignment };
+
   assignment.title = title;
   assignment.description = description;
   assignment.category = category;
@@ -3272,7 +3314,12 @@ async function updateAssignment() {
   assignment.allowResubmission = allowResubmit;
 
   // Save to Supabase
-  await supabaseUpdateAssignment(assignment);
+  const result = await supabaseUpdateAssignment(assignment);
+  if (!result) {
+    // Rollback
+    Object.assign(assignment, original);
+    return;
+  }
   saveData(appData);
 
   if (previousStatus !== 'published' && status === 'published') {
@@ -3947,10 +3994,14 @@ async function saveQuiz() {
   };
 
   // Save to Supabase
+  let result;
   if (isNewQuiz) {
-    await supabaseCreateQuiz(quizData);
+    result = await supabaseCreateQuiz(quizData);
   } else {
-    await supabaseUpdateQuiz(quizData);
+    result = await supabaseUpdateQuiz(quizData);
+  }
+  if (!result) {
+    return; // Error already shown
   }
 
   const existingIndex = appData.quizzes.findIndex(q => q.id === quizData.id);
@@ -6363,9 +6414,10 @@ function renderPeopleList() {
       return `
         <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; background:var(--warning-light); ${idx < total - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
           <div style="flex:1; min-width:0;">
-            <div style="font-weight:500; font-size:0.95rem;">${p.email}</div>
+            <div style="font-weight:500; font-size:0.95rem;">${escapeHtml(p.email)}</div>
             <div style="font-size:0.8rem; color:var(--warning);">Invited ${formatDate(p.sentAt)} · Awaiting sign-up</div>
           </div>
+          <button class="btn btn-secondary btn-sm" onclick="revokeInvite('${p.id}')" style="padding:4px 12px; color:var(--danger);">Revoke</button>
         </div>
       `;
     } else {
@@ -6489,9 +6541,10 @@ function renderPeople() {
       return `
         <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; background:var(--warning-light); ${idx < total - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
           <div style="flex:1; min-width:0;">
-            <div style="font-weight:500; font-size:0.95rem;">${p.email}</div>
+            <div style="font-weight:500; font-size:0.95rem;">${escapeHtml(p.email)}</div>
             <div style="font-size:0.8rem; color:var(--warning);">Invited ${formatDate(p.sentAt)} · Awaiting sign-up</div>
           </div>
+          <button class="btn btn-secondary btn-sm" onclick="revokeInvite('${p.id}')" style="padding:4px 12px; color:var(--danger);">Revoke</button>
         </div>
       `;
     } else {
@@ -8780,17 +8833,39 @@ function addPersonToCourse() {
 
 function removePersonFromCourse(userId, courseId) {
   const user = getUserById(userId);
-  
+
   // Ensure modals exist before calling confirm
   if (!document.getElementById('confirmModal')) {
     generateModals();
   }
-  
+
   confirm(`Remove ${user.name} from this course?`, () => {
     appData.enrollments = appData.enrollments.filter(e => !(e.userId === userId && e.courseId === courseId));
     saveData(appData);
     renderPeople();
     showToast(`Removed ${user.name}`, 'success');
+  });
+}
+
+function revokeInvite(inviteId) {
+  const invite = appData.invites.find(i => i.id === inviteId);
+  if (!invite) return;
+
+  // Ensure modals exist before calling confirm
+  if (!document.getElementById('confirmModal')) {
+    generateModals();
+  }
+
+  confirm(`Revoke invitation for ${invite.email}?`, async () => {
+    // Delete from Supabase
+    const success = await supabaseDeleteInvite(inviteId);
+    if (!success) return;
+
+    // Remove from local state
+    appData.invites = appData.invites.filter(i => i.id !== inviteId);
+    saveData(appData);
+    renderPeople();
+    showToast('Invitation revoked', 'success');
   });
 }
 
