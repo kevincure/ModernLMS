@@ -529,6 +529,18 @@ body {
   font-size: 0.8rem;
 }
 
+.pill-link {
+  text-decoration: none;
+  color: var(--primary-color);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.pill-link:hover {
+  background: var(--primary-light, #e3f2fd);
+  border-color: var(--primary-color);
+}
+
 .checklist {
   display: grid;
   gap: 10px;

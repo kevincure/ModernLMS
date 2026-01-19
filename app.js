@@ -1564,9 +1564,9 @@ async function createCourse() {
   // Initialize invites array if it doesn't exist
   if (!appData.invites) appData.invites = [];
 
-  // Process email invites
+  // Process email invites (supports comma, semicolon, or newline delimiters)
   if (emailsText) {
-    const emails = emailsText.split('\n').map(e => e.trim()).filter(e => e && e.includes('@'));
+    const emails = emailsText.split(/[\n,;]+/).map(e => e.trim()).filter(e => e && e.includes('@'));
 
     for (const email of emails) {
       // Check if user exists
@@ -1707,46 +1707,64 @@ function renderHome() {
     setHTML('homeUpcoming', html);
   }
   
-  // Recent updates
+  // Recent updates (clickable)
   const updates = appData.announcements
     .filter(a => a.courseId === activeCourseId)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 5);
-  
+
   if (updates.length === 0) {
     setHTML('homeUpdates', '<div class="muted" style="padding:12px;">No recent updates</div>');
   } else {
     const html = updates.map(u => {
       const author = getUserById(u.authorId);
       return `
-        <div style="padding:12px; border-bottom:1px solid var(--border-light);">
-          <div style="font-weight:500;">${u.title} ${u.pinned ? '📌' : ''}</div>
-          <div class="muted" style="font-size:0.85rem;">${author ? author.name : 'Unknown'} · ${formatDate(u.createdAt)}</div>
-        </div>
+        <button class="update-item" onclick="viewAnnouncement('${u.id}')" style="display:block; width:100%; text-align:left; padding:12px; border:none; border-bottom:1px solid var(--border-light); background:transparent; cursor:pointer;">
+          <div style="font-weight:500;">${escapeHtml(u.title)} ${u.pinned ? '📌' : ''}</div>
+          <div class="muted" style="font-size:0.85rem;">${author ? escapeHtml(author.name) : 'Unknown'} · ${formatDate(u.createdAt)}</div>
+        </button>
       `;
     }).join('');
     setHTML('homeUpdates', html);
   }
 }
 
+function viewAnnouncement(announcementId) {
+  navigateTo('updates');
+  // Scroll to the announcement after a brief delay for render
+  setTimeout(() => {
+    const el = document.querySelector(`[data-announcement-id="${announcementId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.backgroundColor = 'var(--primary-light)';
+      setTimeout(() => el.style.backgroundColor = '', 1500);
+    }
+  }, 100);
+}
+
 function renderStartHere(course) {
   const isStaffUser = isStaff(appData.currentUser.id, course.id);
   const startHereTitle = course.startHereTitle || 'Start Here';
-  const startHereContent = course.startHereContent || course.description || '';
-  const pinnedFiles = appData.files.filter(f => f.courseId === course.id).slice(0, 2);
-  const pinnedAssignments = appData.assignments.filter(a => a.courseId === course.id).slice(0, 2);
-  const pinnedQuizzes = appData.quizzes.filter(q => q.courseId === course.id).slice(0, 2);
-  
-  const pinnedItems = [
-    ...pinnedFiles.map(f => ({ label: f.name, type: 'File' })),
-    ...pinnedAssignments.map(a => ({ label: a.title, type: 'Assignment' })),
-    ...pinnedQuizzes.map(q => ({ label: q.title, type: 'Quiz' }))
-  ].slice(0, 4);
-  
-  const pinnedHtml = pinnedItems.length
-    ? `<div class="start-here-links">${pinnedItems.map(item => `<span class="pill">${item.type}: ${item.label}</span>`).join('')}</div>`
-    : '<div class="muted">Pin a syllabus, assignment, or quiz here.</div>';
-  
+  // Default welcome message with course name
+  const defaultContent = `Welcome to ${course.name}.`;
+  const startHereContent = course.startHereContent || defaultContent;
+
+  // Use only user-added links (stored in course.startHereLinks)
+  const pinnedLinks = course.startHereLinks || [];
+
+  const pinnedHtml = pinnedLinks.length
+    ? `<div class="start-here-links">${pinnedLinks.map((link, idx) =>
+        `<a href="${escapeHtml(link.url)}" target="_blank" class="pill pill-link">${escapeHtml(link.label)}</a>`
+      ).join('')}</div>`
+    : (isStaffUser ? '<div class="muted">Add essential links for students.</div>' : '');
+
+  const pinnedSection = pinnedLinks.length || isStaffUser ? `
+    <div style="margin-top:12px;">
+      <div class="muted" style="margin-bottom:6px;">Pinned essentials</div>
+      ${pinnedHtml}
+    </div>
+  ` : '';
+
   setHTML('homeStartHere', `
     <div class="card">
       <div class="card-header">
@@ -1754,10 +1772,7 @@ function renderStartHere(course) {
         ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="openStartHereModal('${course.id}')">Edit</button>` : ''}
       </div>
       <div class="markdown-content">${renderMarkdown(startHereContent)}</div>
-      <div style="margin-top:12px;">
-        <div class="muted" style="margin-bottom:6px;">Pinned essentials</div>
-        ${pinnedHtml}
-      </div>
+      ${pinnedSection}
     </div>
   `);
 }
@@ -1767,14 +1782,56 @@ function renderOnboardingChecklist(course) {
   setHTML('homeChecklist', '');
 }
 
+// Temporary storage for pinned links being edited
+let startHereLinksEditing = [];
+
 function openStartHereModal(courseId) {
   const course = getCourseById(courseId);
   if (!course) return;
   ensureModalsRendered();
   document.getElementById('startHereCourseId').value = courseId;
   document.getElementById('startHereTitle').value = course.startHereTitle || 'Start Here';
-  document.getElementById('startHereContent').value = course.startHereContent || course.description || '';
+  const defaultContent = `Welcome to ${course.name}.`;
+  document.getElementById('startHereContent').value = course.startHereContent || defaultContent;
+
+  // Initialize links editing array
+  startHereLinksEditing = [...(course.startHereLinks || [])];
+  renderStartHereLinksEditor();
+
   openModal('startHereModal');
+}
+
+function renderStartHereLinksEditor() {
+  const container = document.getElementById('startHereLinksEditor');
+  if (!container) return;
+
+  if (startHereLinksEditing.length === 0) {
+    container.innerHTML = '<div class="muted">No pinned links yet.</div>';
+  } else {
+    container.innerHTML = startHereLinksEditing.map((link, idx) => `
+      <div class="start-here-link-row" style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <input type="text" class="form-input" style="flex:1" value="${escapeHtml(link.label)}" placeholder="Label" onchange="updateStartHereLink(${idx}, 'label', this.value)">
+        <input type="text" class="form-input" style="flex:2" value="${escapeHtml(link.url)}" placeholder="URL" onchange="updateStartHereLink(${idx}, 'url', this.value)">
+        <button class="btn btn-secondary btn-sm" onclick="removeStartHereLink(${idx})" title="Remove">&times;</button>
+      </div>
+    `).join('');
+  }
+}
+
+function addStartHereLink() {
+  startHereLinksEditing.push({ label: '', url: '' });
+  renderStartHereLinksEditor();
+}
+
+function updateStartHereLink(idx, field, value) {
+  if (startHereLinksEditing[idx]) {
+    startHereLinksEditing[idx][field] = value;
+  }
+}
+
+function removeStartHereLink(idx) {
+  startHereLinksEditing.splice(idx, 1);
+  renderStartHereLinksEditor();
 }
 
 function saveStartHere() {
@@ -1783,11 +1840,13 @@ function saveStartHere() {
   const content = document.getElementById('startHereContent').value.trim();
   const course = getCourseById(courseId);
   if (!course) return;
-  
+
   course.startHereTitle = title || 'Start Here';
   course.startHereContent = content;
+  // Save only valid links (both label and url must be filled)
+  course.startHereLinks = startHereLinksEditing.filter(link => link.label.trim() && link.url.trim());
   saveData(appData);
-  
+
   closeModal('startHereModal');
   renderHome();
   showToast('Start Here updated', 'success');
@@ -1841,11 +1900,11 @@ function renderUpdates() {
     const author = getUserById(a.authorId);
     const visibilityText = a.hidden ? 'Hidden' : 'Hide from Students';
     return `
-      <div class="card" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''}">
+      <div class="card" data-announcement-id="${a.id}" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''} transition: background-color 0.3s ease;">
         <div class="card-header">
           <div>
-            <div class="card-title">${a.title} ${a.pinned ? '📌' : ''}</div>
-            <div class="muted">${author ? author.name : 'Unknown'} · ${formatDate(a.createdAt)}</div>
+            <div class="card-title">${escapeHtml(a.title)} ${a.pinned ? '📌' : ''}</div>
+            <div class="muted">${author ? escapeHtml(author.name) : 'Unknown'} · ${formatDate(a.createdAt)}</div>
           </div>
           ${effectiveStaff ? `
             <div style="display:flex; gap:8px; align-items:center;">
@@ -1874,17 +1933,17 @@ function toggleAnnouncementVisibility(id) {
   }
 }
 
-function createAnnouncement() {
+async function createAnnouncement() {
   const title = document.getElementById('announcementTitle').value.trim();
   const content = document.getElementById('announcementContent').value.trim();
   const pinned = document.getElementById('announcementPinned').checked;
-  
+
   if (!title || !content) {
     showToast('Please fill in all fields', 'error');
     return;
   }
-  
-  appData.announcements.push({
+
+  const announcement = {
     id: generateId(),
     courseId: activeCourseId,
     title: title,
@@ -1892,9 +1951,15 @@ function createAnnouncement() {
     pinned: pinned,
     authorId: appData.currentUser.id,
     createdAt: new Date().toISOString()
-  });
-  
+  };
+
+  // Save to Supabase
+  await supabaseCreateAnnouncement(announcement);
+
+  // Update local state
+  appData.announcements.push(announcement);
   saveData(appData);
+
   closeModal('announcementModal');
   resetAnnouncementModal();
   renderUpdates();
@@ -1903,7 +1968,11 @@ function createAnnouncement() {
 }
 
 function deleteAnnouncement(id) {
-  confirm('Delete this update?', () => {
+  confirm('Delete this update?', async () => {
+    // Delete from Supabase
+    await supabaseDeleteAnnouncement(id);
+
+    // Update local state
     appData.announcements = appData.announcements.filter(a => a.id !== id);
     saveData(appData);
     renderUpdates();
@@ -1950,29 +2019,32 @@ function saveAnnouncementChanges() {
   }
 }
 
-function updateAnnouncement() {
+async function updateAnnouncement() {
   if (!currentEditAnnouncementId) return;
-  
+
   const announcement = appData.announcements.find(a => a.id === currentEditAnnouncementId);
   if (!announcement) return;
-  
+
   const title = document.getElementById('announcementTitle').value.trim();
   const content = document.getElementById('announcementContent').value.trim();
   const pinned = document.getElementById('announcementPinned').checked;
-  
+
   if (!title || !content) {
     showToast('Please fill in all fields', 'error');
     return;
   }
-  
+
   announcement.title = title;
   announcement.content = content;
   announcement.pinned = pinned;
-  
+
+  // Save to Supabase
+  await supabaseUpdateAnnouncement(announcement);
   saveData(appData);
+
   closeModal('announcementModal');
   resetAnnouncementModal();
-  
+
   renderUpdates();
   renderHome();
   showToast('Update saved', 'success');
@@ -2204,7 +2276,7 @@ function renderCalendar() {
   setHTML('calendarList', html);
 }
 
-function createAssignment() {
+async function createAssignment() {
   const title = document.getElementById('assignmentTitle').value.trim();
   const description = document.getElementById('assignmentDescription').value.trim();
   const category = document.getElementById('assignmentCategory').value;
@@ -2214,15 +2286,14 @@ function createAssignment() {
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
   const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
-  
+
   if (!title || !description || !points || !dueDate) {
     showToast('Please fill in all required fields', 'error');
     return;
   }
-  
+
   const assignmentId = generateId();
-  
-  appData.assignments.push({
+  const assignment = {
     id: assignmentId,
     courseId: activeCourseId,
     title: title,
@@ -2236,22 +2307,27 @@ function createAssignment() {
     lateDeduction: lateDeduction,
     allowResubmission: allowResubmit,
     rubric: null
-  });
-  
+  };
+
+  // Save to Supabase
+  await supabaseCreateAssignment(assignment);
+
+  // Update local state
+  appData.assignments.push(assignment);
   saveData(appData);
-  
+
   // Send notifications to enrolled students if published
   if (status === 'published') {
     const students = appData.enrollments
       .filter(e => e.courseId === activeCourseId && e.role === 'student')
       .map(e => e.userId);
-    
+
     students.forEach(studentId => {
-      addNotification(studentId, 'assignment', 'New Assignment Posted', 
+      addNotification(studentId, 'assignment', 'New Assignment Posted',
         `${title} is now available`, activeCourseId);
     });
   }
-  
+
   closeModal('assignmentModal');
   resetAssignmentModal();
   renderAssignments();
@@ -2304,7 +2380,7 @@ function saveAssignmentChanges() {
   }
 }
 
-function updateAssignment() {
+async function updateAssignment() {
   if (!currentEditAssignmentId) return;
 
   const assignment = appData.assignments.find(a => a.id === currentEditAssignmentId);
@@ -2337,6 +2413,8 @@ function updateAssignment() {
   assignment.lateDeduction = lateDeduction;
   assignment.allowResubmission = allowResubmit;
 
+  // Save to Supabase
+  await supabaseUpdateAssignment(assignment);
   saveData(appData);
 
   if (previousStatus !== 'published' && status === 'published') {
@@ -3686,7 +3764,7 @@ function openModuleModal(moduleId = null) {
   openModal('moduleModal');
 }
 
-function saveModule() {
+async function saveModule() {
   const moduleId = document.getElementById('moduleId').value;
   const name = document.getElementById('moduleName').value.trim();
 
@@ -3698,21 +3776,27 @@ function saveModule() {
   if (!appData.modules) appData.modules = [];
 
   if (moduleId) {
+    // Update existing module
     const module = appData.modules.find(m => m.id === moduleId);
     if (module) {
       module.name = name;
+      await supabaseUpdateModule(module);
     }
   } else {
+    // Create new module
     const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
     const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
 
-    appData.modules.push({
+    const newModule = {
       id: generateId(),
       courseId: activeCourseId,
       name: name,
       position: maxPosition,
       items: []
-    });
+    };
+
+    await supabaseCreateModule(newModule);
+    appData.modules.push(newModule);
   }
 
   saveData(appData);
@@ -3726,7 +3810,11 @@ function editModule(moduleId) {
 }
 
 function deleteModule(moduleId) {
-  confirm('Delete this module and all its items?', () => {
+  confirm('Delete this module and all its items?', async () => {
+    // Delete from Supabase
+    await supabaseDeleteModule(moduleId);
+
+    // Update local state
     appData.modules = appData.modules.filter(m => m.id !== moduleId);
     saveData(appData);
     renderModules();
@@ -3783,7 +3871,7 @@ function updateAddItemOptions() {
   select.innerHTML = options.length > 0 ? options.join('') : '<option value="">No items available</option>';
 }
 
-function addModuleItem() {
+async function addModuleItem() {
   const moduleId = document.getElementById('addItemModuleId').value;
   const type = document.getElementById('addItemType').value;
   const refId = document.getElementById('addItemRef').value;
@@ -3804,23 +3892,33 @@ function addModuleItem() {
 
   const maxPosition = module.items.length > 0 ? Math.max(...module.items.map(i => i.position)) + 1 : 0;
 
-  module.items.push({
+  const newItem = {
     id: generateId(),
     type: type,
     refId: refId,
     position: maxPosition
-  });
+  };
 
+  // Save to Supabase
+  await supabaseCreateModuleItem(newItem, moduleId);
+
+  // Update local state
+  module.items.push(newItem);
   saveData(appData);
+
   closeModal('addModuleItemModal');
   renderModules();
   showToast('Item added to module!', 'success');
 }
 
-function removeModuleItem(moduleId, itemId) {
+async function removeModuleItem(moduleId, itemId) {
   const module = appData.modules.find(m => m.id === moduleId);
   if (!module) return;
 
+  // Delete from Supabase
+  await supabaseDeleteModuleItem(itemId);
+
+  // Update local state
   module.items = module.items.filter(i => i.id !== itemId);
   module.items.forEach((item, i) => item.position = i);
 
@@ -5652,8 +5750,22 @@ function renderAiThread() {
 
   setHTML('aiThread', html || '<div class="muted" style="padding:20px; text-align:center;">Ask me anything about your course, or say "create an announcement about..." or "create a quiz on..."</div>');
 
-  const thread = document.getElementById('aiThread');
-  if (thread) thread.scrollTop = thread.scrollHeight;
+  // Scroll to bottom after render
+  scrollAiThreadToBottom();
+}
+
+function scrollAiThreadToBottom() {
+  // Use setTimeout to ensure DOM has updated
+  setTimeout(() => {
+    const thread = document.getElementById('aiThread');
+    if (thread) {
+      thread.scrollTop = thread.scrollHeight;
+      // Also scroll parent container if it exists
+      if (thread.parentElement) {
+        thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
+      }
+    }
+  }, 50);
 }
 
 function updateAiActionField(idx, field, value) {
@@ -6837,6 +6949,12 @@ student2@university.edu" rows="5"></textarea>
           <div class="form-group">
             <label class="form-label">Intro content (supports Markdown)</label>
             <textarea class="form-textarea" id="startHereContent" rows="4" placeholder="Welcome message..."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Pinned essentials</label>
+            <div class="hint" style="margin-bottom:8px;">Add essential links for students (syllabus, office hours, etc.)</div>
+            <div id="startHereLinksEditor"></div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addStartHereLink()" style="margin-top:8px;">+ Add link</button>
           </div>
         </div>
         <div class="modal-footer">
