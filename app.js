@@ -912,6 +912,40 @@ async function supabaseCreateInvite(invite) {
   return data;
 }
 
+// User profile operations
+async function supabaseUpdateUserGeminiKey(userId, geminiKey) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Updating Gemini key for user:', userId);
+
+  const { error } = await supabaseClient.from('profiles').update({
+    gemini_key: geminiKey,
+    updated_at: new Date().toISOString()
+  }).eq('id', userId);
+
+  if (error) {
+    console.error('[Supabase] Error updating Gemini key:', error);
+    showToast('Failed to save Gemini key to profile', 'error');
+    return false;
+  }
+  console.log('[Supabase] Gemini key updated');
+  return true;
+}
+
+async function supabaseLoadUserGeminiKey(userId) {
+  if (!supabaseClient) return null;
+
+  const { data, error } = await supabaseClient.from('profiles')
+    .select('gemini_key')
+    .eq('id', userId)
+    .single();
+
+  if (error) {
+    console.error('[Supabase] Error loading Gemini key:', error);
+    return null;
+  }
+  return data?.gemini_key || null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1334,6 +1368,15 @@ async function handleSignedIn(user) {
 
   // Load data from Supabase
   await loadDataFromSupabase();
+
+  // Load user's Gemini key from Supabase profile
+  const userGeminiKey = await supabaseLoadUserGeminiKey(user.id);
+  if (userGeminiKey) {
+    console.log('[Auth] Loaded Gemini key from user profile');
+    appData.settings.geminiKey = userGeminiKey;
+    // Set on window for immediate use (takes priority over config.js)
+    window.GEMINI_API_KEY = userGeminiKey;
+  }
 
   // Initialize the app UI
   initApp();
@@ -7313,7 +7356,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
                    value="${window.GEMINI_API_KEY || appData.settings.geminiKey || ''}"
                    autocomplete="off" spellcheck="false">
             <div class="hint">
-              ${window.GEMINI_API_KEY ? '✓ Loaded from config.js' : 'For AI features. Get from Google AI Studio. Configure in config.js or enter here.'}
+              ${window.GEMINI_API_KEY ? '✓ Loaded (saved to your profile)' : 'For AI features. Get from Google AI Studio. Your key is securely stored in your profile.'}
             </div>
           </div>
           <div class="form-group" style="padding:16px; background:var(--bg-color); border-radius:var(--radius); margin-top:8px;">
@@ -7826,7 +7869,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
   `);
 }
 
-function saveSettings() {
+async function saveSettings() {
   const geminiInput = document.getElementById('settingsGeminiKey')?.value.trim();
 
   // Only save if user explicitly entered a value (don't overwrite config.js with empty)
@@ -7835,6 +7878,11 @@ function saveSettings() {
     // Also set it on window for immediate use
     window.GEMINI_API_KEY = geminiInput;
     console.log('[Settings] Gemini API key updated');
+
+    // Save to Supabase user profile
+    if (appData.currentUser?.id) {
+      await supabaseUpdateUserGeminiKey(appData.currentUser.id, geminiInput);
+    }
   }
 
   appData.settings.emailNotifications = document.getElementById('settingsEmailNotifications')?.checked ?? true;
