@@ -560,6 +560,359 @@ function saveData(data) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SUPABASE CRUD OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Course operations
+async function supabaseCreateCourse(course) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating course:', course.name);
+
+  const { data, error } = await supabaseClient.from('courses').insert({
+    id: course.id,
+    name: course.name,
+    code: course.code,
+    description: course.description || null,
+    invite_code: course.inviteCode,
+    created_by: course.createdBy,
+    start_here_title: course.startHereTitle || 'Start Here',
+    start_here_content: course.startHereContent || null,
+    active: course.active !== false
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating course:', error);
+    showToast('Failed to save course to database', 'error');
+    return null;
+  }
+  console.log('[Supabase] Course created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateCourse(course) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating course:', course.id);
+
+  const { data, error } = await supabaseClient.from('courses').update({
+    name: course.name,
+    code: course.code,
+    description: course.description,
+    start_here_title: course.startHereTitle,
+    start_here_content: course.startHereContent,
+    active: course.active
+  }).eq('id', course.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating course:', error);
+    showToast('Failed to update course', 'error');
+    return null;
+  }
+  console.log('[Supabase] Course updated');
+  return data;
+}
+
+// Enrollment operations
+async function supabaseCreateEnrollment(enrollment) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating enrollment:', enrollment.userId, enrollment.courseId);
+
+  const { data, error } = await supabaseClient.from('enrollments').insert({
+    user_id: enrollment.userId,
+    course_id: enrollment.courseId,
+    role: enrollment.role
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating enrollment:', error);
+    return null;
+  }
+  console.log('[Supabase] Enrollment created');
+  return data;
+}
+
+// Assignment operations
+async function supabaseCreateAssignment(assignment) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating assignment:', assignment.title);
+
+  const { data, error } = await supabaseClient.from('assignments').insert({
+    id: assignment.id,
+    course_id: assignment.courseId,
+    title: assignment.title,
+    description: assignment.description || null,
+    points: assignment.points || 100,
+    status: assignment.status || 'draft',
+    due_date: assignment.dueDate || null,
+    allow_late_submissions: assignment.allowLateSubmissions !== false,
+    late_deduction: assignment.lateDeduction || 10,
+    allow_resubmission: assignment.allowResubmission !== false,
+    category: assignment.category || 'homework',
+    created_by: appData.currentUser?.id
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating assignment:', error);
+    showToast('Failed to save assignment to database', 'error');
+    return null;
+  }
+  console.log('[Supabase] Assignment created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateAssignment(assignment) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating assignment:', assignment.id);
+
+  const { data, error } = await supabaseClient.from('assignments').update({
+    title: assignment.title,
+    description: assignment.description,
+    points: assignment.points,
+    status: assignment.status,
+    due_date: assignment.dueDate,
+    allow_late_submissions: assignment.allowLateSubmissions,
+    late_deduction: assignment.lateDeduction,
+    allow_resubmission: assignment.allowResubmission,
+    category: assignment.category
+  }).eq('id', assignment.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating assignment:', error);
+    showToast('Failed to update assignment', 'error');
+    return null;
+  }
+  console.log('[Supabase] Assignment updated');
+  return data;
+}
+
+async function supabaseDeleteAssignment(assignmentId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting assignment:', assignmentId);
+
+  const { error } = await supabaseClient.from('assignments').delete().eq('id', assignmentId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting assignment:', error);
+    showToast('Failed to delete assignment', 'error');
+    return false;
+  }
+  console.log('[Supabase] Assignment deleted');
+  return true;
+}
+
+// Announcement operations
+async function supabaseCreateAnnouncement(announcement) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating announcement:', announcement.title);
+
+  const { data, error } = await supabaseClient.from('announcements').insert({
+    id: announcement.id,
+    course_id: announcement.courseId,
+    title: announcement.title,
+    content: announcement.content || null,
+    pinned: announcement.pinned || false,
+    author_id: announcement.authorId
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating announcement:', error);
+    showToast('Failed to save announcement', 'error');
+    return null;
+  }
+  console.log('[Supabase] Announcement created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateAnnouncement(announcement) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating announcement:', announcement.id);
+
+  const { data, error } = await supabaseClient.from('announcements').update({
+    title: announcement.title,
+    content: announcement.content,
+    pinned: announcement.pinned
+  }).eq('id', announcement.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating announcement:', error);
+    showToast('Failed to update announcement', 'error');
+    return null;
+  }
+  console.log('[Supabase] Announcement updated');
+  return data;
+}
+
+async function supabaseDeleteAnnouncement(announcementId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting announcement:', announcementId);
+
+  const { error } = await supabaseClient.from('announcements').delete().eq('id', announcementId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting announcement:', error);
+    showToast('Failed to delete announcement', 'error');
+    return false;
+  }
+  console.log('[Supabase] Announcement deleted');
+  return true;
+}
+
+// Module operations
+async function supabaseCreateModule(module) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating module:', module.name);
+
+  const { data, error } = await supabaseClient.from('modules').insert({
+    id: module.id,
+    course_id: module.courseId,
+    name: module.name,
+    position: module.position || 0
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating module:', error);
+    showToast('Failed to save module', 'error');
+    return null;
+  }
+  console.log('[Supabase] Module created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateModule(module) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating module:', module.id);
+
+  const { data, error } = await supabaseClient.from('modules').update({
+    name: module.name,
+    position: module.position
+  }).eq('id', module.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating module:', error);
+    return null;
+  }
+  console.log('[Supabase] Module updated');
+  return data;
+}
+
+async function supabaseDeleteModule(moduleId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting module:', moduleId);
+
+  const { error } = await supabaseClient.from('modules').delete().eq('id', moduleId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting module:', error);
+    showToast('Failed to delete module', 'error');
+    return false;
+  }
+  console.log('[Supabase] Module deleted');
+  return true;
+}
+
+// Module item operations
+async function supabaseCreateModuleItem(item, moduleId) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating module item:', item.type);
+
+  const { data, error } = await supabaseClient.from('module_items').insert({
+    id: item.id,
+    module_id: moduleId,
+    type: item.type,
+    ref_id: item.refId || null,
+    title: item.title || null,
+    url: item.url || null,
+    position: item.position || 0
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating module item:', error);
+    return null;
+  }
+  console.log('[Supabase] Module item created:', data.id);
+  return data;
+}
+
+async function supabaseDeleteModuleItem(itemId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting module item:', itemId);
+
+  const { error } = await supabaseClient.from('module_items').delete().eq('id', itemId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting module item:', error);
+    return false;
+  }
+  console.log('[Supabase] Module item deleted');
+  return true;
+}
+
+// Submission operations
+async function supabaseCreateSubmission(submission) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating submission for assignment:', submission.assignmentId);
+
+  const { data, error } = await supabaseClient.from('submissions').upsert({
+    id: submission.id,
+    assignment_id: submission.assignmentId,
+    user_id: submission.userId,
+    content: submission.text || submission.content,
+    file_name: submission.fileName || null,
+    file_path: submission.filePath || null
+  }, { onConflict: 'assignment_id,user_id' }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating submission:', error);
+    showToast('Failed to save submission', 'error');
+    return null;
+  }
+  console.log('[Supabase] Submission created/updated:', data.id);
+  return data;
+}
+
+// Grade operations
+async function supabaseCreateGrade(grade) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating grade for submission:', grade.submissionId);
+
+  const { data, error } = await supabaseClient.from('grades').upsert({
+    submission_id: grade.submissionId,
+    score: grade.score,
+    feedback: grade.feedback || null,
+    released: grade.released || false,
+    graded_by: grade.gradedBy || appData.currentUser?.id
+  }, { onConflict: 'submission_id' }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating grade:', error);
+    showToast('Failed to save grade', 'error');
+    return null;
+  }
+  console.log('[Supabase] Grade created/updated');
+  return data;
+}
+
+// Invite operations
+async function supabaseCreateInvite(invite) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating invite:', invite.email);
+
+  const { data, error } = await supabaseClient.from('invites').insert({
+    course_id: invite.courseId,
+    email: invite.email,
+    role: invite.role || 'student',
+    status: 'pending',
+    invited_by: appData.currentUser?.id
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating invite:', error);
+    return null;
+  }
+  console.log('[Supabase] Invite created:', data.id);
+  return data;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1169,75 +1522,91 @@ function renderCourses() {
   setHTML('coursesList', html);
 }
 
-function createCourse() {
+async function createCourse() {
   const name = document.getElementById('courseName').value.trim();
   const code = document.getElementById('courseCode').value.trim();
   const emailsText = document.getElementById('courseEmails').value.trim();
-  
+
   if (!name || !code) {
     showToast('Please fill in course name and code', 'error');
     return;
   }
-  
+
   const courseId = generateId();
   const inviteCode = generateInviteCode();
-  
-  appData.courses.push({
+
+  const course = {
     id: courseId,
     name: name,
     code: code,
     inviteCode: inviteCode,
     createdBy: appData.currentUser.id
-  });
-  
-  appData.enrollments.push({
+  };
+
+  // Save to Supabase
+  await supabaseCreateCourse(course);
+
+  // Update local state
+  appData.courses.push(course);
+
+  const enrollment = {
     userId: appData.currentUser.id,
     courseId: courseId,
     role: 'instructor'
-  });
-  
+  };
+
+  // Save enrollment to Supabase
+  await supabaseCreateEnrollment(enrollment);
+
+  // Update local state
+  appData.enrollments.push(enrollment);
+
   // Initialize invites array if it doesn't exist
   if (!appData.invites) appData.invites = [];
-  
+
   // Process email invites
   if (emailsText) {
     const emails = emailsText.split('\n').map(e => e.trim()).filter(e => e && e.includes('@'));
-    
-    emails.forEach(email => {
+
+    for (const email of emails) {
       // Check if user exists
       let user = appData.users.find(u => u.email === email);
-      
+
       if (user) {
         // User exists - auto-enroll if not already enrolled
         const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === courseId);
         if (!existing) {
-          appData.enrollments.push({
+          const studentEnrollment = {
             userId: user.id,
             courseId: courseId,
             role: 'student'
-          });
+          };
+          await supabaseCreateEnrollment(studentEnrollment);
+          appData.enrollments.push(studentEnrollment);
         }
       } else {
         // User doesn't exist - create invite (default to student role)
-        appData.invites.push({
+        const invite = {
           courseId: courseId,
           email: email,
           role: 'student',
           status: 'pending',
           sentAt: new Date().toISOString()
-        });
+        };
+        await supabaseCreateInvite(invite);
+        appData.invites.push(invite);
       }
-    });
+    }
   }
-  
+
   saveData(appData);
   activeCourseId = courseId;
-  
+
   closeModal('createCourseModal');
   renderAll();
-  navigateTo('people');
+  navigateTo('home');
   showToast(`Course created! Invite code: ${inviteCode}`, 'success');
-  
+
   // Clear form
   document.getElementById('courseName').value = '';
   document.getElementById('courseCode').value = '';
@@ -1394,41 +1763,8 @@ function renderStartHere(course) {
 }
 
 function renderOnboardingChecklist(course) {
-  const isStaffUser = isStaff(appData.currentUser.id, course.id);
-  if (!isStaffUser) {
-    setHTML('homeChecklist', '');
-    return;
-  }
-  
-  const hasStudents = appData.enrollments.some(e => e.courseId === course.id && e.role === 'student');
-  const hasAssignments = appData.assignments.some(a => a.courseId === course.id);
-  const hasQuizzes = appData.quizzes.some(q => q.courseId === course.id);
-  const hasUpdates = appData.announcements.some(a => a.courseId === course.id);
-  const hasFiles = appData.files.some(f => f.courseId === course.id);
-  
-  const items = [
-    { label: 'Invite students', done: hasStudents },
-    { label: 'Create your first assignment', done: hasAssignments },
-    { label: 'Publish a quiz', done: hasQuizzes },
-    { label: 'Post a welcome update', done: hasUpdates },
-    { label: 'Upload a syllabus file', done: hasFiles }
-  ];
-  
-  setHTML('homeChecklist', `
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Getting started checklist</div>
-      </div>
-      <div class="checklist">
-        ${items.map(item => `
-          <div class="checklist-row">
-            <span class="checklist-status ${item.done ? 'done' : ''}">${item.done ? '✓' : '○'}</span>
-            <span>${item.label}</span>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `);
+  // Disabled - checklist removed per user request
+  setHTML('homeChecklist', '');
 }
 
 function openStartHereModal(courseId) {
@@ -3182,7 +3518,7 @@ function renderModules() {
       const fileVisText = fileHidden ? 'Hidden' : 'Hide from Students';
 
       return `
-        <div class="module-item" style="${fileHidden ? 'opacity:0.6;' : ''}"
+        <div class="module-item ${effectiveStaff ? 'draggable' : ''}" style="${fileHidden ? 'opacity:0.6;' : ''}"
              draggable="${effectiveStaff}"
              data-module-id="${mod.id}"
              data-item-id="${item.id}"
@@ -3190,12 +3526,13 @@ function renderModules() {
              ondragover="handleModuleItemDragOver(event)"
              ondrop="handleModuleItemDrop(event)"
              ondragend="handleModuleItemDragEnd(event)">
-          <span class="module-item-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
           <span class="module-item-icon">${itemIcon}</span>
           <span class="module-item-title">${escapeHtml(itemTitle)} ${statusBadge}</span>
           ${effectiveStaff ? `
-            ${item.type === 'file' ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${item.refId}')" style="padding:2px 6px;">${fileVisText}</button>` : ''}
-            <button class="btn btn-secondary btn-sm" onclick="removeModuleItem('${mod.id}', '${item.id}')">×</button>
+            <div class="module-item-actions">
+              ${item.type === 'file' ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleFileVisibility('${item.refId}')">${fileVisText}</button>` : ''}
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); removeModuleItem('${mod.id}', '${item.id}')">Remove</button>
+            </div>
           ` : ''}
         </div>
       `;
@@ -3204,7 +3541,7 @@ function renderModules() {
     const moduleVisText = mod.hidden ? 'Hidden' : 'Hide from Students';
 
     return `
-      <div class="module-card" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
+      <div class="module-card ${effectiveStaff ? 'draggable' : ''}" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
            draggable="${effectiveStaff}"
            data-module-id="${mod.id}"
            ondragstart="handleModuleDragStart(event)"
@@ -3212,16 +3549,13 @@ function renderModules() {
            ondrop="handleModuleDrop(event)"
            ondragend="handleModuleDragEnd(event)">
         <div class="module-header">
-          <div class="module-header-left">
-            <span class="module-drag-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
-            <h3 class="module-title">${escapeHtml(mod.name)}</h3>
-          </div>
+          <h3 class="module-title">${escapeHtml(mod.name)}</h3>
           ${effectiveStaff ? `
             <div class="module-actions">
-              <button class="btn btn-secondary btn-sm" onclick="toggleModuleVisibility('${mod.id}')" style="padding:4px 8px;">${moduleVisText}</button>
-              <button class="btn btn-secondary btn-sm" onclick="openAddModuleItemModal('${mod.id}')">+ Add Item</button>
-              <button class="btn btn-secondary btn-sm" onclick="editModule('${mod.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="deleteModule('${mod.id}')">Delete</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openAddModuleItemModal('${mod.id}')">Add Item</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editModule('${mod.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteModule('${mod.id}')">Delete</button>
             </div>
           ` : ''}
         </div>
