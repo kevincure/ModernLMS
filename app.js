@@ -1522,9 +1522,117 @@ function renderCourses() {
   setHTML('coursesList', html);
 }
 
+// Store parsed syllabus data for course creation
+let courseCreationSyllabusData = null;
+
+async function parseCourseSyllabus() {
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
+  if (!apiKey) {
+    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
+    return;
+  }
+
+  const fileInput = document.getElementById('courseCreationSyllabus');
+  if (!fileInput.files.length) {
+    showToast('Please select a syllabus file', 'error');
+    return;
+  }
+
+  const statusEl = document.getElementById('courseCreationSyllabusStatus');
+  statusEl.innerHTML = '<div class="ai-spinner" style="display:inline-block; width:16px; height:16px; margin-right:8px;"></div> Parsing syllabus...';
+
+  const file = fileInput.files[0];
+  try {
+    const base64Data = await fileToBase64(file);
+    const mimeType = file.type || 'application/octet-stream';
+
+    const systemPrompt = `You are analyzing a course syllabus. Extract course information and all assignments, modules/units, readings. Return ONLY valid JSON:
+{
+  "courseInfo": {
+    "name": "Course name",
+    "code": "Course code (e.g., ECON 101)",
+    "instructor": "Instructor name if found",
+    "description": "Course description if found"
+  },
+  "modules": [
+    {
+      "name": "Module/Week/Unit name",
+      "items": [
+        { "type": "assignment" | "quiz" | "reading", "title": "Item title", "description": "Brief description", "dueDate": "ISO date or null", "points": 100 }
+      ]
+    }
+  ]
+}
+Extract EACH reading/chapter as a SEPARATE item. For exams/quizzes use type "quiz". For homework/essays use "assignment".`;
+
+    const requestBody = {
+      contents: [{
+        parts: [
+          { inlineData: { mimeType, data: base64Data } },
+          { text: systemPrompt }
+        ]
+      }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+    };
+
+    const response = await fetchWithRetry(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) },
+      3
+    );
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const text = data.candidates[0].content.parts[0].text;
+    const parsed = parseAiJsonResponse(text);
+    courseCreationSyllabusData = parsed;
+
+    // Auto-fill course info
+    if (parsed.courseInfo) {
+      if (parsed.courseInfo.name && !document.getElementById('courseName').value) {
+        document.getElementById('courseName').value = parsed.courseInfo.name;
+      }
+      if (parsed.courseInfo.code && !document.getElementById('courseCode').value) {
+        document.getElementById('courseCode').value = parsed.courseInfo.code;
+      }
+      if (parsed.courseInfo.description && !document.getElementById('courseDescription').value) {
+        document.getElementById('courseDescription').value = parsed.courseInfo.description;
+      }
+    }
+
+    // Show modules preview
+    if (parsed.modules && parsed.modules.length > 0) {
+      let totalItems = 0;
+      parsed.modules.forEach(m => totalItems += (m.items || []).length);
+
+      const previewEl = document.getElementById('courseCreationModulesPreview');
+      const listEl = document.getElementById('courseCreationModulesList');
+      previewEl.style.display = 'block';
+
+      listEl.innerHTML = parsed.modules.map((mod, idx) => `
+        <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+          <input type="checkbox" checked class="course-creation-module-check" data-index="${idx}">
+          <span>${escapeHtml(mod.name)} <span class="muted">(${(mod.items || []).length} items)</span></span>
+        </label>
+      `).join('');
+
+      statusEl.innerHTML = `<span style="color:var(--success);">✓ Found ${parsed.modules.length} modules, ${totalItems} items</span>`;
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--warning);">No modules found in syllabus</span>';
+    }
+
+  } catch (err) {
+    console.error('Syllabus parsing error:', err);
+    statusEl.innerHTML = `<span style="color:var(--error);">Error: ${err.message}</span>`;
+    courseCreationSyllabusData = null;
+  }
+}
+
 async function createCourse() {
   const name = document.getElementById('courseName').value.trim();
   const code = document.getElementById('courseCode').value.trim();
+  const description = document.getElementById('courseDescription')?.value.trim() || '';
   const emailsText = document.getElementById('courseEmails').value.trim();
 
   if (!name || !code) {
@@ -1535,12 +1643,27 @@ async function createCourse() {
   const courseId = generateId();
   const inviteCode = generateInviteCode();
 
+  // Check if we have parsed syllabus data and should create modules
+  const hasSyllabusData = courseCreationSyllabusData && courseCreationSyllabusData.modules;
+  const checkedModules = document.querySelectorAll('.course-creation-module-check:checked');
+  const selectedModuleIndices = new Set(Array.from(checkedModules).map(el => parseInt(el.dataset.index)));
+
+  // Set up Start Here content - with syllabus reference if created via syllabus upload
+  let startHereContent = `Welcome to ${name}.`;
+  let startHereLinks = [];
+  if (hasSyllabusData && selectedModuleIndices.size > 0) {
+    startHereContent = `Welcome to ${name}.\n\nThis course was set up from the uploaded syllabus. Review the modules below for course content.`;
+  }
+
   const course = {
     id: courseId,
     name: name,
     code: code,
+    description: description,
     inviteCode: inviteCode,
-    createdBy: appData.currentUser.id
+    createdBy: appData.currentUser.id,
+    startHereContent: startHereContent,
+    startHereLinks: startHereLinks
   };
 
   // Save to Supabase
@@ -1599,18 +1722,126 @@ async function createCourse() {
     }
   }
 
+  // Import modules from parsed syllabus if available
+  let modulesImported = 0;
+  let itemsImported = 0;
+
+  if (hasSyllabusData && selectedModuleIndices.size > 0) {
+    if (!appData.modules) appData.modules = [];
+
+    for (const [modIndex, mod] of courseCreationSyllabusData.modules.entries()) {
+      if (!selectedModuleIndices.has(modIndex)) continue;
+
+      const courseModules = appData.modules.filter(m => m.courseId === courseId);
+      const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
+
+      const newModule = {
+        id: generateId(),
+        courseId: courseId,
+        name: mod.name,
+        position: maxPosition + modulesImported,
+        items: []
+      };
+
+      // Create items for this module
+      for (const item of (mod.items || [])) {
+        let refId = null;
+
+        if (item.type === 'quiz') {
+          const newQuiz = {
+            id: generateId(),
+            courseId: courseId,
+            title: item.title,
+            description: item.description || 'Placeholder - add questions',
+            status: 'draft',
+            dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
+            createdAt: new Date().toISOString(),
+            timeLimit: 30,
+            attempts: 1,
+            questions: [],
+            isPlaceholder: true
+          };
+          appData.quizzes.push(newQuiz);
+          refId = newQuiz.id;
+        } else if (item.type === 'reading') {
+          const newFile = {
+            id: generateId(),
+            courseId: courseId,
+            name: item.title,
+            type: 'placeholder',
+            size: 0,
+            visible: false,
+            isPlaceholder: true,
+            description: item.description || '',
+            uploadedBy: appData.currentUser.id,
+            uploadedAt: new Date().toISOString()
+          };
+          appData.files.push(newFile);
+          refId = newFile.id;
+        } else {
+          const newAssignment = {
+            id: generateId(),
+            courseId: courseId,
+            title: item.title,
+            description: item.description || 'Placeholder - add instructions',
+            category: 'homework',
+            points: item.points || 100,
+            status: 'draft',
+            dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
+            createdAt: new Date().toISOString(),
+            isPlaceholder: true
+          };
+          appData.assignments.push(newAssignment);
+          refId = newAssignment.id;
+        }
+
+        if (refId) {
+          newModule.items.push({
+            id: generateId(),
+            type: item.type === 'reading' ? 'file' : item.type,
+            refId: refId,
+            position: newModule.items.length
+          });
+          itemsImported++;
+        }
+      }
+
+      await supabaseCreateModule(newModule);
+      appData.modules.push(newModule);
+      modulesImported++;
+    }
+  }
+
   saveData(appData);
   activeCourseId = courseId;
 
   closeModal('createCourseModal');
   renderAll();
   navigateTo('home');
-  showToast(`Course created! Invite code: ${inviteCode}`, 'success');
 
-  // Clear form
+  let toastMsg = `Course created! Invite code: ${inviteCode}`;
+  if (modulesImported > 0) {
+    toastMsg += ` (${modulesImported} modules, ${itemsImported} items imported)`;
+  }
+  showToast(toastMsg, 'success');
+
+  // Clear form and syllabus data
   document.getElementById('courseName').value = '';
   document.getElementById('courseCode').value = '';
   document.getElementById('courseEmails').value = '';
+  if (document.getElementById('courseDescription')) {
+    document.getElementById('courseDescription').value = '';
+  }
+  if (document.getElementById('courseCreationSyllabus')) {
+    document.getElementById('courseCreationSyllabus').value = '';
+  }
+  if (document.getElementById('courseCreationSyllabusStatus')) {
+    document.getElementById('courseCreationSyllabusStatus').innerHTML = '';
+  }
+  if (document.getElementById('courseCreationModulesPreview')) {
+    document.getElementById('courseCreationModulesPreview').style.display = 'none';
+  }
+  courseCreationSyllabusData = null;
 }
 
 function joinCourse() {
