@@ -913,17 +913,32 @@ async function supabaseCreateInvite(invite) {
 }
 
 async function supabaseDeleteInvite(inviteId) {
-  if (!supabaseClient) return false;
+  if (!supabaseClient) {
+    showToast('Database not connected', 'error');
+    return false;
+  }
   console.log('[Supabase] Deleting invite:', inviteId);
 
-  const { error } = await supabaseClient.from('invites').delete().eq('id', inviteId);
-  if (error) {
-    console.error('[Supabase] Error deleting invite:', error);
+  try {
+    const { data, error } = await supabaseClient
+      .from('invites')
+      .delete()
+      .eq('id', inviteId)
+      .select();
+
+    if (error) {
+      console.error('[Supabase] Error deleting invite:', error);
+      showToast('Failed to revoke invite: ' + error.message, 'error');
+      return false;
+    }
+
+    console.log('[Supabase] Invite deleted:', inviteId, 'rows affected:', data?.length || 0);
+    return true;
+  } catch (err) {
+    console.error('[Supabase] Exception deleting invite:', err);
     showToast('Failed to revoke invite', 'error');
     return false;
   }
-  console.log('[Supabase] Invite deleted:', inviteId);
-  return true;
 }
 
 // User profile operations
@@ -1966,10 +1981,16 @@ function navigateTo(page) {
   document.querySelectorAll('.tool-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.page === page);
   });
-  
+
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const pageEl = document.getElementById(`page-${page}`);
   if (pageEl) pageEl.classList.add('active');
+
+  // Clear AI thread when leaving AI page
+  if (page !== 'ai' && aiThread.length > 0) {
+    aiThread = [];
+    renderAiThread();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2961,10 +2982,7 @@ function renderAssignments() {
   
   if (isStaffUser && !studentViewMode) {
     setHTML('assignmentsActions', `
-      <div style="display:flex; gap:8px;">
-        <button class="btn btn-primary" onclick="openAssignmentModal()">+ Assignment</button>
-        <button class="btn btn-secondary" onclick="openQuizModal()">+ Quiz</button>
-      </div>
+      <button class="btn btn-primary" onclick="openCreateAssignmentTypeModal()">+ Create</button>
     `);
   } else {
     setHTML('assignmentsActions', '');
@@ -3230,6 +3248,49 @@ async function createAssignment() {
     console.error('[createAssignment] Error:', err);
     showToast('Failed to create assignment: ' + err.message, 'error');
   }
+}
+
+function openCreateAssignmentTypeModal() {
+  ensureModalsRendered();
+  // Create modal if it doesn't exist
+  if (!document.getElementById('createTypeModal')) {
+    const modalHtml = `
+      <div class="modal-overlay" id="createTypeModal">
+        <div class="modal" style="max-width:400px;">
+          <div class="modal-header">
+            <h2 class="modal-title">Create New</h2>
+            <button class="modal-close" onclick="closeModal('createTypeModal')">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='homework';">
+                <span style="font-size:1.2rem; margin-right:12px;">📝</span>
+                <span><strong>Homework</strong><br><span class="muted" style="font-size:0.85rem;">Problem sets, worksheets</span></span>
+              </button>
+              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='essay';">
+                <span style="font-size:1.2rem; margin-right:12px;">📄</span>
+                <span><strong>Essay</strong><br><span class="muted" style="font-size:0.85rem;">Papers, written assignments</span></span>
+              </button>
+              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='project';">
+                <span style="font-size:1.2rem; margin-right:12px;">🎯</span>
+                <span><strong>Project</strong><br><span class="muted" style="font-size:0.85rem;">Long-term projects, presentations</span></span>
+              </button>
+              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openQuizModal();">
+                <span style="font-size:1.2rem; margin-right:12px;">❓</span>
+                <span><strong>Quiz</strong><br><span class="muted" style="font-size:0.85rem;">Multiple choice, true/false, short answer</span></span>
+              </button>
+              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='exam';">
+                <span style="font-size:1.2rem; margin-right:12px;">📋</span>
+                <span><strong>Exam</strong><br><span class="muted" style="font-size:0.85rem;">Midterms, finals</span></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+  }
+  openModal('createTypeModal');
 }
 
 let currentEditAssignmentId = null;
@@ -6043,15 +6104,23 @@ async function uploadFile() {
     uploadedAt: new Date().toISOString()
   };
 
-  // Save to Supabase
-  await supabaseCreateFile(fileData);
+  try {
+    // Save to Supabase
+    const result = await supabaseCreateFile(fileData);
+    if (!result) {
+      return; // Error already shown
+    }
 
-  appData.files.push(fileData);
-  saveData(appData);
-  closeModal('fileUploadModal');
-  renderFiles();
-  showToast('File uploaded!', 'success');
-  fileInput.value = '';
+    appData.files.push(fileData);
+    saveData(appData);
+    closeModal('fileUploadModal');
+    renderFiles();
+    showToast('File uploaded!', 'success');
+    fileInput.value = '';
+  } catch (err) {
+    console.error('[uploadFile] Error:', err);
+    showToast('Failed to upload file: ' + err.message, 'error');
+  }
 }
 
 function deleteFile(id) {
@@ -6281,13 +6350,13 @@ function renderStaffGradebook() {
                 ${assignments.map(a => {
                   const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === student.id);
                   const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-                  
+
                   if (grade) {
                     totalScore += grade.score;
                     totalPoints += a.points;
-                    return `<td style="padding:12px; text-align:center;">${grade.score} ${grade.released ? '' : '🔒'}</td>`;
+                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade">${grade.score} ${grade.released ? '' : '🔒'}</td>`;
                   }
-                  return `<td style="padding:12px; text-align:center;" class="muted">—</td>`;
+                  return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade">—</td>`;
                 }).join('')}
                 <td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? `${totalScore}/${totalPoints}` : '—'}</td>
                 <td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? ((totalScore / totalPoints) * 100).toFixed(1) + '%' : '—'}</td>
@@ -6302,6 +6371,139 @@ function renderStaffGradebook() {
   `;
   
   setHTML('gradebookWrap', statsHTML + table);
+}
+
+// Manual grade entry modal
+let manualGradeStudentId = null;
+let manualGradeAssignmentId = null;
+
+function openManualGradeModal(studentId, assignmentId) {
+  manualGradeStudentId = studentId;
+  manualGradeAssignmentId = assignmentId;
+
+  const student = getUserById(studentId);
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!student || !assignment) return;
+
+  // Find existing grade if any
+  const submission = appData.submissions.find(s => s.assignmentId === assignmentId && s.userId === studentId);
+  const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
+
+  // Create modal if it doesn't exist
+  if (!document.getElementById('manualGradeModal')) {
+    const modalHtml = `
+      <div class="modal-overlay" id="manualGradeModal">
+        <div class="modal" style="max-width:400px;">
+          <div class="modal-header">
+            <h2 class="modal-title" id="manualGradeTitle">Add Grade</h2>
+            <button class="modal-close" onclick="closeModal('manualGradeModal')">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div id="manualGradeInfo" class="muted" style="margin-bottom:16px;"></div>
+            <div class="form-group">
+              <label class="form-label">Score</label>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <input type="number" class="form-input" id="manualGradeScore" min="0" style="width:100px;">
+                <span id="manualGradeMax">/ 100</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Feedback (optional)</label>
+              <textarea class="form-textarea" id="manualGradeFeedback" rows="3" placeholder="Add feedback..."></textarea>
+            </div>
+            <div class="form-group">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="manualGradeReleased" checked>
+                <span>Release grade to student</span>
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('manualGradeModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveManualGrade()">Save Grade</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+  }
+
+  document.getElementById('manualGradeTitle').textContent = grade ? 'Edit Grade' : 'Add Grade';
+  document.getElementById('manualGradeInfo').textContent = `${student.name} · ${assignment.title}`;
+  document.getElementById('manualGradeMax').textContent = `/ ${assignment.points}`;
+  document.getElementById('manualGradeScore').value = grade ? grade.score : '';
+  document.getElementById('manualGradeScore').max = assignment.points;
+  document.getElementById('manualGradeFeedback').value = grade ? (grade.feedback || '') : '';
+  document.getElementById('manualGradeReleased').checked = grade ? grade.released : true;
+
+  openModal('manualGradeModal');
+}
+
+async function saveManualGrade() {
+  const score = parseFloat(document.getElementById('manualGradeScore').value);
+  const feedback = document.getElementById('manualGradeFeedback').value.trim();
+  const released = document.getElementById('manualGradeReleased').checked;
+  const assignment = appData.assignments.find(a => a.id === manualGradeAssignmentId);
+
+  if (isNaN(score) || score < 0) {
+    showToast('Please enter a valid score', 'error');
+    return;
+  }
+
+  if (score > assignment.points) {
+    showToast(`Score cannot exceed ${assignment.points} points`, 'error');
+    return;
+  }
+
+  // Check if submission exists, if not create a placeholder
+  let submission = appData.submissions.find(s => s.assignmentId === manualGradeAssignmentId && s.userId === manualGradeStudentId);
+
+  if (!submission) {
+    // Create a manual/placeholder submission
+    submission = {
+      id: generateId(),
+      assignmentId: manualGradeAssignmentId,
+      userId: manualGradeStudentId,
+      text: '[Manual grade entry]',
+      fileName: null,
+      fileData: null,
+      submittedAt: new Date().toISOString(),
+      isManual: true
+    };
+    appData.submissions.push(submission);
+
+    // Save submission to Supabase
+    await supabaseUpsertSubmission(submission);
+  }
+
+  // Update or create grade
+  let existingGrade = appData.grades.find(g => g.submissionId === submission.id);
+
+  if (existingGrade) {
+    existingGrade.score = score;
+    existingGrade.feedback = feedback;
+    existingGrade.released = released;
+    existingGrade.gradedBy = appData.currentUser.id;
+    existingGrade.gradedAt = new Date().toISOString();
+  } else {
+    existingGrade = {
+      submissionId: submission.id,
+      score: score,
+      feedback: feedback,
+      released: released,
+      gradedBy: appData.currentUser.id,
+      gradedAt: new Date().toISOString()
+    };
+    appData.grades.push(existingGrade);
+  }
+
+  // Save grade to Supabase
+  await supabaseUpsertGrade(existingGrade);
+  saveData(appData);
+
+  closeModal('manualGradeModal');
+  renderGradebook();
+  showToast('Grade saved', 'success');
 }
 
 function exportGradebook() {
@@ -9638,6 +9840,9 @@ function viewQuizDetails(quizId) {
 
 function toggleStudentView() {
   studentViewMode = !studentViewMode;
+  // Clear AI thread when switching views
+  aiThread = [];
+  renderAiThread();
   renderTopBarViewToggle();
   renderAll();
   showToast(studentViewMode ? 'Viewing as student' : 'Back to instructor view', 'info');
