@@ -560,6 +560,393 @@ function saveData(data) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SUPABASE CRUD OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Course operations
+async function supabaseCreateCourse(course) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating course:', course.name);
+
+  const { data, error } = await supabaseClient.from('courses').insert({
+    id: course.id,
+    name: course.name,
+    code: course.code,
+    description: course.description || null,
+    invite_code: course.inviteCode,
+    created_by: course.createdBy,
+    start_here_title: course.startHereTitle || 'Start Here',
+    start_here_content: course.startHereContent || null,
+    active: course.active !== false
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating course:', error);
+    showToast('Failed to save course to database', 'error');
+    return null;
+  }
+  console.log('[Supabase] Course created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateCourse(course) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating course:', course.id);
+
+  const { data, error } = await supabaseClient.from('courses').update({
+    name: course.name,
+    code: course.code,
+    description: course.description,
+    start_here_title: course.startHereTitle,
+    start_here_content: course.startHereContent,
+    active: course.active
+  }).eq('id', course.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating course:', error);
+    showToast('Failed to update course', 'error');
+    return null;
+  }
+  console.log('[Supabase] Course updated');
+  return data;
+}
+
+// Enrollment operations
+async function supabaseCreateEnrollment(enrollment) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating enrollment:', enrollment.userId, enrollment.courseId);
+
+  const { data, error } = await supabaseClient.from('enrollments').insert({
+    user_id: enrollment.userId,
+    course_id: enrollment.courseId,
+    role: enrollment.role
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating enrollment:', error);
+    return null;
+  }
+  console.log('[Supabase] Enrollment created');
+  return data;
+}
+
+// Assignment operations
+async function supabaseCreateAssignment(assignment) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating assignment:', assignment.title);
+
+  const { data, error } = await supabaseClient.from('assignments').insert({
+    id: assignment.id,
+    course_id: assignment.courseId,
+    title: assignment.title,
+    description: assignment.description || null,
+    points: assignment.points || 100,
+    status: assignment.status || 'draft',
+    due_date: assignment.dueDate || null,
+    allow_late_submissions: assignment.allowLateSubmissions !== false,
+    late_deduction: assignment.lateDeduction || 10,
+    allow_resubmission: assignment.allowResubmission !== false,
+    category: assignment.category || 'homework',
+    created_by: appData.currentUser?.id
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating assignment:', error);
+    showToast('Failed to save assignment to database', 'error');
+    return null;
+  }
+  console.log('[Supabase] Assignment created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateAssignment(assignment) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating assignment:', assignment.id);
+
+  const { data, error } = await supabaseClient.from('assignments').update({
+    title: assignment.title,
+    description: assignment.description,
+    points: assignment.points,
+    status: assignment.status,
+    due_date: assignment.dueDate,
+    allow_late_submissions: assignment.allowLateSubmissions,
+    late_deduction: assignment.lateDeduction,
+    allow_resubmission: assignment.allowResubmission,
+    category: assignment.category
+  }).eq('id', assignment.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating assignment:', error);
+    showToast('Failed to update assignment', 'error');
+    return null;
+  }
+  console.log('[Supabase] Assignment updated');
+  return data;
+}
+
+async function supabaseDeleteAssignment(assignmentId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting assignment:', assignmentId);
+
+  const { error } = await supabaseClient.from('assignments').delete().eq('id', assignmentId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting assignment:', error);
+    showToast('Failed to delete assignment', 'error');
+    return false;
+  }
+  console.log('[Supabase] Assignment deleted');
+  return true;
+}
+
+// Announcement operations
+async function supabaseCreateAnnouncement(announcement) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating announcement:', announcement.title);
+
+  const { data, error } = await supabaseClient.from('announcements').insert({
+    id: announcement.id,
+    course_id: announcement.courseId,
+    title: announcement.title,
+    content: announcement.content || null,
+    pinned: announcement.pinned || false,
+    author_id: announcement.authorId
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating announcement:', error);
+    showToast('Failed to save announcement', 'error');
+    return null;
+  }
+  console.log('[Supabase] Announcement created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateAnnouncement(announcement) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating announcement:', announcement.id);
+
+  const { data, error } = await supabaseClient.from('announcements').update({
+    title: announcement.title,
+    content: announcement.content,
+    pinned: announcement.pinned
+  }).eq('id', announcement.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating announcement:', error);
+    showToast('Failed to update announcement', 'error');
+    return null;
+  }
+  console.log('[Supabase] Announcement updated');
+  return data;
+}
+
+async function supabaseDeleteAnnouncement(announcementId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting announcement:', announcementId);
+
+  const { error } = await supabaseClient.from('announcements').delete().eq('id', announcementId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting announcement:', error);
+    showToast('Failed to delete announcement', 'error');
+    return false;
+  }
+  console.log('[Supabase] Announcement deleted');
+  return true;
+}
+
+// Module operations
+async function supabaseCreateModule(module) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating module:', module.name);
+
+  const { data, error } = await supabaseClient.from('modules').insert({
+    id: module.id,
+    course_id: module.courseId,
+    name: module.name,
+    position: module.position || 0
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating module:', error);
+    showToast('Failed to save module', 'error');
+    return null;
+  }
+  console.log('[Supabase] Module created:', data.id);
+  return data;
+}
+
+async function supabaseUpdateModule(module) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating module:', module.id);
+
+  const { data, error } = await supabaseClient.from('modules').update({
+    name: module.name,
+    position: module.position
+  }).eq('id', module.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating module:', error);
+    return null;
+  }
+  console.log('[Supabase] Module updated');
+  return data;
+}
+
+async function supabaseDeleteModule(moduleId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting module:', moduleId);
+
+  const { error } = await supabaseClient.from('modules').delete().eq('id', moduleId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting module:', error);
+    showToast('Failed to delete module', 'error');
+    return false;
+  }
+  console.log('[Supabase] Module deleted');
+  return true;
+}
+
+// Module item operations
+async function supabaseCreateModuleItem(item, moduleId) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating module item:', item.type);
+
+  const { data, error } = await supabaseClient.from('module_items').insert({
+    id: item.id,
+    module_id: moduleId,
+    type: item.type,
+    ref_id: item.refId || null,
+    title: item.title || null,
+    url: item.url || null,
+    position: item.position || 0
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating module item:', error);
+    return null;
+  }
+  console.log('[Supabase] Module item created:', data.id);
+  return data;
+}
+
+async function supabaseDeleteModuleItem(itemId) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Deleting module item:', itemId);
+
+  const { error } = await supabaseClient.from('module_items').delete().eq('id', itemId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting module item:', error);
+    return false;
+  }
+  console.log('[Supabase] Module item deleted');
+  return true;
+}
+
+// Submission operations
+async function supabaseCreateSubmission(submission) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating submission for assignment:', submission.assignmentId);
+
+  const { data, error } = await supabaseClient.from('submissions').upsert({
+    id: submission.id,
+    assignment_id: submission.assignmentId,
+    user_id: submission.userId,
+    content: submission.text || submission.content,
+    file_name: submission.fileName || null,
+    file_path: submission.filePath || null
+  }, { onConflict: 'assignment_id,user_id' }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating submission:', error);
+    showToast('Failed to save submission', 'error');
+    return null;
+  }
+  console.log('[Supabase] Submission created/updated:', data.id);
+  return data;
+}
+
+// Grade operations
+async function supabaseCreateGrade(grade) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating grade for submission:', grade.submissionId);
+
+  const { data, error } = await supabaseClient.from('grades').upsert({
+    submission_id: grade.submissionId,
+    score: grade.score,
+    feedback: grade.feedback || null,
+    released: grade.released || false,
+    graded_by: grade.gradedBy || appData.currentUser?.id
+  }, { onConflict: 'submission_id' }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating grade:', error);
+    showToast('Failed to save grade', 'error');
+    return null;
+  }
+  console.log('[Supabase] Grade created/updated');
+  return data;
+}
+
+// Invite operations
+async function supabaseCreateInvite(invite) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating invite:', invite.email);
+
+  const { data, error } = await supabaseClient.from('invites').insert({
+    course_id: invite.courseId,
+    email: invite.email,
+    role: invite.role || 'student',
+    status: 'pending',
+    invited_by: appData.currentUser?.id
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating invite:', error);
+    return null;
+  }
+  console.log('[Supabase] Invite created:', data.id);
+  return data;
+}
+
+// User profile operations
+async function supabaseUpdateUserGeminiKey(userId, geminiKey) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Updating Gemini key for user:', userId);
+
+  const { error } = await supabaseClient.from('profiles').update({
+    gemini_key: geminiKey,
+    updated_at: new Date().toISOString()
+  }).eq('id', userId);
+
+  if (error) {
+    console.error('[Supabase] Error updating Gemini key:', error);
+    showToast('Failed to save Gemini key to profile', 'error');
+    return false;
+  }
+  console.log('[Supabase] Gemini key updated');
+  return true;
+}
+
+async function supabaseLoadUserGeminiKey(userId) {
+  if (!supabaseClient) return null;
+
+  const { data, error } = await supabaseClient.from('profiles')
+    .select('gemini_key')
+    .eq('id', userId)
+    .single();
+
+  if (error) {
+    console.error('[Supabase] Error loading Gemini key:', error);
+    return null;
+  }
+  return data?.gemini_key || null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -580,6 +967,94 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Content editor toolbar functions for inserting links, files, and videos
+function insertAtCursor(textareaId, text) {
+  const textarea = document.getElementById(textareaId);
+  if (!textarea) return;
+
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const before = textarea.value.substring(0, start);
+  const after = textarea.value.substring(end);
+
+  textarea.value = before + text + after;
+  textarea.focus();
+  textarea.selectionStart = textarea.selectionEnd = start + text.length;
+}
+
+function insertLink(textareaId) {
+  const url = prompt('Enter URL:');
+  if (!url) return;
+  const label = prompt('Enter link text:', 'Link');
+  if (label === null) return;
+  insertAtCursor(textareaId, `[${label}](${url})`);
+}
+
+function insertVideo(textareaId) {
+  const url = prompt('Enter YouTube or Vimeo URL:');
+  if (!url) return;
+
+  // Extract video ID and create embed markdown
+  let embedCode = '';
+  if (url.includes('youtube.com') || url.includes('youtu.be')) {
+    let videoId = '';
+    if (url.includes('youtu.be/')) {
+      videoId = url.split('youtu.be/')[1].split('?')[0];
+    } else if (url.includes('v=')) {
+      videoId = url.split('v=')[1].split('&')[0];
+    }
+    if (videoId) {
+      embedCode = `\n\n[![Video](https://img.youtube.com/vi/${videoId}/0.jpg)](${url})\n\n`;
+    }
+  } else if (url.includes('vimeo.com')) {
+    embedCode = `\n\n[📹 Watch Video](${url})\n\n`;
+  } else {
+    embedCode = `\n\n[📹 Watch Video](${url})\n\n`;
+  }
+
+  insertAtCursor(textareaId, embedCode);
+}
+
+function insertFileLink(textareaId) {
+  // Show available files from the course
+  if (!activeCourseId) {
+    showToast('No active course', 'error');
+    return;
+  }
+
+  const courseFiles = appData.files.filter(f => f.courseId === activeCourseId && !f.isPlaceholder);
+  if (courseFiles.length === 0) {
+    // Prompt for external URL instead
+    const url = prompt('No course files available. Enter external file URL:');
+    if (!url) return;
+    const fileName = prompt('Enter file name:', 'File');
+    if (fileName === null) return;
+    insertAtCursor(textareaId, `[📄 ${fileName}](${url})`);
+    return;
+  }
+
+  // Create a simple selection modal
+  const fileOptions = courseFiles.map(f => f.name).join('\n');
+  const selection = prompt(`Select file number (1-${courseFiles.length}):\n\n${courseFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n')}`);
+  if (!selection) return;
+
+  const index = parseInt(selection) - 1;
+  if (index >= 0 && index < courseFiles.length) {
+    const file = courseFiles[index];
+    insertAtCursor(textareaId, `[📄 ${file.name}](#file-${file.id})`);
+  }
+}
+
+function renderEditorToolbar(textareaId) {
+  return `
+    <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('${textareaId}')" title="Insert Link">🔗 Link</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('${textareaId}')" title="Insert File">📄 File</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('${textareaId}')" title="Insert Video">📹 Video</button>
+    </div>
+  `;
 }
 
 function formatInlineMarkdown(text) {
@@ -894,6 +1369,15 @@ async function handleSignedIn(user) {
   // Load data from Supabase
   await loadDataFromSupabase();
 
+  // Load user's Gemini key from Supabase profile
+  const userGeminiKey = await supabaseLoadUserGeminiKey(user.id);
+  if (userGeminiKey) {
+    console.log('[Auth] Loaded Gemini key from user profile');
+    appData.settings.geminiKey = userGeminiKey;
+    // Set on window for immediate use (takes priority over config.js)
+    window.GEMINI_API_KEY = userGeminiKey;
+  }
+
   // Initialize the app UI
   initApp();
 }
@@ -1169,79 +1653,326 @@ function renderCourses() {
   setHTML('coursesList', html);
 }
 
-function createCourse() {
+// Store parsed syllabus data for course creation
+let courseCreationSyllabusData = null;
+
+async function parseCourseSyllabus() {
+  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
+  if (!apiKey) {
+    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
+    return;
+  }
+
+  const fileInput = document.getElementById('courseCreationSyllabus');
+  if (!fileInput.files.length) {
+    showToast('Please select a syllabus file', 'error');
+    return;
+  }
+
+  const statusEl = document.getElementById('courseCreationSyllabusStatus');
+  statusEl.innerHTML = '<div class="ai-spinner" style="display:inline-block; width:16px; height:16px; margin-right:8px;"></div> Parsing syllabus...';
+
+  const file = fileInput.files[0];
+  try {
+    const base64Data = await fileToBase64(file);
+    const mimeType = file.type || 'application/octet-stream';
+
+    const systemPrompt = `You are analyzing a course syllabus. Extract course information and all assignments, modules/units, readings. Return ONLY valid JSON:
+{
+  "courseInfo": {
+    "name": "Course name",
+    "code": "Course code (e.g., ECON 101)",
+    "instructor": "Instructor name if found",
+    "description": "Course description if found"
+  },
+  "modules": [
+    {
+      "name": "Module/Week/Unit name",
+      "items": [
+        { "type": "assignment" | "quiz" | "reading", "title": "Item title", "description": "Brief description", "dueDate": "ISO date or null", "points": 100 }
+      ]
+    }
+  ]
+}
+Extract EACH reading/chapter as a SEPARATE item. For exams/quizzes use type "quiz". For homework/essays use "assignment".`;
+
+    const requestBody = {
+      contents: [{
+        parts: [
+          { inlineData: { mimeType, data: base64Data } },
+          { text: systemPrompt }
+        ]
+      }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+    };
+
+    const response = await fetchWithRetry(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) },
+      3
+    );
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const text = data.candidates[0].content.parts[0].text;
+    const parsed = parseAiJsonResponse(text);
+    courseCreationSyllabusData = parsed;
+
+    // Auto-fill course info
+    if (parsed.courseInfo) {
+      if (parsed.courseInfo.name && !document.getElementById('courseName').value) {
+        document.getElementById('courseName').value = parsed.courseInfo.name;
+      }
+      if (parsed.courseInfo.code && !document.getElementById('courseCode').value) {
+        document.getElementById('courseCode').value = parsed.courseInfo.code;
+      }
+      if (parsed.courseInfo.description && !document.getElementById('courseDescription').value) {
+        document.getElementById('courseDescription').value = parsed.courseInfo.description;
+      }
+    }
+
+    // Show modules preview
+    if (parsed.modules && parsed.modules.length > 0) {
+      let totalItems = 0;
+      parsed.modules.forEach(m => totalItems += (m.items || []).length);
+
+      const previewEl = document.getElementById('courseCreationModulesPreview');
+      const listEl = document.getElementById('courseCreationModulesList');
+      previewEl.style.display = 'block';
+
+      listEl.innerHTML = parsed.modules.map((mod, idx) => `
+        <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+          <input type="checkbox" checked class="course-creation-module-check" data-index="${idx}">
+          <span>${escapeHtml(mod.name)} <span class="muted">(${(mod.items || []).length} items)</span></span>
+        </label>
+      `).join('');
+
+      statusEl.innerHTML = `<span style="color:var(--success);">✓ Found ${parsed.modules.length} modules, ${totalItems} items</span>`;
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--warning);">No modules found in syllabus</span>';
+    }
+
+  } catch (err) {
+    console.error('Syllabus parsing error:', err);
+    statusEl.innerHTML = `<span style="color:var(--error);">Error: ${err.message}</span>`;
+    courseCreationSyllabusData = null;
+  }
+}
+
+async function createCourse() {
   const name = document.getElementById('courseName').value.trim();
   const code = document.getElementById('courseCode').value.trim();
+  const description = document.getElementById('courseDescription')?.value.trim() || '';
   const emailsText = document.getElementById('courseEmails').value.trim();
-  
+
   if (!name || !code) {
     showToast('Please fill in course name and code', 'error');
     return;
   }
-  
+
   const courseId = generateId();
   const inviteCode = generateInviteCode();
-  
-  appData.courses.push({
+
+  // Check if we have parsed syllabus data and should create modules
+  const hasSyllabusData = courseCreationSyllabusData && courseCreationSyllabusData.modules;
+  const checkedModules = document.querySelectorAll('.course-creation-module-check:checked');
+  const selectedModuleIndices = new Set(Array.from(checkedModules).map(el => parseInt(el.dataset.index)));
+
+  // Set up Start Here content - with syllabus reference if created via syllabus upload
+  let startHereContent = `Welcome to ${name}.`;
+  let startHereLinks = [];
+  if (hasSyllabusData && selectedModuleIndices.size > 0) {
+    startHereContent = `Welcome to ${name}.\n\nThis course was set up from the uploaded syllabus. Review the modules below for course content.`;
+  }
+
+  const course = {
     id: courseId,
     name: name,
     code: code,
+    description: description,
     inviteCode: inviteCode,
-    createdBy: appData.currentUser.id
-  });
-  
-  appData.enrollments.push({
+    createdBy: appData.currentUser.id,
+    startHereContent: startHereContent,
+    startHereLinks: startHereLinks
+  };
+
+  // Save to Supabase
+  await supabaseCreateCourse(course);
+
+  // Update local state
+  appData.courses.push(course);
+
+  const enrollment = {
     userId: appData.currentUser.id,
     courseId: courseId,
     role: 'instructor'
-  });
-  
+  };
+
+  // Save enrollment to Supabase
+  await supabaseCreateEnrollment(enrollment);
+
+  // Update local state
+  appData.enrollments.push(enrollment);
+
   // Initialize invites array if it doesn't exist
   if (!appData.invites) appData.invites = [];
-  
-  // Process email invites
+
+  // Process email invites (supports comma, semicolon, or newline delimiters)
   if (emailsText) {
-    const emails = emailsText.split('\n').map(e => e.trim()).filter(e => e && e.includes('@'));
-    
-    emails.forEach(email => {
+    const emails = emailsText.split(/[\n,;]+/).map(e => e.trim()).filter(e => e && e.includes('@'));
+
+    for (const email of emails) {
       // Check if user exists
       let user = appData.users.find(u => u.email === email);
-      
+
       if (user) {
         // User exists - auto-enroll if not already enrolled
         const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === courseId);
         if (!existing) {
-          appData.enrollments.push({
+          const studentEnrollment = {
             userId: user.id,
             courseId: courseId,
             role: 'student'
-          });
+          };
+          await supabaseCreateEnrollment(studentEnrollment);
+          appData.enrollments.push(studentEnrollment);
         }
       } else {
         // User doesn't exist - create invite (default to student role)
-        appData.invites.push({
+        const invite = {
           courseId: courseId,
           email: email,
           role: 'student',
           status: 'pending',
           sentAt: new Date().toISOString()
-        });
+        };
+        await supabaseCreateInvite(invite);
+        appData.invites.push(invite);
       }
-    });
+    }
   }
-  
+
+  // Import modules from parsed syllabus if available
+  let modulesImported = 0;
+  let itemsImported = 0;
+
+  if (hasSyllabusData && selectedModuleIndices.size > 0) {
+    if (!appData.modules) appData.modules = [];
+
+    for (const [modIndex, mod] of courseCreationSyllabusData.modules.entries()) {
+      if (!selectedModuleIndices.has(modIndex)) continue;
+
+      const courseModules = appData.modules.filter(m => m.courseId === courseId);
+      const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
+
+      const newModule = {
+        id: generateId(),
+        courseId: courseId,
+        name: mod.name,
+        position: maxPosition + modulesImported,
+        items: []
+      };
+
+      // Create items for this module
+      for (const item of (mod.items || [])) {
+        let refId = null;
+
+        if (item.type === 'quiz') {
+          const newQuiz = {
+            id: generateId(),
+            courseId: courseId,
+            title: item.title,
+            description: item.description || 'Placeholder - add questions',
+            status: 'draft',
+            dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
+            createdAt: new Date().toISOString(),
+            timeLimit: 30,
+            attempts: 1,
+            questions: [],
+            isPlaceholder: true
+          };
+          appData.quizzes.push(newQuiz);
+          refId = newQuiz.id;
+        } else if (item.type === 'reading') {
+          const newFile = {
+            id: generateId(),
+            courseId: courseId,
+            name: item.title,
+            type: 'placeholder',
+            size: 0,
+            visible: false,
+            isPlaceholder: true,
+            description: item.description || '',
+            uploadedBy: appData.currentUser.id,
+            uploadedAt: new Date().toISOString()
+          };
+          appData.files.push(newFile);
+          refId = newFile.id;
+        } else {
+          const newAssignment = {
+            id: generateId(),
+            courseId: courseId,
+            title: item.title,
+            description: item.description || 'Placeholder - add instructions',
+            category: 'homework',
+            points: item.points || 100,
+            status: 'draft',
+            dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
+            createdAt: new Date().toISOString(),
+            isPlaceholder: true
+          };
+          appData.assignments.push(newAssignment);
+          refId = newAssignment.id;
+        }
+
+        if (refId) {
+          newModule.items.push({
+            id: generateId(),
+            type: item.type === 'reading' ? 'file' : item.type,
+            refId: refId,
+            position: newModule.items.length
+          });
+          itemsImported++;
+        }
+      }
+
+      await supabaseCreateModule(newModule);
+      appData.modules.push(newModule);
+      modulesImported++;
+    }
+  }
+
   saveData(appData);
   activeCourseId = courseId;
-  
+
   closeModal('createCourseModal');
   renderAll();
-  navigateTo('people');
-  showToast(`Course created! Invite code: ${inviteCode}`, 'success');
-  
-  // Clear form
+  navigateTo('home');
+
+  let toastMsg = `Course created! Invite code: ${inviteCode}`;
+  if (modulesImported > 0) {
+    toastMsg += ` (${modulesImported} modules, ${itemsImported} items imported)`;
+  }
+  showToast(toastMsg, 'success');
+
+  // Clear form and syllabus data
   document.getElementById('courseName').value = '';
   document.getElementById('courseCode').value = '';
   document.getElementById('courseEmails').value = '';
+  if (document.getElementById('courseDescription')) {
+    document.getElementById('courseDescription').value = '';
+  }
+  if (document.getElementById('courseCreationSyllabus')) {
+    document.getElementById('courseCreationSyllabus').value = '';
+  }
+  if (document.getElementById('courseCreationSyllabusStatus')) {
+    document.getElementById('courseCreationSyllabusStatus').innerHTML = '';
+  }
+  if (document.getElementById('courseCreationModulesPreview')) {
+    document.getElementById('courseCreationModulesPreview').style.display = 'none';
+  }
+  courseCreationSyllabusData = null;
 }
 
 function joinCourse() {
@@ -1338,46 +2069,64 @@ function renderHome() {
     setHTML('homeUpcoming', html);
   }
   
-  // Recent updates
+  // Recent updates (clickable)
   const updates = appData.announcements
     .filter(a => a.courseId === activeCourseId)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 5);
-  
+
   if (updates.length === 0) {
     setHTML('homeUpdates', '<div class="muted" style="padding:12px;">No recent updates</div>');
   } else {
     const html = updates.map(u => {
       const author = getUserById(u.authorId);
       return `
-        <div style="padding:12px; border-bottom:1px solid var(--border-light);">
-          <div style="font-weight:500;">${u.title} ${u.pinned ? '📌' : ''}</div>
-          <div class="muted" style="font-size:0.85rem;">${author ? author.name : 'Unknown'} · ${formatDate(u.createdAt)}</div>
-        </div>
+        <button class="update-item" onclick="viewAnnouncement('${u.id}')" style="display:block; width:100%; text-align:left; padding:12px; border:none; border-bottom:1px solid var(--border-light); background:transparent; cursor:pointer;">
+          <div style="font-weight:500;">${escapeHtml(u.title)} ${u.pinned ? '📌' : ''}</div>
+          <div class="muted" style="font-size:0.85rem;">${author ? escapeHtml(author.name) : 'Unknown'} · ${formatDate(u.createdAt)}</div>
+        </button>
       `;
     }).join('');
     setHTML('homeUpdates', html);
   }
 }
 
+function viewAnnouncement(announcementId) {
+  navigateTo('updates');
+  // Scroll to the announcement after a brief delay for render
+  setTimeout(() => {
+    const el = document.querySelector(`[data-announcement-id="${announcementId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.backgroundColor = 'var(--primary-light)';
+      setTimeout(() => el.style.backgroundColor = '', 1500);
+    }
+  }, 100);
+}
+
 function renderStartHere(course) {
   const isStaffUser = isStaff(appData.currentUser.id, course.id);
   const startHereTitle = course.startHereTitle || 'Start Here';
-  const startHereContent = course.startHereContent || course.description || '';
-  const pinnedFiles = appData.files.filter(f => f.courseId === course.id).slice(0, 2);
-  const pinnedAssignments = appData.assignments.filter(a => a.courseId === course.id).slice(0, 2);
-  const pinnedQuizzes = appData.quizzes.filter(q => q.courseId === course.id).slice(0, 2);
-  
-  const pinnedItems = [
-    ...pinnedFiles.map(f => ({ label: f.name, type: 'File' })),
-    ...pinnedAssignments.map(a => ({ label: a.title, type: 'Assignment' })),
-    ...pinnedQuizzes.map(q => ({ label: q.title, type: 'Quiz' }))
-  ].slice(0, 4);
-  
-  const pinnedHtml = pinnedItems.length
-    ? `<div class="start-here-links">${pinnedItems.map(item => `<span class="pill">${item.type}: ${item.label}</span>`).join('')}</div>`
-    : '<div class="muted">Pin a syllabus, assignment, or quiz here.</div>';
-  
+  // Default welcome message with course name
+  const defaultContent = `Welcome to ${course.name}.`;
+  const startHereContent = course.startHereContent || defaultContent;
+
+  // Use only user-added links (stored in course.startHereLinks)
+  const pinnedLinks = course.startHereLinks || [];
+
+  const pinnedHtml = pinnedLinks.length
+    ? `<div class="start-here-links">${pinnedLinks.map((link, idx) =>
+        `<a href="${escapeHtml(link.url)}" target="_blank" class="pill pill-link">${escapeHtml(link.label)}</a>`
+      ).join('')}</div>`
+    : (isStaffUser ? '<div class="muted">Add essential links for students.</div>' : '');
+
+  const pinnedSection = pinnedLinks.length || isStaffUser ? `
+    <div style="margin-top:12px;">
+      <div class="muted" style="margin-bottom:6px;">Pinned essentials</div>
+      ${pinnedHtml}
+    </div>
+  ` : '';
+
   setHTML('homeStartHere', `
     <div class="card">
       <div class="card-header">
@@ -1385,51 +2134,18 @@ function renderStartHere(course) {
         ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="openStartHereModal('${course.id}')">Edit</button>` : ''}
       </div>
       <div class="markdown-content">${renderMarkdown(startHereContent)}</div>
-      <div style="margin-top:12px;">
-        <div class="muted" style="margin-bottom:6px;">Pinned essentials</div>
-        ${pinnedHtml}
-      </div>
+      ${pinnedSection}
     </div>
   `);
 }
 
 function renderOnboardingChecklist(course) {
-  const isStaffUser = isStaff(appData.currentUser.id, course.id);
-  if (!isStaffUser) {
-    setHTML('homeChecklist', '');
-    return;
-  }
-  
-  const hasStudents = appData.enrollments.some(e => e.courseId === course.id && e.role === 'student');
-  const hasAssignments = appData.assignments.some(a => a.courseId === course.id);
-  const hasQuizzes = appData.quizzes.some(q => q.courseId === course.id);
-  const hasUpdates = appData.announcements.some(a => a.courseId === course.id);
-  const hasFiles = appData.files.some(f => f.courseId === course.id);
-  
-  const items = [
-    { label: 'Invite students', done: hasStudents },
-    { label: 'Create your first assignment', done: hasAssignments },
-    { label: 'Publish a quiz', done: hasQuizzes },
-    { label: 'Post a welcome update', done: hasUpdates },
-    { label: 'Upload a syllabus file', done: hasFiles }
-  ];
-  
-  setHTML('homeChecklist', `
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Getting started checklist</div>
-      </div>
-      <div class="checklist">
-        ${items.map(item => `
-          <div class="checklist-row">
-            <span class="checklist-status ${item.done ? 'done' : ''}">${item.done ? '✓' : '○'}</span>
-            <span>${item.label}</span>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `);
+  // Disabled - checklist removed per user request
+  setHTML('homeChecklist', '');
 }
+
+// Temporary storage for pinned links being edited
+let startHereLinksEditing = [];
 
 function openStartHereModal(courseId) {
   const course = getCourseById(courseId);
@@ -1437,8 +2153,47 @@ function openStartHereModal(courseId) {
   ensureModalsRendered();
   document.getElementById('startHereCourseId').value = courseId;
   document.getElementById('startHereTitle').value = course.startHereTitle || 'Start Here';
-  document.getElementById('startHereContent').value = course.startHereContent || course.description || '';
+  const defaultContent = `Welcome to ${course.name}.`;
+  document.getElementById('startHereContent').value = course.startHereContent || defaultContent;
+
+  // Initialize links editing array
+  startHereLinksEditing = [...(course.startHereLinks || [])];
+  renderStartHereLinksEditor();
+
   openModal('startHereModal');
+}
+
+function renderStartHereLinksEditor() {
+  const container = document.getElementById('startHereLinksEditor');
+  if (!container) return;
+
+  if (startHereLinksEditing.length === 0) {
+    container.innerHTML = '<div class="muted">No pinned links yet.</div>';
+  } else {
+    container.innerHTML = startHereLinksEditing.map((link, idx) => `
+      <div class="start-here-link-row" style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <input type="text" class="form-input" style="flex:1" value="${escapeHtml(link.label)}" placeholder="Label" onchange="updateStartHereLink(${idx}, 'label', this.value)">
+        <input type="text" class="form-input" style="flex:2" value="${escapeHtml(link.url)}" placeholder="URL" onchange="updateStartHereLink(${idx}, 'url', this.value)">
+        <button class="btn btn-secondary btn-sm" onclick="removeStartHereLink(${idx})" title="Remove">&times;</button>
+      </div>
+    `).join('');
+  }
+}
+
+function addStartHereLink() {
+  startHereLinksEditing.push({ label: '', url: '' });
+  renderStartHereLinksEditor();
+}
+
+function updateStartHereLink(idx, field, value) {
+  if (startHereLinksEditing[idx]) {
+    startHereLinksEditing[idx][field] = value;
+  }
+}
+
+function removeStartHereLink(idx) {
+  startHereLinksEditing.splice(idx, 1);
+  renderStartHereLinksEditor();
 }
 
 function saveStartHere() {
@@ -1447,11 +2202,13 @@ function saveStartHere() {
   const content = document.getElementById('startHereContent').value.trim();
   const course = getCourseById(courseId);
   if (!course) return;
-  
+
   course.startHereTitle = title || 'Start Here';
   course.startHereContent = content;
+  // Save only valid links (both label and url must be filled)
+  course.startHereLinks = startHereLinksEditing.filter(link => link.label.trim() && link.url.trim());
   saveData(appData);
-  
+
   closeModal('startHereModal');
   renderHome();
   showToast('Start Here updated', 'success');
@@ -1505,11 +2262,11 @@ function renderUpdates() {
     const author = getUserById(a.authorId);
     const visibilityText = a.hidden ? 'Hidden' : 'Hide from Students';
     return `
-      <div class="card" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''}">
+      <div class="card" data-announcement-id="${a.id}" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''} transition: background-color 0.3s ease;">
         <div class="card-header">
           <div>
-            <div class="card-title">${a.title} ${a.pinned ? '📌' : ''}</div>
-            <div class="muted">${author ? author.name : 'Unknown'} · ${formatDate(a.createdAt)}</div>
+            <div class="card-title">${escapeHtml(a.title)} ${a.pinned ? '📌' : ''}</div>
+            <div class="muted">${author ? escapeHtml(author.name) : 'Unknown'} · ${formatDate(a.createdAt)}</div>
           </div>
           ${effectiveStaff ? `
             <div style="display:flex; gap:8px; align-items:center;">
@@ -1538,17 +2295,17 @@ function toggleAnnouncementVisibility(id) {
   }
 }
 
-function createAnnouncement() {
+async function createAnnouncement() {
   const title = document.getElementById('announcementTitle').value.trim();
   const content = document.getElementById('announcementContent').value.trim();
   const pinned = document.getElementById('announcementPinned').checked;
-  
+
   if (!title || !content) {
     showToast('Please fill in all fields', 'error');
     return;
   }
-  
-  appData.announcements.push({
+
+  const announcement = {
     id: generateId(),
     courseId: activeCourseId,
     title: title,
@@ -1556,9 +2313,15 @@ function createAnnouncement() {
     pinned: pinned,
     authorId: appData.currentUser.id,
     createdAt: new Date().toISOString()
-  });
-  
+  };
+
+  // Save to Supabase
+  await supabaseCreateAnnouncement(announcement);
+
+  // Update local state
+  appData.announcements.push(announcement);
   saveData(appData);
+
   closeModal('announcementModal');
   resetAnnouncementModal();
   renderUpdates();
@@ -1567,7 +2330,11 @@ function createAnnouncement() {
 }
 
 function deleteAnnouncement(id) {
-  confirm('Delete this update?', () => {
+  confirm('Delete this update?', async () => {
+    // Delete from Supabase
+    await supabaseDeleteAnnouncement(id);
+
+    // Update local state
     appData.announcements = appData.announcements.filter(a => a.id !== id);
     saveData(appData);
     renderUpdates();
@@ -1614,29 +2381,32 @@ function saveAnnouncementChanges() {
   }
 }
 
-function updateAnnouncement() {
+async function updateAnnouncement() {
   if (!currentEditAnnouncementId) return;
-  
+
   const announcement = appData.announcements.find(a => a.id === currentEditAnnouncementId);
   if (!announcement) return;
-  
+
   const title = document.getElementById('announcementTitle').value.trim();
   const content = document.getElementById('announcementContent').value.trim();
   const pinned = document.getElementById('announcementPinned').checked;
-  
+
   if (!title || !content) {
     showToast('Please fill in all fields', 'error');
     return;
   }
-  
+
   announcement.title = title;
   announcement.content = content;
   announcement.pinned = pinned;
-  
+
+  // Save to Supabase
+  await supabaseUpdateAnnouncement(announcement);
   saveData(appData);
+
   closeModal('announcementModal');
   resetAnnouncementModal();
-  
+
   renderUpdates();
   renderHome();
   showToast('Update saved', 'success');
@@ -1868,7 +2638,7 @@ function renderCalendar() {
   setHTML('calendarList', html);
 }
 
-function createAssignment() {
+async function createAssignment() {
   const title = document.getElementById('assignmentTitle').value.trim();
   const description = document.getElementById('assignmentDescription').value.trim();
   const category = document.getElementById('assignmentCategory').value;
@@ -1878,15 +2648,14 @@ function createAssignment() {
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
   const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
-  
+
   if (!title || !description || !points || !dueDate) {
     showToast('Please fill in all required fields', 'error');
     return;
   }
-  
+
   const assignmentId = generateId();
-  
-  appData.assignments.push({
+  const assignment = {
     id: assignmentId,
     courseId: activeCourseId,
     title: title,
@@ -1900,22 +2669,27 @@ function createAssignment() {
     lateDeduction: lateDeduction,
     allowResubmission: allowResubmit,
     rubric: null
-  });
-  
+  };
+
+  // Save to Supabase
+  await supabaseCreateAssignment(assignment);
+
+  // Update local state
+  appData.assignments.push(assignment);
   saveData(appData);
-  
+
   // Send notifications to enrolled students if published
   if (status === 'published') {
     const students = appData.enrollments
       .filter(e => e.courseId === activeCourseId && e.role === 'student')
       .map(e => e.userId);
-    
+
     students.forEach(studentId => {
-      addNotification(studentId, 'assignment', 'New Assignment Posted', 
+      addNotification(studentId, 'assignment', 'New Assignment Posted',
         `${title} is now available`, activeCourseId);
     });
   }
-  
+
   closeModal('assignmentModal');
   resetAssignmentModal();
   renderAssignments();
@@ -1968,7 +2742,7 @@ function saveAssignmentChanges() {
   }
 }
 
-function updateAssignment() {
+async function updateAssignment() {
   if (!currentEditAssignmentId) return;
 
   const assignment = appData.assignments.find(a => a.id === currentEditAssignmentId);
@@ -2001,6 +2775,8 @@ function updateAssignment() {
   assignment.lateDeduction = lateDeduction;
   assignment.allowResubmission = allowResubmit;
 
+  // Save to Supabase
+  await supabaseUpdateAssignment(assignment);
   saveData(appData);
 
   if (previousStatus !== 'published' && status === 'published') {
@@ -3182,7 +3958,7 @@ function renderModules() {
       const fileVisText = fileHidden ? 'Hidden' : 'Hide from Students';
 
       return `
-        <div class="module-item" style="${fileHidden ? 'opacity:0.6;' : ''}"
+        <div class="module-item ${effectiveStaff ? 'draggable' : ''}" style="${fileHidden ? 'opacity:0.6;' : ''}"
              draggable="${effectiveStaff}"
              data-module-id="${mod.id}"
              data-item-id="${item.id}"
@@ -3190,12 +3966,13 @@ function renderModules() {
              ondragover="handleModuleItemDragOver(event)"
              ondrop="handleModuleItemDrop(event)"
              ondragend="handleModuleItemDragEnd(event)">
-          <span class="module-item-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
           <span class="module-item-icon">${itemIcon}</span>
           <span class="module-item-title">${escapeHtml(itemTitle)} ${statusBadge}</span>
           ${effectiveStaff ? `
-            ${item.type === 'file' ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${item.refId}')" style="padding:2px 6px;">${fileVisText}</button>` : ''}
-            <button class="btn btn-secondary btn-sm" onclick="removeModuleItem('${mod.id}', '${item.id}')">×</button>
+            <div class="module-item-actions">
+              ${item.type === 'file' ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleFileVisibility('${item.refId}')">${fileVisText}</button>` : ''}
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); removeModuleItem('${mod.id}', '${item.id}')">Remove</button>
+            </div>
           ` : ''}
         </div>
       `;
@@ -3204,7 +3981,7 @@ function renderModules() {
     const moduleVisText = mod.hidden ? 'Hidden' : 'Hide from Students';
 
     return `
-      <div class="module-card" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
+      <div class="module-card ${effectiveStaff ? 'draggable' : ''}" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
            draggable="${effectiveStaff}"
            data-module-id="${mod.id}"
            ondragstart="handleModuleDragStart(event)"
@@ -3212,16 +3989,13 @@ function renderModules() {
            ondrop="handleModuleDrop(event)"
            ondragend="handleModuleDragEnd(event)">
         <div class="module-header">
-          <div class="module-header-left">
-            <span class="module-drag-handle">${effectiveStaff ? '⋮⋮' : ''}</span>
-            <h3 class="module-title">${escapeHtml(mod.name)}</h3>
-          </div>
+          <h3 class="module-title">${escapeHtml(mod.name)}</h3>
           ${effectiveStaff ? `
             <div class="module-actions">
-              <button class="btn btn-secondary btn-sm" onclick="toggleModuleVisibility('${mod.id}')" style="padding:4px 8px;">${moduleVisText}</button>
-              <button class="btn btn-secondary btn-sm" onclick="openAddModuleItemModal('${mod.id}')">+ Add Item</button>
-              <button class="btn btn-secondary btn-sm" onclick="editModule('${mod.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="deleteModule('${mod.id}')">Delete</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openAddModuleItemModal('${mod.id}')">Add Item</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editModule('${mod.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteModule('${mod.id}')">Delete</button>
             </div>
           ` : ''}
         </div>
@@ -3352,7 +4126,7 @@ function openModuleModal(moduleId = null) {
   openModal('moduleModal');
 }
 
-function saveModule() {
+async function saveModule() {
   const moduleId = document.getElementById('moduleId').value;
   const name = document.getElementById('moduleName').value.trim();
 
@@ -3364,21 +4138,27 @@ function saveModule() {
   if (!appData.modules) appData.modules = [];
 
   if (moduleId) {
+    // Update existing module
     const module = appData.modules.find(m => m.id === moduleId);
     if (module) {
       module.name = name;
+      await supabaseUpdateModule(module);
     }
   } else {
+    // Create new module
     const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
     const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
 
-    appData.modules.push({
+    const newModule = {
       id: generateId(),
       courseId: activeCourseId,
       name: name,
       position: maxPosition,
       items: []
-    });
+    };
+
+    await supabaseCreateModule(newModule);
+    appData.modules.push(newModule);
   }
 
   saveData(appData);
@@ -3392,7 +4172,11 @@ function editModule(moduleId) {
 }
 
 function deleteModule(moduleId) {
-  confirm('Delete this module and all its items?', () => {
+  confirm('Delete this module and all its items?', async () => {
+    // Delete from Supabase
+    await supabaseDeleteModule(moduleId);
+
+    // Update local state
     appData.modules = appData.modules.filter(m => m.id !== moduleId);
     saveData(appData);
     renderModules();
@@ -3449,7 +4233,7 @@ function updateAddItemOptions() {
   select.innerHTML = options.length > 0 ? options.join('') : '<option value="">No items available</option>';
 }
 
-function addModuleItem() {
+async function addModuleItem() {
   const moduleId = document.getElementById('addItemModuleId').value;
   const type = document.getElementById('addItemType').value;
   const refId = document.getElementById('addItemRef').value;
@@ -3470,23 +4254,33 @@ function addModuleItem() {
 
   const maxPosition = module.items.length > 0 ? Math.max(...module.items.map(i => i.position)) + 1 : 0;
 
-  module.items.push({
+  const newItem = {
     id: generateId(),
     type: type,
     refId: refId,
     position: maxPosition
-  });
+  };
 
+  // Save to Supabase
+  await supabaseCreateModuleItem(newItem, moduleId);
+
+  // Update local state
+  module.items.push(newItem);
   saveData(appData);
+
   closeModal('addModuleItemModal');
   renderModules();
   showToast('Item added to module!', 'success');
 }
 
-function removeModuleItem(moduleId, itemId) {
+async function removeModuleItem(moduleId, itemId) {
   const module = appData.modules.find(m => m.id === moduleId);
   if (!module) return;
 
+  // Delete from Supabase
+  await supabaseDeleteModuleItem(itemId);
+
+  // Update local state
   module.items = module.items.filter(i => i.id !== itemId);
   module.items.forEach((item, i) => item.position = i);
 
@@ -3517,8 +4311,14 @@ async function parseSyllabus() {
   const fileInput = document.getElementById('syllabusFile');
   const textInput = document.getElementById('syllabusText').value.trim();
 
-  const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, and due dates. Return ONLY valid JSON with the following structure:
+  const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, readings, and due dates. Return ONLY valid JSON with the following structure:
 {
+  "courseInfo": {
+    "name": "Course name if found",
+    "code": "Course code if found (e.g., ECON 101)",
+    "instructor": "Instructor name if found",
+    "description": "Course description if found"
+  },
   "modules": [
     {
       "name": "Module/Week/Unit name",
@@ -3535,7 +4335,14 @@ async function parseSyllabus() {
   ]
 }
 
-Mark all items as drafts by default. If the syllabus mentions exams, quizzes, or tests, set type to "quiz". If it mentions homework, problem sets, essays, or projects, set type to "assignment".`;
+IMPORTANT RULES:
+1. Extract EACH reading/textbook chapter/article as a SEPARATE item with type "reading"
+   - If syllabus says "Read chapters 1-3", create THREE separate reading items: "Chapter 1", "Chapter 2", "Chapter 3"
+   - If syllabus lists "Smith (2020), Jones (2019)", create TWO separate reading items
+2. For exams, quizzes, midterms, finals, or tests: set type to "quiz"
+3. For homework, problem sets, essays, papers, projects: set type to "assignment"
+4. Group items by week/module/unit as presented in the syllabus
+5. Extract course metadata (name, code, instructor) if available at the top of the syllabus`;
 
   let requestBody;
 
@@ -3646,7 +4453,7 @@ function renderSyllabusParsedPreview(parsed) {
   const getItemIcon = (type) => {
     switch(type) {
       case 'quiz': return '❓';
-      case 'reading':
+      case 'reading': return '📖';
       case 'file': return '📄';
       default: return '📝';
     }
@@ -3654,12 +4461,51 @@ function renderSyllabusParsedPreview(parsed) {
 
   const getItemLabel = (type) => {
     switch(type) {
-      case 'quiz': return 'Quiz placeholder';
-      case 'reading':
-      case 'file': return 'File placeholder';
-      default: return 'Assignment placeholder';
+      case 'quiz': return 'Quiz';
+      case 'reading': return 'Reading';
+      case 'file': return 'File';
+      default: return 'Assignment';
     }
   };
+
+  // Show course info if extracted
+  let courseInfoHtml = '';
+  if (parsed.courseInfo) {
+    const info = parsed.courseInfo;
+    const hasInfo = info.name || info.code || info.instructor;
+    if (hasInfo) {
+      courseInfoHtml = `
+        <div class="card" style="margin-bottom:16px; background:var(--primary-light);">
+          <div class="card-header"><strong>Course Information Detected</strong></div>
+          <div style="padding:12px;">
+            ${info.name ? `<div><strong>Name:</strong> ${escapeHtml(info.name)}</div>` : ''}
+            ${info.code ? `<div><strong>Code:</strong> ${escapeHtml(info.code)}</div>` : ''}
+            ${info.instructor ? `<div><strong>Instructor:</strong> ${escapeHtml(info.instructor)}</div>` : ''}
+            ${info.description ? `<div style="margin-top:8px;"><strong>Description:</strong> ${escapeHtml(info.description.substring(0, 200))}${info.description.length > 200 ? '...' : ''}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // Count items by type
+  let readingCount = 0, assignmentCount = 0, quizCount = 0;
+  parsed.modules.forEach(mod => {
+    (mod.items || []).forEach(item => {
+      if (item.type === 'reading') readingCount++;
+      else if (item.type === 'quiz') quizCount++;
+      else assignmentCount++;
+    });
+  });
+
+  const summaryHtml = `
+    <div style="margin-bottom:12px; padding:8px 12px; background:var(--bg-color); border-radius:var(--radius); font-size:0.9rem;">
+      Found: <strong>${parsed.modules.length}</strong> modules,
+      <strong>${readingCount}</strong> readings,
+      <strong>${assignmentCount}</strong> assignments,
+      <strong>${quizCount}</strong> quizzes
+    </div>
+  `;
 
   const html = parsed.modules.map((mod, modIndex) => `
     <div class="card" style="margin-bottom:12px;">
@@ -3667,15 +4513,16 @@ function renderSyllabusParsedPreview(parsed) {
         <label style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" checked data-module-index="${modIndex}" class="syllabus-module-check">
           <strong>${escapeHtml(mod.name)}</strong>
+          <span class="muted" style="font-size:0.85rem;">(${(mod.items || []).length} items)</span>
         </label>
       </div>
       <div style="padding:12px;">
         ${(mod.items || []).map((item, itemIndex) => `
           <label style="display:flex; align-items:center; gap:8px; padding:4px 0; flex-wrap:wrap;">
             <input type="checkbox" checked data-module-index="${modIndex}" data-item-index="${itemIndex}" class="syllabus-item-check">
-            <span class="muted">${getItemIcon(item.type)}</span>
+            <span>${getItemIcon(item.type)}</span>
             <span>${escapeHtml(item.title)}</span>
-            <span style="padding:2px 6px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.7rem;">${getItemLabel(item.type)}</span>
+            <span style="padding:2px 6px; background:var(--${item.type === 'reading' ? 'primary' : 'warning'}-light); color:var(--${item.type === 'reading' ? 'primary' : 'warning'}); border-radius:4px; font-size:0.7rem;">${getItemLabel(item.type)}</span>
             ${item.dueDate ? `<span class="muted" style="font-size:0.85rem;">Due: ${new Date(item.dueDate).toLocaleDateString()}</span>` : ''}
           </label>
         `).join('')}
@@ -3683,12 +4530,12 @@ function renderSyllabusParsedPreview(parsed) {
     </div>
   `).join('');
 
-  preview.innerHTML = html + `
+  preview.innerHTML = courseInfoHtml + summaryHtml + html + `
     <div class="hint" style="margin:16px 0; padding:12px; background:var(--primary-light); border-radius:var(--radius);">
       <strong>💡 Placeholders will be created as hidden (draft) by default.</strong><br>
       You can edit them, use AI to fill in content, or upload files. Click the visibility badge on each item to publish when ready.
     </div>
-    <button class="btn btn-primary" onclick="importParsedSyllabus()" style="margin-top:8px;">Import Selected Items as Placeholders</button>
+    <button class="btn btn-primary" onclick="importParsedSyllabus()" style="margin-top:8px;">Import Selected Items</button>
   `;
 }
 
@@ -5318,8 +6165,22 @@ function renderAiThread() {
 
   setHTML('aiThread', html || '<div class="muted" style="padding:20px; text-align:center;">Ask me anything about your course, or say "create an announcement about..." or "create a quiz on..."</div>');
 
-  const thread = document.getElementById('aiThread');
-  if (thread) thread.scrollTop = thread.scrollHeight;
+  // Scroll to bottom after render
+  scrollAiThreadToBottom();
+}
+
+function scrollAiThreadToBottom() {
+  // Use setTimeout to ensure DOM has updated
+  setTimeout(() => {
+    const thread = document.getElementById('aiThread');
+    if (thread) {
+      thread.scrollTop = thread.scrollHeight;
+      // Also scroll parent container if it exists
+      if (thread.parentElement) {
+        thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
+      }
+    }
+  }, 50);
 }
 
 function updateAiActionField(idx, field, value) {
@@ -6110,7 +6971,13 @@ function generateModals() {
           </div>
           <div class="form-group">
             <label class="form-label">Content</label>
-            <textarea class="form-textarea" id="announcementContent" placeholder="Write your update..."></textarea>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('announcementContent')" title="Insert Link">🔗 Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('announcementContent')" title="Insert File">📄 File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('announcementContent')" title="Insert Video">📹 Video</button>
+            </div>
+            <textarea class="form-textarea" id="announcementContent" placeholder="Write your update... (supports Markdown)"></textarea>
+            <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
           </div>
           <div class="form-group">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
@@ -6129,12 +6996,21 @@ function generateModals() {
 
     <!-- Create Course Modal -->
     <div class="modal-overlay" id="createCourseModal">
-      <div class="modal">
+      <div class="modal" style="max-width:600px;">
         <div class="modal-header">
           <h2 class="modal-title">Create Course</h2>
           <button class="modal-close" onclick="closeModal('createCourseModal')">&times;</button>
         </div>
         <div class="modal-body">
+          <div class="form-group" style="padding:12px; background:var(--primary-light); border-radius:var(--radius); margin-bottom:16px;">
+            <label class="form-label" style="margin-bottom:8px;">Quick Start: Upload Syllabus (optional)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="flex:1;">
+              <button class="btn btn-secondary btn-sm" onclick="parseCourseSyllabus()">Parse</button>
+            </div>
+            <div class="hint" style="margin-top:6px;">Upload a syllabus to auto-fill course info and create modules</div>
+            <div id="courseCreationSyllabusStatus" style="margin-top:8px;"></div>
+          </div>
           <div class="form-group">
             <label class="form-label">Course Name</label>
             <input type="text" class="form-input" id="courseName" placeholder="e.g., ECON 101 - Introduction to Economics">
@@ -6144,16 +7020,23 @@ function generateModals() {
             <input type="text" class="form-input" id="courseCode" placeholder="e.g., ECON101">
           </div>
           <div class="form-group">
+            <label class="form-label">Description (optional)</label>
+            <textarea class="form-textarea" id="courseDescription" placeholder="Course description..." rows="2"></textarea>
+          </div>
+          <div class="form-group">
             <label class="form-label">Student Emails (optional)</label>
-            <textarea class="form-textarea" id="courseEmails" placeholder="Enter one email per line:
-student1@university.edu
-student2@university.edu" rows="5"></textarea>
+            <textarea class="form-textarea" id="courseEmails" placeholder="Enter emails separated by commas, semicolons, or newlines:
+student1@university.edu, student2@university.edu" rows="3"></textarea>
             <div class="hint">Students will be invited to join the course</div>
+          </div>
+          <div id="courseCreationModulesPreview" style="display:none;">
+            <label class="form-label">Modules to Create from Syllabus</label>
+            <div id="courseCreationModulesList" style="max-height:200px; overflow-y:auto; border:1px solid var(--border-light); border-radius:var(--radius); padding:8px;"></div>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('createCourseModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="createCourse()">Create</button>
+          <button class="btn btn-primary" onclick="createCourse()">Create Course</button>
         </div>
       </div>
     </div>
@@ -6192,7 +7075,13 @@ student2@university.edu" rows="5"></textarea>
           </div>
           <div class="form-group">
             <label class="form-label">Description</label>
-            <textarea class="form-textarea" id="assignmentDescription" placeholder="Describe the assignment..."></textarea>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('assignmentDescription')" title="Insert Link">🔗 Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('assignmentDescription')" title="Insert File">📄 File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('assignmentDescription')" title="Insert Video">📹 Video</button>
+            </div>
+            <textarea class="form-textarea" id="assignmentDescription" placeholder="Describe the assignment... (supports Markdown)"></textarea>
+            <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
           </div>
           <div class="form-group">
             <label class="form-label">Category</label>
@@ -6467,7 +7356,7 @@ student2@university.edu" rows="5"></textarea>
                    value="${window.GEMINI_API_KEY || appData.settings.geminiKey || ''}"
                    autocomplete="off" spellcheck="false">
             <div class="hint">
-              ${window.GEMINI_API_KEY ? '✓ Loaded from config.js' : 'For AI features. Get from Google AI Studio. Configure in config.js or enter here.'}
+              ${window.GEMINI_API_KEY ? '✓ Loaded (saved to your profile)' : 'For AI features. Get from Google AI Studio. Your key is securely stored in your profile.'}
             </div>
           </div>
           <div class="form-group" style="padding:16px; background:var(--bg-color); border-radius:var(--radius); margin-top:8px;">
@@ -6502,7 +7391,19 @@ student2@university.edu" rows="5"></textarea>
           </div>
           <div class="form-group">
             <label class="form-label">Intro content (supports Markdown)</label>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('startHereContent')" title="Insert Link">🔗 Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('startHereContent')" title="Insert File">📄 File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('startHereContent')" title="Insert Video">📹 Video</button>
+            </div>
             <textarea class="form-textarea" id="startHereContent" rows="4" placeholder="Welcome message..."></textarea>
+            <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Pinned essentials</label>
+            <div class="hint" style="margin-bottom:8px;">Add essential links for students (syllabus, office hours, etc.)</div>
+            <div id="startHereLinksEditor"></div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addStartHereLink()" style="margin-top:8px;">+ Add link</button>
           </div>
         </div>
         <div class="modal-footer">
@@ -6968,7 +7869,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
   `);
 }
 
-function saveSettings() {
+async function saveSettings() {
   const geminiInput = document.getElementById('settingsGeminiKey')?.value.trim();
 
   // Only save if user explicitly entered a value (don't overwrite config.js with empty)
@@ -6977,6 +7878,11 @@ function saveSettings() {
     // Also set it on window for immediate use
     window.GEMINI_API_KEY = geminiInput;
     console.log('[Settings] Gemini API key updated');
+
+    // Save to Supabase user profile
+    if (appData.currentUser?.id) {
+      await supabaseUpdateUserGeminiKey(appData.currentUser.id, geminiInput);
+    }
   }
 
   appData.settings.emailNotifications = document.getElementById('settingsEmailNotifications')?.checked ?? true;

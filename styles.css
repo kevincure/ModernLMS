@@ -529,6 +529,18 @@ body {
   font-size: 0.8rem;
 }
 
+.pill-link {
+  text-decoration: none;
+  color: var(--primary-color);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.pill-link:hover {
+  background: var(--primary-light, #e3f2fd);
+  border-color: var(--primary-color);
+}
+
 .checklist {
   display: grid;
   gap: 10px;
@@ -1125,6 +1137,14 @@ body {
   box-shadow: var(--shadow);
 }
 
+.module-card.draggable {
+  cursor: grab;
+}
+
+.module-card.draggable:active {
+  cursor: grabbing;
+}
+
 .module-card.dragging {
   opacity: 0.5;
   box-shadow: var(--shadow-lg);
@@ -1137,24 +1157,8 @@ body {
   padding: 16px 20px;
   background: var(--bg-color);
   border-bottom: 1px solid var(--border-light);
-}
-
-.module-header-left {
-  display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
-}
-
-.module-drag-handle {
-  color: var(--text-muted);
-  cursor: grab;
-  user-select: none;
-  font-size: 1.2rem;
-  letter-spacing: 2px;
-}
-
-.module-drag-handle:active {
-  cursor: grabbing;
 }
 
 .module-title {
@@ -1189,24 +1193,33 @@ body {
   background: var(--bg-color);
 }
 
+.module-item.draggable {
+  cursor: grab;
+}
+
+.module-item.draggable:active {
+  cursor: grabbing;
+}
+
 .module-item.dragging {
   opacity: 0.5;
   box-shadow: var(--shadow);
 }
 
-.module-item-handle {
-  color: var(--text-muted);
-  cursor: grab;
-  user-select: none;
-  font-size: 0.9rem;
-}
-
-.module-item-handle:active {
-  cursor: grabbing;
-}
-
 .module-item-icon {
   font-size: 1.1rem;
+}
+
+.module-item-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.module-item:hover .module-item-actions {
+  opacity: 1;
 }
 
 .module-item-title {
