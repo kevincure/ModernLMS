@@ -3949,8 +3949,14 @@ async function parseSyllabus() {
   const fileInput = document.getElementById('syllabusFile');
   const textInput = document.getElementById('syllabusText').value.trim();
 
-  const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, and due dates. Return ONLY valid JSON with the following structure:
+  const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, readings, and due dates. Return ONLY valid JSON with the following structure:
 {
+  "courseInfo": {
+    "name": "Course name if found",
+    "code": "Course code if found (e.g., ECON 101)",
+    "instructor": "Instructor name if found",
+    "description": "Course description if found"
+  },
   "modules": [
     {
       "name": "Module/Week/Unit name",
@@ -3967,7 +3973,14 @@ async function parseSyllabus() {
   ]
 }
 
-Mark all items as drafts by default. If the syllabus mentions exams, quizzes, or tests, set type to "quiz". If it mentions homework, problem sets, essays, or projects, set type to "assignment".`;
+IMPORTANT RULES:
+1. Extract EACH reading/textbook chapter/article as a SEPARATE item with type "reading"
+   - If syllabus says "Read chapters 1-3", create THREE separate reading items: "Chapter 1", "Chapter 2", "Chapter 3"
+   - If syllabus lists "Smith (2020), Jones (2019)", create TWO separate reading items
+2. For exams, quizzes, midterms, finals, or tests: set type to "quiz"
+3. For homework, problem sets, essays, papers, projects: set type to "assignment"
+4. Group items by week/module/unit as presented in the syllabus
+5. Extract course metadata (name, code, instructor) if available at the top of the syllabus`;
 
   let requestBody;
 
@@ -4078,7 +4091,7 @@ function renderSyllabusParsedPreview(parsed) {
   const getItemIcon = (type) => {
     switch(type) {
       case 'quiz': return '❓';
-      case 'reading':
+      case 'reading': return '📖';
       case 'file': return '📄';
       default: return '📝';
     }
@@ -4086,12 +4099,51 @@ function renderSyllabusParsedPreview(parsed) {
 
   const getItemLabel = (type) => {
     switch(type) {
-      case 'quiz': return 'Quiz placeholder';
-      case 'reading':
-      case 'file': return 'File placeholder';
-      default: return 'Assignment placeholder';
+      case 'quiz': return 'Quiz';
+      case 'reading': return 'Reading';
+      case 'file': return 'File';
+      default: return 'Assignment';
     }
   };
+
+  // Show course info if extracted
+  let courseInfoHtml = '';
+  if (parsed.courseInfo) {
+    const info = parsed.courseInfo;
+    const hasInfo = info.name || info.code || info.instructor;
+    if (hasInfo) {
+      courseInfoHtml = `
+        <div class="card" style="margin-bottom:16px; background:var(--primary-light);">
+          <div class="card-header"><strong>Course Information Detected</strong></div>
+          <div style="padding:12px;">
+            ${info.name ? `<div><strong>Name:</strong> ${escapeHtml(info.name)}</div>` : ''}
+            ${info.code ? `<div><strong>Code:</strong> ${escapeHtml(info.code)}</div>` : ''}
+            ${info.instructor ? `<div><strong>Instructor:</strong> ${escapeHtml(info.instructor)}</div>` : ''}
+            ${info.description ? `<div style="margin-top:8px;"><strong>Description:</strong> ${escapeHtml(info.description.substring(0, 200))}${info.description.length > 200 ? '...' : ''}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // Count items by type
+  let readingCount = 0, assignmentCount = 0, quizCount = 0;
+  parsed.modules.forEach(mod => {
+    (mod.items || []).forEach(item => {
+      if (item.type === 'reading') readingCount++;
+      else if (item.type === 'quiz') quizCount++;
+      else assignmentCount++;
+    });
+  });
+
+  const summaryHtml = `
+    <div style="margin-bottom:12px; padding:8px 12px; background:var(--bg-color); border-radius:var(--radius); font-size:0.9rem;">
+      Found: <strong>${parsed.modules.length}</strong> modules,
+      <strong>${readingCount}</strong> readings,
+      <strong>${assignmentCount}</strong> assignments,
+      <strong>${quizCount}</strong> quizzes
+    </div>
+  `;
 
   const html = parsed.modules.map((mod, modIndex) => `
     <div class="card" style="margin-bottom:12px;">
@@ -4099,15 +4151,16 @@ function renderSyllabusParsedPreview(parsed) {
         <label style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" checked data-module-index="${modIndex}" class="syllabus-module-check">
           <strong>${escapeHtml(mod.name)}</strong>
+          <span class="muted" style="font-size:0.85rem;">(${(mod.items || []).length} items)</span>
         </label>
       </div>
       <div style="padding:12px;">
         ${(mod.items || []).map((item, itemIndex) => `
           <label style="display:flex; align-items:center; gap:8px; padding:4px 0; flex-wrap:wrap;">
             <input type="checkbox" checked data-module-index="${modIndex}" data-item-index="${itemIndex}" class="syllabus-item-check">
-            <span class="muted">${getItemIcon(item.type)}</span>
+            <span>${getItemIcon(item.type)}</span>
             <span>${escapeHtml(item.title)}</span>
-            <span style="padding:2px 6px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.7rem;">${getItemLabel(item.type)}</span>
+            <span style="padding:2px 6px; background:var(--${item.type === 'reading' ? 'primary' : 'warning'}-light); color:var(--${item.type === 'reading' ? 'primary' : 'warning'}); border-radius:4px; font-size:0.7rem;">${getItemLabel(item.type)}</span>
             ${item.dueDate ? `<span class="muted" style="font-size:0.85rem;">Due: ${new Date(item.dueDate).toLocaleDateString()}</span>` : ''}
           </label>
         `).join('')}
@@ -4115,12 +4168,12 @@ function renderSyllabusParsedPreview(parsed) {
     </div>
   `).join('');
 
-  preview.innerHTML = html + `
+  preview.innerHTML = courseInfoHtml + summaryHtml + html + `
     <div class="hint" style="margin:16px 0; padding:12px; background:var(--primary-light); border-radius:var(--radius);">
       <strong>💡 Placeholders will be created as hidden (draft) by default.</strong><br>
       You can edit them, use AI to fill in content, or upload files. Click the visibility badge on each item to publish when ready.
     </div>
-    <button class="btn btn-primary" onclick="importParsedSyllabus()" style="margin-top:8px;">Import Selected Items as Placeholders</button>
+    <button class="btn btn-primary" onclick="importParsedSyllabus()" style="margin-top:8px;">Import Selected Items</button>
   `;
 }
 
@@ -6575,12 +6628,21 @@ function generateModals() {
 
     <!-- Create Course Modal -->
     <div class="modal-overlay" id="createCourseModal">
-      <div class="modal">
+      <div class="modal" style="max-width:600px;">
         <div class="modal-header">
           <h2 class="modal-title">Create Course</h2>
           <button class="modal-close" onclick="closeModal('createCourseModal')">&times;</button>
         </div>
         <div class="modal-body">
+          <div class="form-group" style="padding:12px; background:var(--primary-light); border-radius:var(--radius); margin-bottom:16px;">
+            <label class="form-label" style="margin-bottom:8px;">Quick Start: Upload Syllabus (optional)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="flex:1;">
+              <button class="btn btn-secondary btn-sm" onclick="parseCourseSyllabus()">Parse</button>
+            </div>
+            <div class="hint" style="margin-top:6px;">Upload a syllabus to auto-fill course info and create modules</div>
+            <div id="courseCreationSyllabusStatus" style="margin-top:8px;"></div>
+          </div>
           <div class="form-group">
             <label class="form-label">Course Name</label>
             <input type="text" class="form-input" id="courseName" placeholder="e.g., ECON 101 - Introduction to Economics">
@@ -6590,16 +6652,23 @@ function generateModals() {
             <input type="text" class="form-input" id="courseCode" placeholder="e.g., ECON101">
           </div>
           <div class="form-group">
+            <label class="form-label">Description (optional)</label>
+            <textarea class="form-textarea" id="courseDescription" placeholder="Course description..." rows="2"></textarea>
+          </div>
+          <div class="form-group">
             <label class="form-label">Student Emails (optional)</label>
-            <textarea class="form-textarea" id="courseEmails" placeholder="Enter one email per line:
-student1@university.edu
-student2@university.edu" rows="5"></textarea>
+            <textarea class="form-textarea" id="courseEmails" placeholder="Enter emails separated by commas, semicolons, or newlines:
+student1@university.edu, student2@university.edu" rows="3"></textarea>
             <div class="hint">Students will be invited to join the course</div>
+          </div>
+          <div id="courseCreationModulesPreview" style="display:none;">
+            <label class="form-label">Modules to Create from Syllabus</label>
+            <div id="courseCreationModulesList" style="max-height:200px; overflow-y:auto; border:1px solid var(--border-light); border-radius:var(--radius); padding:8px;"></div>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('createCourseModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="createCourse()">Create</button>
+          <button class="btn btn-primary" onclick="createCourse()">Create Course</button>
         </div>
       </div>
     </div>
