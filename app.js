@@ -935,6 +935,94 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+// Content editor toolbar functions for inserting links, files, and videos
+function insertAtCursor(textareaId, text) {
+  const textarea = document.getElementById(textareaId);
+  if (!textarea) return;
+
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const before = textarea.value.substring(0, start);
+  const after = textarea.value.substring(end);
+
+  textarea.value = before + text + after;
+  textarea.focus();
+  textarea.selectionStart = textarea.selectionEnd = start + text.length;
+}
+
+function insertLink(textareaId) {
+  const url = prompt('Enter URL:');
+  if (!url) return;
+  const label = prompt('Enter link text:', 'Link');
+  if (label === null) return;
+  insertAtCursor(textareaId, `[${label}](${url})`);
+}
+
+function insertVideo(textareaId) {
+  const url = prompt('Enter YouTube or Vimeo URL:');
+  if (!url) return;
+
+  // Extract video ID and create embed markdown
+  let embedCode = '';
+  if (url.includes('youtube.com') || url.includes('youtu.be')) {
+    let videoId = '';
+    if (url.includes('youtu.be/')) {
+      videoId = url.split('youtu.be/')[1].split('?')[0];
+    } else if (url.includes('v=')) {
+      videoId = url.split('v=')[1].split('&')[0];
+    }
+    if (videoId) {
+      embedCode = `\n\n[![Video](https://img.youtube.com/vi/${videoId}/0.jpg)](${url})\n\n`;
+    }
+  } else if (url.includes('vimeo.com')) {
+    embedCode = `\n\n[📹 Watch Video](${url})\n\n`;
+  } else {
+    embedCode = `\n\n[📹 Watch Video](${url})\n\n`;
+  }
+
+  insertAtCursor(textareaId, embedCode);
+}
+
+function insertFileLink(textareaId) {
+  // Show available files from the course
+  if (!activeCourseId) {
+    showToast('No active course', 'error');
+    return;
+  }
+
+  const courseFiles = appData.files.filter(f => f.courseId === activeCourseId && !f.isPlaceholder);
+  if (courseFiles.length === 0) {
+    // Prompt for external URL instead
+    const url = prompt('No course files available. Enter external file URL:');
+    if (!url) return;
+    const fileName = prompt('Enter file name:', 'File');
+    if (fileName === null) return;
+    insertAtCursor(textareaId, `[📄 ${fileName}](${url})`);
+    return;
+  }
+
+  // Create a simple selection modal
+  const fileOptions = courseFiles.map(f => f.name).join('\n');
+  const selection = prompt(`Select file number (1-${courseFiles.length}):\n\n${courseFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n')}`);
+  if (!selection) return;
+
+  const index = parseInt(selection) - 1;
+  if (index >= 0 && index < courseFiles.length) {
+    const file = courseFiles[index];
+    insertAtCursor(textareaId, `[📄 ${file.name}](#file-${file.id})`);
+  }
+}
+
+function renderEditorToolbar(textareaId) {
+  return `
+    <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('${textareaId}')" title="Insert Link">🔗 Link</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('${textareaId}')" title="Insert File">📄 File</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('${textareaId}')" title="Insert Video">📹 Video</button>
+    </div>
+  `;
+}
+
 function formatInlineMarkdown(text) {
   let output = escapeHtml(text);
   output = output.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
@@ -6840,7 +6928,13 @@ function generateModals() {
           </div>
           <div class="form-group">
             <label class="form-label">Content</label>
-            <textarea class="form-textarea" id="announcementContent" placeholder="Write your update..."></textarea>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('announcementContent')" title="Insert Link">🔗 Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('announcementContent')" title="Insert File">📄 File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('announcementContent')" title="Insert Video">📹 Video</button>
+            </div>
+            <textarea class="form-textarea" id="announcementContent" placeholder="Write your update... (supports Markdown)"></textarea>
+            <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
           </div>
           <div class="form-group">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
@@ -6938,7 +7032,13 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
           </div>
           <div class="form-group">
             <label class="form-label">Description</label>
-            <textarea class="form-textarea" id="assignmentDescription" placeholder="Describe the assignment..."></textarea>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('assignmentDescription')" title="Insert Link">🔗 Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('assignmentDescription')" title="Insert File">📄 File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('assignmentDescription')" title="Insert Video">📹 Video</button>
+            </div>
+            <textarea class="form-textarea" id="assignmentDescription" placeholder="Describe the assignment... (supports Markdown)"></textarea>
+            <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
           </div>
           <div class="form-group">
             <label class="form-label">Category</label>
@@ -7248,7 +7348,13 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
           </div>
           <div class="form-group">
             <label class="form-label">Intro content (supports Markdown)</label>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('startHereContent')" title="Insert Link">🔗 Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('startHereContent')" title="Insert File">📄 File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('startHereContent')" title="Insert Video">📹 Video</button>
+            </div>
             <textarea class="form-textarea" id="startHereContent" rows="4" placeholder="Welcome message..."></textarea>
+            <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
           </div>
           <div class="form-group">
             <label class="form-label">Pinned essentials</label>
