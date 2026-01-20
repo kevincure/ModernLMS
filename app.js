@@ -383,6 +383,7 @@ async function loadDataFromSupabase() {
       title: a.title,
       content: a.content,
       pinned: a.pinned,
+      hidden: a.hidden || false,
       authorId: a.author_id,
       createdAt: a.created_at
     }));
@@ -391,11 +392,16 @@ async function loadDataFromSupabase() {
       id: f.id,
       courseId: f.course_id,
       name: f.name,
-      type: f.mime_type,
-      size: f.size_bytes,
+      type: f.type || f.mime_type,
+      size: f.size || f.size_bytes,
       storagePath: f.storage_path,
       uploadedBy: f.uploaded_by,
-      uploadedAt: f.uploaded_at
+      uploadedAt: f.uploaded_at,
+      externalUrl: f.external_url,
+      description: f.description,
+      isPlaceholder: f.is_placeholder,
+      isYouTube: f.is_youtube,
+      hidden: f.hidden || false
     }));
 
     // Transform quizzes with their questions
@@ -444,6 +450,7 @@ async function loadDataFromSupabase() {
       courseId: m.course_id,
       name: m.name,
       position: m.position,
+      hidden: m.hidden || false,
       items: moduleItems
         .filter(mi => mi.module_id === m.id)
         .sort((a, b) => a.position - b.position)
@@ -711,6 +718,7 @@ async function supabaseCreateAnnouncement(announcement) {
     title: announcement.title,
     content: announcement.content || null,
     pinned: announcement.pinned || false,
+    hidden: announcement.hidden || false,
     author_id: announcement.authorId
   }).select().single();
 
@@ -730,7 +738,8 @@ async function supabaseUpdateAnnouncement(announcement) {
   const { data, error } = await supabaseClient.from('announcements').update({
     title: announcement.title,
     content: announcement.content,
-    pinned: announcement.pinned
+    pinned: announcement.pinned,
+    hidden: announcement.hidden || false
   }).eq('id', announcement.id).select().single();
 
   if (error) {
@@ -766,7 +775,8 @@ async function supabaseCreateModule(module) {
     id: module.id,
     course_id: module.courseId,
     name: module.name,
-    position: module.position || 0
+    position: module.position || 0,
+    hidden: module.hidden || false
   }).select().single();
 
   if (error) {
@@ -784,7 +794,8 @@ async function supabaseUpdateModule(module) {
 
   const { data, error } = await supabaseClient.from('modules').update({
     name: module.name,
-    position: module.position
+    position: module.position,
+    hidden: module.hidden || false
   }).eq('id', module.id).select().single();
 
   if (error) {
@@ -1081,7 +1092,9 @@ async function supabaseCreateFile(file) {
     uploaded_at: file.uploadedAt,
     external_url: file.externalUrl,
     description: file.description,
-    is_placeholder: file.isPlaceholder
+    is_placeholder: file.isPlaceholder,
+    is_youtube: file.isYouTube,
+    hidden: file.hidden || false
   });
 
   if (error) {
@@ -1104,6 +1117,29 @@ async function supabaseDeleteFile(fileId) {
   }
   console.log('[Supabase] File deleted:', fileId);
   return true;
+}
+
+async function supabaseUpdateFile(file) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating file:', file.id);
+
+  const { data, error } = await supabaseClient.from('files').update({
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    external_url: file.externalUrl,
+    description: file.description,
+    is_placeholder: file.isPlaceholder,
+    is_youtube: file.isYouTube,
+    hidden: file.hidden || false
+  }).eq('id', file.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating file:', error);
+    return null;
+  }
+  console.log('[Supabase] File updated');
+  return data;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2900,15 +2936,26 @@ function renderUpdates() {
   setHTML('updatesList', html);
 }
 
-function toggleAnnouncementVisibility(id) {
+async function toggleAnnouncementVisibility(id) {
   const announcement = appData.announcements.find(a => a.id === id);
-  if (announcement) {
-    announcement.hidden = !announcement.hidden;
-    saveData(appData);
-    renderUpdates();
-    renderHome();
-    showToast(announcement.hidden ? 'Announcement hidden' : 'Announcement published', 'info');
+  if (!announcement) return;
+
+  const originalHidden = announcement.hidden;
+  announcement.hidden = !announcement.hidden;
+
+  // Persist to Supabase
+  const result = await supabaseUpdateAnnouncement(announcement);
+  if (!result) {
+    // Rollback on failure
+    announcement.hidden = originalHidden;
+    showToast('Failed to update announcement visibility', 'error');
+    return;
   }
+
+  saveData(appData);
+  renderUpdates();
+  renderHome();
+  showToast(announcement.hidden ? 'Announcement hidden' : 'Announcement published', 'info');
 }
 
 async function createAnnouncement() {
@@ -4938,25 +4985,47 @@ function deleteModule(moduleId) {
   });
 }
 
-function toggleModuleVisibility(moduleId) {
+async function toggleModuleVisibility(moduleId) {
   const module = appData.modules.find(m => m.id === moduleId);
-  if (module) {
-    module.hidden = !module.hidden;
-    saveData(appData);
-    renderModules();
-    showToast(module.hidden ? 'Module hidden from students' : 'Module visible to students', 'info');
+  if (!module) return;
+
+  const originalHidden = module.hidden;
+  module.hidden = !module.hidden;
+
+  // Persist to Supabase
+  const result = await supabaseUpdateModule(module);
+  if (!result) {
+    // Rollback on failure
+    module.hidden = originalHidden;
+    showToast('Failed to update module visibility', 'error');
+    return;
   }
+
+  saveData(appData);
+  renderModules();
+  showToast(module.hidden ? 'Module hidden from students' : 'Module visible to students', 'info');
 }
 
-function toggleFileVisibility(fileId) {
+async function toggleFileVisibility(fileId) {
   const file = appData.files.find(f => f.id === fileId);
-  if (file) {
-    file.hidden = !file.hidden;
-    saveData(appData);
-    renderModules();
-    renderFiles();
-    showToast(file.hidden ? 'File hidden from students' : 'File visible to students', 'info');
+  if (!file) return;
+
+  const originalHidden = file.hidden;
+  file.hidden = !file.hidden;
+
+  // Persist to Supabase
+  const result = await supabaseUpdateFile(file);
+  if (!result) {
+    // Rollback on failure
+    file.hidden = originalHidden;
+    showToast('Failed to update file visibility', 'error');
+    return;
   }
+
+  saveData(appData);
+  renderModules();
+  renderFiles();
+  showToast(file.hidden ? 'File hidden from students' : 'File visible to students', 'info');
 }
 
 function openAddModuleItemModal(moduleId) {
@@ -6182,14 +6251,16 @@ function convertPlaceholderToFile(fileId) {
   // Open file upload and associate with this placeholder
   const input = document.createElement('input');
   input.type = 'file';
-  input.onchange = (e) => {
+  input.onchange = async (e) => {
     const uploadedFile = e.target.files[0];
     if (uploadedFile) {
       file.name = uploadedFile.name;
       file.type = uploadedFile.name.split('.').pop();
       file.size = uploadedFile.size;
       file.isPlaceholder = false;
-      file.visible = true;
+      file.hidden = false;
+      // Persist to Supabase
+      await supabaseUpdateFile(file);
       saveData(appData);
       renderFiles();
       renderModules();
@@ -6199,7 +6270,7 @@ function convertPlaceholderToFile(fileId) {
   input.click();
 }
 
-function convertPlaceholderToLink(fileId) {
+async function convertPlaceholderToLink(fileId) {
   const file = appData.files.find(f => f.id === fileId);
   if (!file) return;
 
@@ -6211,7 +6282,9 @@ function convertPlaceholderToLink(fileId) {
     file.isYouTube = convertedUrl !== url;
     file.isPlaceholder = false;
     file.type = 'external';
-    file.visible = true;
+    file.hidden = false;
+    // Persist to Supabase
+    await supabaseUpdateFile(file);
     saveData(appData);
     renderFiles();
     renderModules();
@@ -9987,15 +10060,7 @@ function toggleQuizVisibility(quizId) {
   showToast(wasPublished ? 'Quiz hidden from students' : 'Quiz published!', 'success');
 }
 
-function toggleFileVisibility(fileId) {
-  const file = appData.files.find(f => f.id === fileId);
-  if (!file) return;
-
-  file.visible = file.visible === false ? true : false;
-  saveData(appData);
-  renderFiles();
-  showToast(file.visible ? 'File visible to students' : 'File hidden from students', 'success');
-}
+// Note: toggleFileVisibility is defined at line ~4951 - this duplicate was removed
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VIEW QUIZ DETAILS (Full Preview)
