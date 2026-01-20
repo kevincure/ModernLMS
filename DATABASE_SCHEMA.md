@@ -177,6 +177,7 @@ Per-criterion scores for rubric grading.
 | title | TEXT | |
 | content | TEXT | Markdown content |
 | pinned | BOOLEAN | |
+| hidden | BOOLEAN | Hidden from students (default false) |
 | author_id | UUID (FK) | References profiles(id) |
 | created_at | TIMESTAMPTZ | |
 | updated_at | TIMESTAMPTZ | |
@@ -188,11 +189,16 @@ Course file metadata (actual files in Supabase Storage).
 | id | UUID (PK) | |
 | course_id | UUID (FK) | References courses(id) |
 | name | TEXT | Display name |
-| mime_type | TEXT | |
-| size_bytes | INTEGER | |
+| type | TEXT | File extension or type |
+| size | INTEGER | File size in bytes |
 | storage_path | TEXT | Path in 'course-files' bucket |
 | uploaded_by | UUID (FK) | References profiles(id) |
 | uploaded_at | TIMESTAMPTZ | |
+| external_url | TEXT | URL for external links |
+| description | TEXT | Optional description |
+| is_placeholder | BOOLEAN | True if placeholder entry |
+| is_youtube | BOOLEAN | True if YouTube embed |
+| hidden | BOOLEAN | Hidden from students (default false) |
 
 ### modules
 Content organization units (weeks, topics).
@@ -202,6 +208,7 @@ Content organization units (weeks, topics).
 | course_id | UUID (FK) | References courses(id) |
 | name | TEXT | e.g., "Week 1: Introduction" |
 | position | INTEGER | Display order |
+| hidden | BOOLEAN | Hidden from students (default false) |
 | created_at | TIMESTAMPTZ | |
 
 ### module_items
@@ -341,4 +348,30 @@ The app uses camelCase in JavaScript but snake_case in PostgreSQL:
 | `createdAt` | `created_at` |
 | `allowLateSubmissions` | `allow_late_submissions` |
 | `storagePath` | `storage_path` |
+| `isPlaceholder` | `is_placeholder` |
+| `isYouTube` | `is_youtube` |
+| `externalUrl` | `external_url` |
 | etc. | etc. |
+
+## SQL Migrations
+
+If you need to add the `hidden` column to existing tables, run these in Supabase SQL Editor:
+
+```sql
+-- Add hidden column to announcements
+ALTER TABLE announcements ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT false;
+
+-- Add hidden column to modules
+ALTER TABLE modules ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT false;
+
+-- Add columns to files table
+ALTER TABLE files ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT false;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS external_url TEXT;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS is_placeholder BOOLEAN DEFAULT false;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS is_youtube BOOLEAN DEFAULT false;
+
+-- If your files table uses mime_type/size_bytes instead of type/size, rename them:
+-- ALTER TABLE files RENAME COLUMN mime_type TO type;
+-- ALTER TABLE files RENAME COLUMN size_bytes TO size;
+```
