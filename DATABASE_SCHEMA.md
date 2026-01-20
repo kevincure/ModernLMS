@@ -742,7 +742,78 @@ The app uses camelCase in JavaScript but snake_case in PostgreSQL:
 
 ## Known Issues & Required Fixes
 
-### Issue: Course Creation Hangs
+### 🚨 CRITICAL: auth.uid() Returns NULL (UNRESOLVED)
+
+**Symptom:** Course creation hangs indefinitely. No error, no timeout, just never completes.
+
+**Confirmed Working:**
+- Google OAuth login works - user signs in successfully
+- Profile row is created in `profiles` table with correct ID
+- Example profile: `{"id": "0ee10db1-d209-446b-9dbc-6ff4b5852de7", "email": "kevincure@gmail.com", "name": "Kevin Bryan"}`
+- The profile ID matches `auth.users.id` in Supabase Auth
+
+**The Problem:**
+The INSERT policy on `courses` table is:
+```sql
+WITH CHECK (created_by = auth.uid())
+```
+
+But when the app tries to insert a course, `auth.uid()` returns `NULL`, so the policy evaluates to:
+```sql
+'0ee10db1-d209-446b-9dbc-6ff4b5852de7' = NULL  -- always false
+```
+
+**Root Cause:**
+The Supabase JavaScript client is NOT authenticated, even though the user logged in via Google OAuth. The Google OAuth flow creates a user in `auth.users`, but the Supabase client itself doesn't have a session set.
+
+**Why This Happens:**
+When using Google Sign-In (gapi.auth2) directly instead of Supabase's OAuth:
+1. User signs in with Google → gets Google ID token
+2. App calls a custom endpoint or edge function to create profile in `profiles`
+3. BUT the Supabase client was never given the user's session
+4. So all subsequent database calls are made as "anonymous"
+5. `auth.uid()` in RLS policies returns `null`
+
+**Fix Required:**
+After Google OAuth success, the app MUST either:
+
+**Option A: Exchange Google token for Supabase session**
+```javascript
+// After getting Google ID token
+const { data, error } = await supabase.auth.signInWithIdToken({
+  provider: 'google',
+  token: googleIdToken,
+  nonce: 'OPTIONAL_NONCE'  // if using PKCE
+});
+// Now supabase client is authenticated, auth.uid() will work
+```
+
+**Option B: Use Supabase's native Google OAuth**
+```javascript
+// Instead of gapi.auth2, use Supabase's OAuth
+const { data, error } = await supabase.auth.signInWithOAuth({
+  provider: 'google',
+  options: {
+    redirectTo: window.location.origin
+  }
+});
+```
+
+**Files to Check:**
+1. `js/supabase-init.js` - How client is created
+2. Login handling code - Look for how Google token is used
+3. Look for `signInWithIdToken` or `signInWithOAuth` - if missing, that's the bug
+
+**Verification Test:**
+Add this debug code before course creation:
+```javascript
+const { data: { user } } = await supabase.auth.getUser();
+console.log('Supabase user:', user);  // If null, auth.uid() will be null
+```
+
+---
+
+### Issue: Course Creation Hangs (if auth works)
 
 **Problem:** When creating a course, the INSERT succeeds but `.select().single()` hangs because:
 1. User inserts course with `created_by = auth.uid()`
