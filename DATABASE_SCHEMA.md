@@ -5,34 +5,38 @@ This document describes the Supabase PostgreSQL database schema for the Campus L
 
 ---
 
-## ⚠️ CRITICAL: Current Security Status
+## Current Status (as of 2026-01-20)
 
 ### Row Level Security (RLS) Status
-**ALL TABLES HAVE RLS DISABLED.** Policies exist but are NOT being enforced.
+**ALL TABLES HAVE RLS ENABLED** with policies in place.
 
-| Table | RLS Status | Policies Defined |
-|-------|------------|------------------|
-| announcements | ❌ DISABLED | 2 policies |
-| assignments | ❌ DISABLED | 2 policies |
-| bank_questions | ❌ DISABLED | 0 policies |
-| courses | ❌ DISABLED | 5 policies |
-| enrollments | ❌ DISABLED | 6 policies |
-| files | ❌ DISABLED | 2 policies |
-| grade_categories | ❌ DISABLED | 2 policies |
-| grade_criteria_scores | ❌ DISABLED | 0 policies |
-| grades | ❌ DISABLED | 3 policies |
-| invites | ❌ DISABLED | 2 policies |
-| module_items | ❌ DISABLED | 1 policy |
-| modules | ❌ DISABLED | 2 policies |
-| notifications | ❌ DISABLED | 2 policies |
-| profiles | ❌ DISABLED | 2 policies |
-| question_banks | ❌ DISABLED | 0 policies |
-| quiz_questions | ❌ DISABLED | 1 policy |
-| quiz_submissions | ❌ DISABLED | 3 policies |
-| quizzes | ❌ DISABLED | 2 policies |
-| rubric_criteria | ❌ DISABLED | 1 policy |
-| rubrics | ❌ DISABLED | 1 policy |
-| submissions | ❌ DISABLED | 4 policies |
+| Table | RLS | Policy Count |
+|-------|-----|--------------|
+| announcements | ✅ ENABLED | 2 |
+| assignments | ✅ ENABLED | 2 |
+| bank_questions | ✅ ENABLED | 2 |
+| courses | ✅ ENABLED | 5 |
+| enrollments | ✅ ENABLED | 6 |
+| files | ✅ ENABLED | 2 |
+| grade_categories | ✅ ENABLED | 2 |
+| grade_criteria_scores | ✅ ENABLED | 2 |
+| grades | ✅ ENABLED | 3 |
+| invites | ✅ ENABLED | 2 |
+| module_items | ✅ ENABLED | 2 |
+| modules | ✅ ENABLED | 2 |
+| notifications | ✅ ENABLED | 2 |
+| profiles | ✅ ENABLED | 2 |
+| question_banks | ✅ ENABLED | 2 |
+| quiz_questions | ✅ ENABLED | 1 |
+| quiz_submissions | ✅ ENABLED | 3 |
+| quizzes | ✅ ENABLED | 2 |
+| rubric_criteria | ✅ ENABLED | 1 |
+| rubrics | ✅ ENABLED | 1 |
+| submissions | ✅ ENABLED | 4 |
+
+### Storage Buckets (RLS Enabled)
+- **submissions**: User folder-based access (`{user_id}/...`)
+- **course-files**: Enrollment-based access
 
 ---
 
@@ -60,9 +64,11 @@ User profiles, extends Supabase auth.users.
 - `on_profile_created`: AFTER INSERT - Processes pending invites
 - `update_profiles_updated_at`: BEFORE UPDATE - Updates timestamp
 
-**Policies (not enforced - RLS disabled):**
-- `Profiles are viewable by authenticated users` (SELECT)
-- `Users can update own profile` (UPDATE)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Profiles are viewable by authenticated users | SELECT | `auth.uid() IS NOT NULL` |
+| Users can update own profile | UPDATE | `auth.uid() = id` |
 
 ---
 
@@ -90,12 +96,24 @@ User profiles, extends Supabase auth.users.
 **Triggers:**
 - `update_courses_updated_at`: BEFORE UPDATE
 
-**Policies (not enforced - RLS disabled):**
-- `Course creators can update their courses` (UPDATE)
-- `Courses visible to enrolled users` (SELECT)
-- `Instructors can manage courses` (ALL)
-- `Users can create courses` (INSERT)
-- `Users can view all courses` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Users can create courses | INSERT | `WITH CHECK (auth.uid() = created_by)` |
+| Course creators can update their courses | UPDATE | `USING (created_by = auth.uid())` |
+| Courses visible to enrolled users | SELECT | `EXISTS enrollment check OR created_by = auth.uid()` |
+| Instructors can manage courses | ALL | `EXISTS enrollment as instructor/ta` |
+| Users can view all courses | SELECT | `auth.uid() IS NOT NULL` (for join by invite code) |
+
+**⚠️ IMPORTANT: Course Creation Flow**
+When a user creates a course:
+1. INSERT needs to work before enrollment exists
+2. SELECT needs to return the newly created course
+3. Then enrollment as instructor is created
+
+This means policies must allow:
+- INSERT when `created_by = auth.uid()` (no enrollment required)
+- SELECT when `created_by = auth.uid()` OR enrolled
 
 ---
 
@@ -120,13 +138,15 @@ Maps users to courses with roles.
 - `idx_enrollments_user`: (user_id)
 - `idx_enrollments_course`: (course_id)
 
-**Policies (not enforced - RLS disabled):**
-- `Course creators can manage enrollments` (ALL)
-- `Instructors manage enrollments` (ALL)
-- `Instructors see course enrollments` (SELECT)
-- `Users can insert their own enrollments` (INSERT)
-- `Users can view their own enrollments` (SELECT)
-- `Users see own enrollments` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Users can view their own enrollments | SELECT | `user_id = auth.uid()` |
+| Users see own enrollments | SELECT | `user_id = auth.uid()` |
+| Instructors see course enrollments | SELECT | `EXISTS instructor/ta enrollment in course` |
+| Users can insert their own enrollments | INSERT | `user_id = auth.uid()` |
+| Course creators can manage enrollments | ALL | `course.created_by = auth.uid()` |
+| Instructors manage enrollments | ALL | `EXISTS instructor enrollment in course` |
 
 ---
 
@@ -154,9 +174,11 @@ Pending course invitations.
 - `idx_invites_email`: (email)
 - `idx_invites_course`: (course_id)
 
-**Policies (not enforced - RLS disabled):**
-- `Staff manage invites` (ALL)
-- `Staff see course invites` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Staff manage invites | ALL | `EXISTS instructor/ta enrollment in course` |
+| Staff see course invites | SELECT | `EXISTS instructor/ta enrollment in course` |
 
 ---
 
@@ -190,9 +212,11 @@ Pending course invitations.
 **Triggers:**
 - `update_assignments_updated_at`: BEFORE UPDATE
 
-**Policies (not enforced - RLS disabled):**
-- `Enrolled see published assignments` (SELECT)
-- `Staff manage assignments` (ALL)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see published assignments | SELECT | `status = 'published' AND EXISTS enrollment` |
+| Staff manage assignments | ALL | `EXISTS instructor/ta enrollment in course` |
 
 ---
 
@@ -219,11 +243,13 @@ Student assignment submissions.
 - `idx_submissions_assignment`: (assignment_id)
 - `idx_submissions_user`: (user_id)
 
-**Policies (not enforced - RLS disabled):**
-- `Staff see submissions` (SELECT)
-- `Students can resubmit` (UPDATE)
-- `Students can submit` (INSERT)
-- `Students see own submissions` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Staff see submissions | SELECT | `EXISTS instructor/ta enrollment in assignment's course` |
+| Students can submit | INSERT | `user_id = auth.uid()` |
+| Students can resubmit | UPDATE | `user_id = auth.uid()` |
+| Students see own submissions | SELECT | `user_id = auth.uid()` |
 
 ---
 
@@ -245,10 +271,12 @@ Student assignment submissions.
 - `grades_graded_by_fkey`: FOREIGN KEY (graded_by) REFERENCES profiles(id)
 - `grades_submission_id_fkey`: FOREIGN KEY (submission_id) REFERENCES submissions(id) ON DELETE CASCADE
 
-**Policies (not enforced - RLS disabled):**
-- `Staff can grade` (ALL)
-- `Staff see all grades` (SELECT)
-- `Students see released grades` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Staff can grade | ALL | `EXISTS instructor/ta enrollment` |
+| Staff see all grades | SELECT | `EXISTS instructor/ta enrollment` |
+| Students see released grades | SELECT | `released = true AND submission.user_id = auth.uid()` |
 
 ---
 
@@ -265,8 +293,10 @@ Student assignment submissions.
 - `rubrics_assignment_id_key`: UNIQUE (assignment_id)
 - `rubrics_assignment_id_fkey`: FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE
 
-**Policies (not enforced - RLS disabled):**
-- `See rubrics` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| See rubrics | SELECT | `EXISTS enrollment in assignment's course` |
 
 ---
 
@@ -285,8 +315,10 @@ Student assignment submissions.
 - `rubric_criteria_pkey`: PRIMARY KEY (id)
 - `rubric_criteria_rubric_id_fkey`: FOREIGN KEY (rubric_id) REFERENCES rubrics(id) ON DELETE CASCADE
 
-**Policies (not enforced - RLS disabled):**
-- `See rubric criteria` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| See rubric criteria | SELECT | `EXISTS enrollment via rubric -> assignment -> course` |
 
 ---
 
@@ -307,7 +339,11 @@ Per-criterion scores for rubric grading.
 - `grade_criteria_scores_criterion_id_fkey`: FOREIGN KEY (criterion_id) REFERENCES rubric_criteria(id) ON DELETE CASCADE
 - `grade_criteria_scores_grade_id_fkey`: FOREIGN KEY (grade_id) REFERENCES grades(id) ON DELETE CASCADE
 
-**Policies:** ⚠️ NONE DEFINED
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Staff manage criteria scores | ALL | `EXISTS instructor/ta enrollment` |
+| Students see own released criteria scores | SELECT | `grade.released AND submission.user_id = auth.uid()` |
 
 ---
 
@@ -330,11 +366,11 @@ Per-criterion scores for rubric grading.
 | created_at | TIMESTAMPTZ | now() | |
 | updated_at | TIMESTAMPTZ | now() | |
 
-**Note:** Exact columns depend on what migrations have been run. The above is the expected schema.
-
-**Policies (not enforced - RLS disabled):**
-- `Enrolled see published quizzes` (SELECT)
-- `Staff manage quizzes` (ALL)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see published quizzes | SELECT | `status = 'published' AND EXISTS enrollment` |
+| Staff manage quizzes | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -355,8 +391,10 @@ Per-criterion scores for rubric grading.
 - `quiz_questions_pkey`: PRIMARY KEY (id)
 - `quiz_questions_quiz_id_fkey`: FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
 
-**Policies (not enforced - RLS disabled):**
-- `See quiz questions` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| See quiz questions | SELECT | `EXISTS enrollment in quiz's course` |
 
 ---
 
@@ -378,10 +416,12 @@ Per-criterion scores for rubric grading.
 - `quiz_submissions_quiz_id_fkey`: FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
 - `quiz_submissions_user_id_fkey`: FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE
 
-**Policies (not enforced - RLS disabled):**
-- `Staff see quiz submissions` (SELECT)
-- `Students can submit quiz` (INSERT)
-- `Students see own quiz submissions` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Staff see quiz submissions | SELECT | `EXISTS instructor/ta enrollment` |
+| Students can submit quiz | INSERT | `user_id = auth.uid()` |
+| Students see own quiz submissions | SELECT | `user_id = auth.uid()` |
 
 ---
 
@@ -398,8 +438,6 @@ Per-criterion scores for rubric grading.
 | created_at | TIMESTAMPTZ | now() | |
 | updated_at | TIMESTAMPTZ | now() | |
 
-**Note:** The `hidden` column does NOT exist yet. See SQL Migrations section.
-
 **Constraints:**
 - `announcements_pkey`: PRIMARY KEY (id)
 - `announcements_author_id_fkey`: FOREIGN KEY (author_id) REFERENCES profiles(id)
@@ -411,9 +449,11 @@ Per-criterion scores for rubric grading.
 **Triggers:**
 - `update_announcements_updated_at`: BEFORE UPDATE
 
-**Policies (not enforced - RLS disabled):**
-- `Enrolled see announcements` (SELECT)
-- `Staff manage announcements` (ALL)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see announcements | SELECT | `EXISTS enrollment in course` |
+| Staff manage announcements | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -431,8 +471,6 @@ Course file metadata (actual files in Supabase Storage).
 | uploaded_by | UUID (FK) | NULL | References profiles(id) |
 | uploaded_at | TIMESTAMPTZ | now() | |
 
-**Note:** The following columns do NOT exist yet: `hidden`, `external_url`, `description`, `is_placeholder`, `is_youtube`. See SQL Migrations section.
-
 **Constraints:**
 - `files_pkey`: PRIMARY KEY (id)
 - `files_course_id_fkey`: FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
@@ -441,9 +479,11 @@ Course file metadata (actual files in Supabase Storage).
 **Indexes:**
 - `idx_files_course`: (course_id)
 
-**Policies (not enforced - RLS disabled):**
-- `Enrolled see files` (SELECT)
-- `Staff manage files` (ALL)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see files | SELECT | `EXISTS enrollment in course` |
+| Staff manage files | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -458,8 +498,6 @@ Content organization units (weeks, topics).
 | position | INTEGER | 0 | Display order |
 | created_at | TIMESTAMPTZ | now() | |
 
-**Note:** The `hidden` column does NOT exist yet. See SQL Migrations section.
-
 **Constraints:**
 - `modules_pkey`: PRIMARY KEY (id)
 - `modules_course_id_fkey`: FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
@@ -467,9 +505,11 @@ Content organization units (weeks, topics).
 **Indexes:**
 - `idx_modules_course`: (course_id)
 
-**Policies (not enforced - RLS disabled):**
-- `Enrolled see modules` (SELECT)
-- `Staff manage modules` (ALL)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see modules | SELECT | `EXISTS enrollment in course` |
+| Staff manage modules | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -490,10 +530,11 @@ Items within modules.
 - `module_items_pkey`: PRIMARY KEY (id)
 - `module_items_module_id_fkey`: FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE
 
-**Policies (not enforced - RLS disabled):**
-- `See module items` (SELECT)
-
-⚠️ **Missing policies:** No INSERT/UPDATE/DELETE policies for staff
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| See module items | SELECT | `EXISTS enrollment via module -> course` |
+| Staff manage module items | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -512,9 +553,11 @@ Weighted grading categories.
 - `grade_categories_course_id_name_key`: UNIQUE (course_id, name)
 - `grade_categories_course_id_fkey`: FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
 
-**Policies (not enforced - RLS disabled):**
-- `Enrolled see grade categories` (SELECT)
-- `Staff manage grade categories` (ALL)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see grade categories | SELECT | `EXISTS enrollment in course` |
+| Staff manage grade categories | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -540,9 +583,11 @@ Weighted grading categories.
 **Indexes:**
 - `idx_notifications_user`: (user_id)
 
-**Policies (not enforced - RLS disabled):**
-- `Users manage own notifications` (UPDATE)
-- `Users see own notifications` (SELECT)
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Users manage own notifications | UPDATE | `user_id = auth.uid()` |
+| Users see own notifications | SELECT | `user_id = auth.uid()` |
 
 ---
 
@@ -560,7 +605,11 @@ Reusable question pools.
 - `question_banks_pkey`: PRIMARY KEY (id)
 - `question_banks_course_id_fkey`: FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
 
-**Policies:** ⚠️ NONE DEFINED
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see question banks | SELECT | `EXISTS enrollment in course` |
+| Staff manage question banks | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -580,7 +629,11 @@ Reusable question pools.
 - `bank_questions_pkey`: PRIMARY KEY (id)
 - `bank_questions_bank_id_fkey`: FOREIGN KEY (bank_id) REFERENCES question_banks(id) ON DELETE CASCADE
 
-**Policies:** ⚠️ NONE DEFINED
+**RLS Policies:**
+| Name | Command | Definition |
+|------|---------|------------|
+| Enrolled see bank questions | SELECT | `EXISTS enrollment via bank -> course` |
+| Staff manage bank questions | ALL | `EXISTS instructor/ta enrollment` |
 
 ---
 
@@ -626,43 +679,23 @@ Reusable question pools.
 ### submissions
 Private bucket for student assignment submissions.
 
-**Current Policies:**
+**Policies:**
 | Name | Operation | Definition |
 |------|-----------|------------|
-| users manage own submissions pn4br_0 | SELECT | `(storage.foldername(name))[1] = (auth.uid())::text` |
-| users manage own submissions pn4br_1 | INSERT | `(storage.foldername(name))[1] = (auth.uid())::text` |
-| users manage own submissions pn4br_2 | UPDATE | `(storage.foldername(name))[1] = (auth.uid())::text` |
+| users manage own submissions | SELECT, INSERT, UPDATE | `(storage.foldername(name))[1] = (auth.uid())::text` |
 
-**Expected behavior:** Users can only access files in their own folder (`{user_id}/...`).
-
-✅ These policies look correct.
+Users can only access files in their own folder (`{user_id}/...`).
 
 ---
 
 ### course-files
-Private bucket for course materials (syllabi, resources, etc.).
+Private bucket for course materials.
 
 **Current Policies:**
 | Name | Operation | Definition |
 |------|-----------|------------|
-| enrolled users read files 4knl1h_0 | SELECT | See below |
-
-**Policy definition:**
-```sql
-(EXISTS ( SELECT 1
-   FROM (files f
-     JOIN enrollments e ON ((e.course_id = f.course_id)))
-  WHERE ((f.storage_path = f.name) AND (e.user_id = auth.uid()))))
-```
-
-⚠️ **BUG:** The condition `f.storage_path = f.name` is incorrect!
-- `storage_path` contains the full path (e.g., `courses/abc123/document.pdf`)
-- `name` is the bucket object name being accessed
-- These rarely match, so this policy often fails
-
-**Missing policies:**
-- No INSERT policy for staff to upload files
-- No DELETE policy for staff to remove files
+| enrolled_users_read_course_files | SELECT | Joins files table with enrollments |
+| Staff upload/delete | INSERT, DELETE | Checks instructor/ta enrollment via course_id folder |
 
 ---
 
@@ -707,211 +740,173 @@ The app uses camelCase in JavaScript but snake_case in PostgreSQL:
 
 ---
 
-## SQL Migrations Required
+## Known Issues & Required Fixes
 
-### 1. CRITICAL: Enable RLS on All Tables
+### Issue: Course Creation Hangs
 
-```sql
--- Enable RLS on all tables
-ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
-ALTER TABLE assignments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bank_questions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE courses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE enrollments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE files ENABLE ROW LEVEL SECURITY;
-ALTER TABLE grade_categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE grade_criteria_scores ENABLE ROW LEVEL SECURITY;
-ALTER TABLE grades ENABLE ROW LEVEL SECURITY;
-ALTER TABLE invites ENABLE ROW LEVEL SECURITY;
-ALTER TABLE module_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE modules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE question_banks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE quiz_questions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE quiz_submissions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE quizzes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE rubric_criteria ENABLE ROW LEVEL SECURITY;
-ALTER TABLE rubrics ENABLE ROW LEVEL SECURITY;
-ALTER TABLE submissions ENABLE ROW LEVEL SECURITY;
-```
+**Problem:** When creating a course, the INSERT succeeds but `.select().single()` hangs because:
+1. User inserts course with `created_by = auth.uid()`
+2. Supabase tries to SELECT the inserted row to return it
+3. SELECT policies require enrollment to exist
+4. But enrollment is created AFTER course creation
+5. Result: SELECT times out/hangs
 
-### 2. Add Missing Policies
+**Solution:** The courses SELECT policy must include `created_by = auth.uid()`:
 
 ```sql
--- Policies for question_banks
-CREATE POLICY "Enrolled see question banks"
-  ON question_banks FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM enrollments
-      WHERE enrollments.course_id = question_banks.course_id
-        AND enrollments.user_id = auth.uid()
-    )
-  );
+-- Drop and recreate the "Courses visible to enrolled users" policy
+DROP POLICY IF EXISTS "Courses visible to enrolled users" ON courses;
 
-CREATE POLICY "Staff manage question banks"
-  ON question_banks FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM enrollments
-      WHERE enrollments.course_id = question_banks.course_id
-        AND enrollments.user_id = auth.uid()
-        AND enrollments.role IN ('instructor', 'ta')
-    )
-  );
-
--- Policies for bank_questions
-CREATE POLICY "Enrolled see bank questions"
-  ON bank_questions FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM question_banks qb
-      JOIN enrollments e ON e.course_id = qb.course_id
-      WHERE qb.id = bank_questions.bank_id
-        AND e.user_id = auth.uid()
-    )
-  );
-
-CREATE POLICY "Staff manage bank questions"
-  ON bank_questions FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM question_banks qb
-      JOIN enrollments e ON e.course_id = qb.course_id
-      WHERE qb.id = bank_questions.bank_id
-        AND e.user_id = auth.uid()
-        AND e.role IN ('instructor', 'ta')
-    )
-  );
-
--- Policies for grade_criteria_scores
-CREATE POLICY "Staff manage criteria scores"
-  ON grade_criteria_scores FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM grades g
-      JOIN submissions s ON s.id = g.submission_id
-      JOIN assignments a ON a.id = s.assignment_id
-      JOIN enrollments e ON e.course_id = a.course_id
-      WHERE g.id = grade_criteria_scores.grade_id
-        AND e.user_id = auth.uid()
-        AND e.role IN ('instructor', 'ta')
-    )
-  );
-
-CREATE POLICY "Students see own released criteria scores"
-  ON grade_criteria_scores FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM grades g
-      JOIN submissions s ON s.id = g.submission_id
-      WHERE g.id = grade_criteria_scores.grade_id
-        AND s.user_id = auth.uid()
-        AND g.released = true
-    )
-  );
-
--- Policy for module_items management
-CREATE POLICY "Staff manage module items"
-  ON module_items FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM modules m
-      JOIN enrollments e ON e.course_id = m.course_id
-      WHERE m.id = module_items.module_id
-        AND e.user_id = auth.uid()
-        AND e.role IN ('instructor', 'ta')
-    )
-  );
-```
-
-### 3. Fix Storage Policy for course-files
-
-Run this in Supabase Dashboard > Storage > course-files > Policies:
-
-**Delete the existing broken policy** (`enrolled users read files 4knl1h_0`), then create:
-
-```sql
--- Policy: Enrolled users can read course files
--- For SELECT operations on course-files bucket
-CREATE POLICY "enrolled_users_read_course_files"
-ON storage.objects FOR SELECT
+CREATE POLICY "Courses visible to enrolled or created"
+ON courses FOR SELECT
 USING (
-  bucket_id = 'course-files'
-  AND EXISTS (
-    SELECT 1 FROM files f
-    JOIN enrollments e ON e.course_id = f.course_id
-    WHERE f.storage_path = name
-      AND e.user_id = auth.uid()
+  created_by = auth.uid()
+  OR
+  EXISTS (
+    SELECT 1 FROM enrollments
+    WHERE enrollments.course_id = courses.id
+      AND enrollments.user_id = auth.uid()
   )
 );
+```
 
--- Policy: Staff can upload course files
-CREATE POLICY "staff_upload_course_files"
-ON storage.objects FOR INSERT
+Alternatively, ensure "Users can view all courses" policy works:
+```sql
+-- This simple policy allows any authenticated user to see any course
+-- (needed for join-by-invite-code flow anyway)
+DROP POLICY IF EXISTS "Users can view all courses" ON courses;
+
+CREATE POLICY "Users can view all courses"
+ON courses FOR SELECT
+USING (auth.uid() IS NOT NULL);
+```
+
+### Issue: Enrollment Creation After Course
+
+**Problem:** When creating enrollment for a new course:
+1. "Course creators can manage enrollments" needs to check courses.created_by
+2. "Instructors manage enrollments" needs existing enrollment
+
+**Solution:** Ensure the course creator policy works:
+```sql
+DROP POLICY IF EXISTS "Course creators can manage enrollments" ON enrollments;
+
+CREATE POLICY "Course creators can manage enrollments"
+ON enrollments FOR ALL
+USING (
+  EXISTS (
+    SELECT 1 FROM courses
+    WHERE courses.id = enrollments.course_id
+      AND courses.created_by = auth.uid()
+  )
+)
 WITH CHECK (
-  bucket_id = 'course-files'
-  AND EXISTS (
-    SELECT 1 FROM enrollments e
-    WHERE e.course_id = (storage.foldername(name))[1]::uuid
-      AND e.user_id = auth.uid()
-      AND e.role IN ('instructor', 'ta')
-  )
-);
-
--- Policy: Staff can delete course files
-CREATE POLICY "staff_delete_course_files"
-ON storage.objects FOR DELETE
-USING (
-  bucket_id = 'course-files'
-  AND EXISTS (
-    SELECT 1 FROM files f
-    JOIN enrollments e ON e.course_id = f.course_id
-    WHERE f.storage_path = name
-      AND e.user_id = auth.uid()
-      AND e.role IN ('instructor', 'ta')
+  EXISTS (
+    SELECT 1 FROM courses
+    WHERE courses.id = enrollments.course_id
+      AND courses.created_by = auth.uid()
   )
 );
 ```
 
-### 4. Optional: Add Extended File Columns
+---
 
-If you want external links, YouTube embeds, and visibility control:
+## Complete Policy Fix SQL
+
+Run this in Supabase SQL Editor to fix course creation:
 
 ```sql
--- Add extended columns to files table
-ALTER TABLE files ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT false;
-ALTER TABLE files ADD COLUMN IF NOT EXISTS external_url TEXT;
-ALTER TABLE files ADD COLUMN IF NOT EXISTS description TEXT;
-ALTER TABLE files ADD COLUMN IF NOT EXISTS is_placeholder BOOLEAN DEFAULT false;
-ALTER TABLE files ADD COLUMN IF NOT EXISTS is_youtube BOOLEAN DEFAULT false;
+-- Fix courses SELECT to allow creators to see their courses
+DROP POLICY IF EXISTS "Courses visible to enrolled users" ON courses;
+DROP POLICY IF EXISTS "Courses visible to enrolled or created" ON courses;
 
--- Add hidden column to announcements
-ALTER TABLE announcements ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT false;
+CREATE POLICY "Courses visible to enrolled or created"
+ON courses FOR SELECT
+USING (
+  created_by = auth.uid()
+  OR
+  EXISTS (
+    SELECT 1 FROM enrollments
+    WHERE enrollments.course_id = courses.id
+      AND enrollments.user_id = auth.uid()
+  )
+);
 
--- Add hidden column to modules
-ALTER TABLE modules ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT false;
+-- Ensure users can create courses (simple check)
+DROP POLICY IF EXISTS "Users can create courses" ON courses;
+
+CREATE POLICY "Users can create courses"
+ON courses FOR INSERT
+WITH CHECK (
+  auth.uid() IS NOT NULL
+  AND created_by = auth.uid()
+);
+
+-- Fix course creators can manage their enrollments
+DROP POLICY IF EXISTS "Course creators can manage enrollments" ON enrollments;
+
+CREATE POLICY "Course creators can manage enrollments"
+ON enrollments FOR ALL
+USING (
+  EXISTS (
+    SELECT 1 FROM courses
+    WHERE courses.id = enrollments.course_id
+      AND courses.created_by = auth.uid()
+  )
+)
+WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM courses
+    WHERE courses.id = enrollments.course_id
+      AND courses.created_by = auth.uid()
+  )
+);
 ```
 
 ---
 
-## Summary of Issues to Fix
+## Quick Reference: Policy Patterns
 
-| Priority | Issue | Fix |
-|----------|-------|-----|
-| 🔴 Critical | RLS disabled on all tables | Run migration #1 |
-| 🔴 Critical | course-files storage policy broken | Run migration #3 |
-| 🟡 Medium | Missing policies on 3 tables | Run migration #2 |
-| 🟢 Optional | Missing columns for extended features | Run migration #4 |
+### Allow authenticated users
+```sql
+USING (auth.uid() IS NOT NULL)
+```
 
----
+### User owns the row
+```sql
+USING (user_id = auth.uid())
+```
 
-## After Applying Migrations
+### User created the parent entity
+```sql
+USING (
+  EXISTS (
+    SELECT 1 FROM courses
+    WHERE courses.id = table.course_id
+      AND courses.created_by = auth.uid()
+  )
+)
+```
 
-Once you've run the SQL migrations, verify:
+### User is enrolled in course
+```sql
+USING (
+  EXISTS (
+    SELECT 1 FROM enrollments
+    WHERE enrollments.course_id = table.course_id
+      AND enrollments.user_id = auth.uid()
+  )
+)
+```
 
-1. Go to Authentication > Policies in Supabase Dashboard
-2. Each table should show "RLS Enabled"
-3. Test as a student user that they can only see their own data
-4. Test as an instructor that they can manage course content
+### User is staff (instructor/ta) in course
+```sql
+USING (
+  EXISTS (
+    SELECT 1 FROM enrollments
+    WHERE enrollments.course_id = table.course_id
+      AND enrollments.user_id = auth.uid()
+      AND enrollments.role IN ('instructor', 'ta')
+  )
+)
+```
