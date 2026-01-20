@@ -427,10 +427,66 @@ assignments: [{
 8. **Course Home "Start Here" Module** ✅
 
 ### Production Requirements (1-2 weeks)
-9. **Supabase Backend Migration** - Real database, auth, storage
+9. **Supabase Backend Migration** - ⚠️ IN PROGRESS - See Known Issues below
 10. **Actual Email Service** - SendGrid/Resend integration
 11. **Mobile Responsive** - Touch-optimized UI
 12. **Performance Optimization** - Pagination, lazy loading
+
+---
+
+## 🚨 CRITICAL: Supabase RLS Policy Issue (UNRESOLVED)
+
+### Current State
+The application has been partially migrated to Supabase with:
+- ✅ Google OAuth authentication working (user logs in successfully)
+- ✅ Profile creation working (profile row created on first login)
+- ✅ Supabase Storage configured for file uploads
+- ❌ **Course creation FAILS silently** - hangs indefinitely
+
+### The Problem
+When a user tries to create a course, the INSERT operation hangs. The RLS policy is configured but `auth.uid()` appears to return `null` during the INSERT.
+
+### Database Configuration
+- **RLS Enabled**: Yes, on `courses` table
+- **INSERT Policy**: "Users can create courses"
+  - Command: INSERT
+  - Target: PUBLIC
+  - WITH CHECK: `(created_by = auth.uid())`
+
+### Test Case Details
+```
+User Profile Row (working):
+{
+  "id": "0ee10db1-d209-446b-9dbc-6ff4b5852de7",
+  "email": "kevincure@gmail.com",
+  "name": "Kevin Bryan",
+  "avatar": "KB",
+  "created_at": "2026-01-20 19:55:55.810781+00"
+}
+```
+
+The profile ID matches the `auth.users.id` from Supabase Auth, so OAuth is working correctly.
+
+### Likely Root Causes to Investigate
+1. **Supabase client not using authenticated session** - The client may be initialized with `anon` key but not passing the user's JWT for authenticated requests
+2. **Session not being set on Supabase client** - After Google OAuth, the session needs to be exchanged/set with Supabase
+3. **Missing `supabase.auth.setSession()`** - The Google ID token needs to be exchanged for a Supabase session
+4. **Client-side vs service role key confusion** - If using service role key, RLS is bypassed; if using anon key with user not authenticated, `auth.uid()` is null
+
+### Files to Investigate
+- `js/supabase-init.js` - How Supabase client is initialized
+- `js/data.js` or similar - How courses are created
+- `js/auth.js` or login logic - How Google OAuth token is handled with Supabase
+
+### Potential Fixes
+1. After Google OAuth success, call `supabase.auth.signInWithIdToken()` with the Google ID token
+2. Or use Supabase's built-in Google OAuth provider instead of separate Google Sign-In
+3. Ensure the Supabase client is using the authenticated session for all database operations
+
+### References
+- [Supabase Auth with Google](https://supabase.com/docs/guides/auth/social-login/auth-google)
+- [Supabase RLS Policies](https://supabase.com/docs/guides/auth/row-level-security)
+- [auth.uid() function](https://supabase.com/docs/guides/auth/row-level-security#policies)
 
 ---
 

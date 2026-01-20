@@ -120,17 +120,45 @@
 
 ## 🔧 Technical Improvements
 
-### Backend Migration (Required for Production)
-- [ ] **Supabase backend**:
-  - PostgreSQL database (courses, users, enrollments, assignments, submissions, grades)
-  - Storage bucket for file uploads
-  - Row-level security policies
-  - Realtime subscriptions
-- [ ] **Authentication**:
-  - Server-side Google OAuth verification
-  - Session management
-  - Role-based access control (RBAC)
+### Backend Migration (Required for Production) - ⚠️ IN PROGRESS
+- [x] **Supabase backend** (PARTIALLY WORKING):
+  - ✅ PostgreSQL database schema created (courses, profiles, enrollments, assignments, submissions, grades)
+  - ✅ Storage bucket configured for file uploads
+  - ⚠️ **Row-level security policies** - BLOCKING ISSUE (see below)
+  - [ ] Realtime subscriptions
+- [x] **Authentication** (PARTIALLY WORKING):
+  - ✅ Google OAuth working - users can sign in
+  - ✅ Profile creation working - `profiles` table populated on first login
+  - ⚠️ **Supabase session not linked to database operations** - `auth.uid()` returns null
+  - [ ] Role-based access control (RBAC)
 - [ ] **Email service** (SendGrid/Mailgun/Resend)
+
+### 🚨 CRITICAL BLOCKING ISSUE: RLS + auth.uid()
+
+**Symptom**: Course creation hangs indefinitely after user logs in successfully.
+
+**What's Working**:
+- Google OAuth signs user in
+- Profile row created in `profiles` table with correct `id` matching `auth.users.id`
+- User ID example: `0ee10db1-d209-446b-9dbc-6ff4b5852de7`
+
+**What's Failing**:
+- `courses` table has RLS enabled with INSERT policy: `WITH CHECK (created_by = auth.uid())`
+- When inserting a course, `auth.uid()` appears to return `null`
+- The INSERT never completes (no error, just hangs)
+
+**Root Cause Hypothesis**:
+The Supabase client is not properly authenticated. Even though Google OAuth works, the Supabase client may be using an unauthenticated/anon session for database operations, causing `auth.uid()` to return `null` and the RLS policy to block the INSERT.
+
+**Fix Required**:
+1. After Google OAuth, exchange the Google ID token for a Supabase session using `supabase.auth.signInWithIdToken({ provider: 'google', token: googleIdToken })`
+2. Or switch to Supabase's native Google OAuth flow
+3. Verify the Supabase client has an active session before database operations
+
+**Files to Check**:
+- `js/supabase-init.js` - Client initialization
+- Login/auth handling code - How Google token is processed
+- Course creation code - Whether it uses authenticated client
 
 ### Performance
 - [ ] Pagination (assignments, submissions, files)
