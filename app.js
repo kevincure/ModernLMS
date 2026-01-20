@@ -46,6 +46,74 @@ function showConfigError() {
   }
 }
 
+// Global debug function - call window.checkAuth() from browser console to verify auth state
+window.checkAuth = async function() {
+  console.log('=== Supabase Auth Debug ===');
+
+  if (!supabaseClient) {
+    console.error('Supabase client not initialized');
+    return { authenticated: false, reason: 'client not initialized' };
+  }
+
+  try {
+    // Check user
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+
+    if (userError) {
+      console.error('Error getting user:', userError);
+      return { authenticated: false, reason: 'error', error: userError };
+    }
+
+    if (!user) {
+      console.warn('⚠️ NOT AUTHENTICATED - auth.uid() will return NULL');
+      console.warn('All RLS policies requiring auth.uid() will FAIL');
+      return { authenticated: false, reason: 'no user' };
+    }
+
+    // Check session
+    const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+
+    console.log('✓ User ID:', user.id);
+    console.log('✓ Email:', user.email);
+    console.log('✓ Provider:', user.app_metadata?.provider || 'unknown');
+    console.log('✓ Role:', user.role);
+
+    if (session) {
+      const expiresAt = new Date(session.expires_at * 1000);
+      const now = new Date();
+      const minutesRemaining = Math.round((expiresAt - now) / 60000);
+      console.log('✓ Session expires:', expiresAt.toISOString(), `(${minutesRemaining} minutes remaining)`);
+      console.log('✓ Access token (first 50 chars):', session.access_token?.substring(0, 50) + '...');
+    } else {
+      console.warn('⚠️ No session found');
+    }
+
+    // Check local app state
+    console.log('---');
+    console.log('App state user:', appData.currentUser);
+
+    // Verify IDs match
+    if (appData.currentUser && appData.currentUser.id !== user.id) {
+      console.error('⚠️ ID MISMATCH! App user ID:', appData.currentUser.id, '!== Supabase user ID:', user.id);
+    }
+
+    return {
+      authenticated: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        provider: user.app_metadata?.provider
+      },
+      session: session ? {
+        expiresAt: new Date(session.expires_at * 1000).toISOString()
+      } : null
+    };
+  } catch (err) {
+    console.error('Exception checking auth:', err);
+    return { authenticated: false, reason: 'exception', error: err.message };
+  }
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Style Theme - Always use Editorial style
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -571,10 +639,62 @@ function saveData(data) {
 // SUPABASE CRUD OPERATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Debug helper to verify auth state before operations
+async function debugAuthState(operation = 'unknown') {
+  if (!supabaseClient) {
+    console.warn(`[Auth Debug - ${operation}] Supabase client not initialized`);
+    return null;
+  }
+
+  try {
+    const { data: { user }, error } = await supabaseClient.auth.getUser();
+
+    if (error) {
+      console.error(`[Auth Debug - ${operation}] Error getting user:`, error);
+      return null;
+    }
+
+    if (!user) {
+      console.warn(`[Auth Debug - ${operation}] ⚠️ NO USER - auth.uid() will be NULL`);
+      console.warn(`[Auth Debug - ${operation}] RLS policies requiring auth.uid() will FAIL`);
+      return null;
+    }
+
+    // User is authenticated
+    console.log(`[Auth Debug - ${operation}] ✓ Authenticated as:`, {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      aud: user.aud
+    });
+
+    // Also check the session
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      console.log(`[Auth Debug - ${operation}] ✓ Session valid, expires:`, new Date(session.expires_at * 1000).toISOString());
+    } else {
+      console.warn(`[Auth Debug - ${operation}] ⚠️ No session found (token may be expired)`);
+    }
+
+    return user;
+  } catch (err) {
+    console.error(`[Auth Debug - ${operation}] Exception:`, err);
+    return null;
+  }
+}
+
 // Course operations
 async function supabaseCreateCourse(course) {
   if (!supabaseClient) return null;
   console.log('[Supabase] Creating course:', course.name);
+
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createCourse');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create course: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
 
   const { data, error } = await supabaseClient.from('courses').insert({
     id: course.id,
@@ -623,6 +743,13 @@ async function supabaseUpdateCourse(course) {
 async function supabaseCreateEnrollment(enrollment) {
   if (!supabaseClient) return null;
   console.log('[Supabase] Creating enrollment:', enrollment.userId, enrollment.courseId);
+
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createEnrollment');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create enrollment: not authenticated');
+    return null;
+  }
 
   const { data, error } = await supabaseClient.from('enrollments').insert({
     user_id: enrollment.userId,
@@ -6306,8 +6433,23 @@ async function uploadFile() {
     return;
   }
 
+  // Verify auth state before attempting upload
+  const authUser = await debugAuthState('uploadFile');
+  if (!authUser) {
+    console.error('[uploadFile] Cannot upload: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return;
+  }
+
   const fileId = generateId();
   const storagePath = `courses/${activeCourseId}/${fileId}_${file.name}`;
+
+  console.log('[uploadFile] Attempting upload:', {
+    bucket: 'course-files',
+    path: storagePath,
+    userId: authUser.id,
+    fileSize: file.size
+  });
 
   showToast('Uploading file...', 'info');
 
@@ -6322,6 +6464,11 @@ async function uploadFile() {
 
     if (uploadError) {
       console.error('[uploadFile] Storage upload error:', uploadError);
+      console.error('[uploadFile] Error details:', {
+        message: uploadError.message,
+        statusCode: uploadError.statusCode,
+        error: uploadError.error
+      });
       // If storage bucket doesn't exist, just save metadata
       if (uploadError.message.includes('Bucket not found') || uploadError.statusCode === '404') {
         console.log('[uploadFile] Storage bucket not configured, saving metadata only');
@@ -6329,6 +6476,8 @@ async function uploadFile() {
         showToast('Upload failed: ' + uploadError.message, 'error');
         return;
       }
+    } else {
+      console.log('[uploadFile] ✓ Storage upload successful:', uploadData);
     }
 
     const fileData = {
