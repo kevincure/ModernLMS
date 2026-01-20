@@ -476,7 +476,8 @@ async function loadDataFromSupabase() {
       role: i.role,
       status: i.status,
       invitedBy: i.invited_by,
-      createdAt: i.created_at
+      createdAt: i.created_at,
+      sentAt: i.created_at // Alias for template compatibility
     }));
 
     // Rubrics (attach to assignments)
@@ -1509,21 +1510,105 @@ function showToast(message, type = 'info') {
 }
 
 function formatDate(dateString) {
+  if (!dateString) return 'Unknown date';
   const date = new Date(dateString);
+  if (isNaN(date.getTime())) return 'Invalid date';
+
   const now = new Date();
   const diff = now - date;
   const days = Math.floor(diff / 86400000);
-  
+
   if (days === 0) return 'Today';
   if (days === 1) return 'Yesterday';
-  if (days < 7) return `${days} days ago`;
+  if (days > 0 && days < 7) return `${days} days ago`;
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Format due dates for assignments/quizzes - handles future dates properly
+function formatDueDate(dateString) {
+  if (!dateString) return 'No due date';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return 'Invalid date';
+
+  const now = new Date();
+  // Reset both to start of day for accurate day calculation
+  const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffMs = dueDay - nowDay;
+  const days = Math.round(diffMs / 86400000);
+
+  if (days === 0) return 'Due today';
+  if (days === 1) return 'Due tomorrow';
+  if (days === -1) return 'Due yesterday';
+  if (days > 1 && days <= 14) return `Due in ${days} days`;
+  if (days < -1 && days >= -14) return `Due ${Math.abs(days)} days ago`;
+  return `Due ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 }
 
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// Helper functions for 12-hour time selector
+function getDateTimeFromSelectors(dateId, hourId, minuteId, ampmId) {
+  const dateVal = document.getElementById(dateId).value;
+  if (!dateVal) return null;
+
+  let hour = parseInt(document.getElementById(hourId).value, 10);
+  const minute = document.getElementById(minuteId).value;
+  const ampm = document.getElementById(ampmId).value;
+
+  // Convert to 24-hour format
+  if (ampm === 'PM' && hour !== 12) hour += 12;
+  if (ampm === 'AM' && hour === 12) hour = 0;
+
+  const date = new Date(dateVal + 'T' + hour.toString().padStart(2, '0') + ':' + minute + ':00');
+  return date.toISOString();
+}
+
+function setDateTimeSelectors(dateId, hourId, minuteId, ampmId, isoDateString) {
+  if (!isoDateString) {
+    document.getElementById(dateId).value = '';
+    document.getElementById(hourId).value = '11';
+    document.getElementById(minuteId).value = '59';
+    document.getElementById(ampmId).value = 'PM';
+    return;
+  }
+
+  const date = new Date(isoDateString);
+  const dateStr = date.toISOString().slice(0, 10);
+  let hours = date.getHours();
+  const minutes = date.getMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+
+  // Convert to 12-hour format
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+
+  // Round minutes to nearest 15-min interval
+  const roundedMinutes = Math.round(minutes / 15) * 15;
+  const minuteStr = (roundedMinutes === 60 ? 0 : roundedMinutes).toString().padStart(2, '0');
+
+  document.getElementById(dateId).value = dateStr;
+  document.getElementById(hourId).value = hours.toString();
+  document.getElementById(minuteId).value = minuteStr;
+  document.getElementById(ampmId).value = ampm;
+}
+
+// Format date/time for AI preview display
+function formatTimeForDisplay(isoDateString) {
+  if (!isoDateString) return 'Not set';
+  const date = new Date(isoDateString);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
 }
 
 function getInitials(name) {
@@ -2565,8 +2650,8 @@ function renderHome() {
   }
   
   const course = getCourseById(activeCourseId);
-  setText('homeTitle', course.name);
-  setText('homeSubtitle', 'Course overview');
+  setText('homeTitle', 'Home');
+  setText('homeSubtitle', ''); // Course name is already in the top bar
 
   renderStartHere(course);
   renderOnboardingChecklist(course);
@@ -2594,7 +2679,7 @@ function renderHome() {
     const html = upcoming.map(item => `
       <div style="padding:12px; border-bottom:1px solid var(--border-light);">
         <div style="font-weight:500;">${item.title}</div>
-        <div class="muted" style="font-size:0.85rem;">${item.type} · Due ${formatDate(item.dueDate)}</div>
+        <div class="muted" style="font-size:0.85rem;">${item.type} · ${formatDueDate(item.dueDate)}</div>
       </div>
     `).join('');
     setHTML('homeUpcoming', html);
@@ -3026,12 +3111,13 @@ function renderAssignments() {
         <div class="card-header">
           <div>
             <div class="card-title">${escapeHtml(a.title)} ${statusBadge} ${visibilityBadge}</div>
-            <div class="muted">Due ${formatDate(a.dueDate)} ${isPast ? '(Past due)' : ''} · ${a.points} points${a.externalUrl ? ' · 🔗 External Link' : ''}</div>
+            <div class="muted">${formatDueDate(a.dueDate)} · ${a.points} points${a.externalUrl ? ' · 🔗 External Link' : ''}</div>
           </div>
           <div style="display:flex; gap:8px;">
             ${effectiveStaff ? `
               <button class="btn btn-secondary btn-sm" onclick="viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
               <button class="btn btn-secondary btn-sm" onclick="editAssignment('${a.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
             ` : mySubmission ? `
               <button class="btn btn-secondary btn-sm" onclick="viewMySubmission('${a.id}')">View Submission</button>
             ` : a.status === 'published' && !isPast ? `
@@ -3076,7 +3162,7 @@ function renderAssignments() {
         <div class="card-header">
           <div>
             <div class="card-title">${escapeHtml(q.title)} ${statusBadge} ${visibilityBadge}</div>
-            <div class="muted">Due ${formatDate(q.dueDate)} ${isPast ? '(Past due)' : ''} · ${quizPoints} points · ${timeLimitLabel}</div>
+            <div class="muted">${formatDueDate(q.dueDate)} · ${quizPoints} points · ${timeLimitLabel}</div>
             <div class="muted" style="font-size:0.85rem;">${attemptsLabel} · ${submissionStatus}</div>
           </div>
           <div style="display:flex; gap:8px;">
@@ -3084,6 +3170,7 @@ function renderAssignments() {
               <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
               <button class="btn btn-secondary btn-sm" onclick="openQuizModal('${q.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="viewQuizDetails('${q.id}')" title="View full quiz details">👁️ Preview</button>
+              <button class="btn btn-secondary btn-sm" onclick="deleteQuiz('${q.id}')" style="color:var(--danger);">Delete</button>
             ` : latestSubmission ? `
               <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmission('${q.id}')">View Submission</button>
               ${!isPast && (!attemptsAllowed || attemptsLeft > 0) ? `<button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Retake</button>` : ''}
@@ -3188,7 +3275,7 @@ async function createAssignment() {
   const description = document.getElementById('assignmentDescription').value.trim();
   const category = document.getElementById('assignmentCategory').value;
   const points = parseInt(document.getElementById('assignmentPoints').value);
-  const dueDate = document.getElementById('assignmentDueDate').value;
+  const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
   const status = document.getElementById('assignmentStatus').value;
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
@@ -3252,7 +3339,7 @@ async function createAssignment() {
 
 function openCreateAssignmentTypeModal() {
   ensureModalsRendered();
-  // Create modal if it doesn't exist
+  // Create simple type selector modal
   if (!document.getElementById('createTypeModal')) {
     const modalHtml = `
       <div class="modal-overlay" id="createTypeModal">
@@ -3262,35 +3349,44 @@ function openCreateAssignmentTypeModal() {
             <button class="modal-close" onclick="closeModal('createTypeModal')">&times;</button>
           </div>
           <div class="modal-body">
-            <div style="display:flex; flex-direction:column; gap:8px;">
-              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='homework';">
-                <span style="font-size:1.2rem; margin-right:12px;">📝</span>
-                <span><strong>Homework</strong><br><span class="muted" style="font-size:0.85rem;">Problem sets, worksheets</span></span>
-              </button>
-              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='essay';">
-                <span style="font-size:1.2rem; margin-right:12px;">📄</span>
-                <span><strong>Essay</strong><br><span class="muted" style="font-size:0.85rem;">Papers, written assignments</span></span>
-              </button>
-              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='project';">
-                <span style="font-size:1.2rem; margin-right:12px;">🎯</span>
-                <span><strong>Project</strong><br><span class="muted" style="font-size:0.85rem;">Long-term projects, presentations</span></span>
-              </button>
-              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openQuizModal();">
-                <span style="font-size:1.2rem; margin-right:12px;">❓</span>
-                <span><strong>Quiz</strong><br><span class="muted" style="font-size:0.85rem;">Multiple choice, true/false, short answer</span></span>
-              </button>
-              <button class="btn btn-secondary" style="justify-content:flex-start; padding:16px;" onclick="closeModal('createTypeModal'); openAssignmentModal(); document.getElementById('assignmentCategory').value='exam';">
-                <span style="font-size:1.2rem; margin-right:12px;">📋</span>
-                <span><strong>Exam</strong><br><span class="muted" style="font-size:0.85rem;">Midterms, finals</span></span>
-              </button>
+            <div class="form-group">
+              <label class="form-label">What would you like to create?</label>
+              <select class="form-select" id="createTypeSelect" onchange="handleCreateTypeChange()">
+                <option value="homework">Homework</option>
+                <option value="essay">Essay</option>
+                <option value="project">Project</option>
+                <option value="exam">Exam</option>
+                <option value="quiz">Quiz</option>
+              </select>
             </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('createTypeModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="confirmCreateType()">Continue</button>
           </div>
         </div>
       </div>
     `;
     document.body.insertAdjacentHTML('beforeend', modalHtml);
   }
+  document.getElementById('createTypeSelect').value = 'homework';
   openModal('createTypeModal');
+}
+
+function handleCreateTypeChange() {
+  // Could add dynamic hints here if needed
+}
+
+function confirmCreateType() {
+  const type = document.getElementById('createTypeSelect').value;
+  closeModal('createTypeModal');
+
+  if (type === 'quiz') {
+    openQuizModal();
+  } else {
+    openAssignmentModal();
+    document.getElementById('assignmentCategory').value = type;
+  }
 }
 
 let currentEditAssignmentId = null;
@@ -3306,7 +3402,7 @@ function openAssignmentModal(assignmentId = null) {
   document.getElementById('assignmentDescription').value = assignment ? assignment.description : '';
   document.getElementById('assignmentCategory').value = assignment ? assignment.category : 'homework';
   document.getElementById('assignmentPoints').value = assignment ? assignment.points : '100';
-  document.getElementById('assignmentDueDate').value = assignment ? new Date(assignment.dueDate).toISOString().slice(0, 16) : '';
+  setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', assignment ? assignment.dueDate : null);
   document.getElementById('assignmentStatus').value = assignment ? assignment.status : 'draft';
   document.getElementById('assignmentAllowLate').checked = assignment ? assignment.allowLateSubmissions !== false : true;
   document.getElementById('assignmentLateDeduction').value = assignment ? assignment.lateDeduction || 0 : '10';
@@ -3323,7 +3419,7 @@ function resetAssignmentModal() {
   document.getElementById('assignmentDescription').value = '';
   document.getElementById('assignmentCategory').value = 'homework';
   document.getElementById('assignmentPoints').value = '100';
-  document.getElementById('assignmentDueDate').value = '';
+  setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', null);
   document.getElementById('assignmentStatus').value = 'draft';
   document.getElementById('assignmentAllowLate').checked = true;
   document.getElementById('assignmentLateDeduction').value = '10';
@@ -3348,7 +3444,7 @@ async function updateAssignment() {
   const description = document.getElementById('assignmentDescription').value.trim();
   const category = document.getElementById('assignmentCategory').value;
   const points = parseInt(document.getElementById('assignmentPoints').value);
-  const dueDate = document.getElementById('assignmentDueDate').value;
+  const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
   const status = document.getElementById('assignmentStatus').value;
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
@@ -3403,6 +3499,25 @@ async function updateAssignment() {
 
 function editAssignment(assignmentId) {
   openAssignmentModal(assignmentId);
+}
+
+function deleteAssignment(assignmentId) {
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment) return;
+
+  confirm(`Delete "${assignment.title}"? This will also delete all submissions.`, async () => {
+    // Delete from Supabase
+    const success = await supabaseDeleteAssignment(assignmentId);
+    if (!success) return;
+
+    // Update local state
+    appData.assignments = appData.assignments.filter(a => a.id !== assignmentId);
+    appData.submissions = appData.submissions.filter(s => s.assignmentId !== assignmentId);
+    saveData(appData);
+    renderAssignments();
+    renderHome();
+    showToast('Assignment deleted', 'success');
+  });
 }
 
 function submitAssignment(assignmentId) {
@@ -3838,7 +3953,7 @@ function openQuizModal(quizId = null) {
   document.getElementById('quizModalTitle').textContent = quiz ? 'Edit Quiz' : 'New Quiz';
   document.getElementById('quizTitle').value = quiz ? quiz.title : (draft?.title || '');
   document.getElementById('quizDescription').value = quiz ? quiz.description || '' : (draft?.description || '');
-  document.getElementById('quizDueDate').value = quiz ? new Date(quiz.dueDate).toISOString().slice(0, 16) : '';
+  setDateTimeSelectors('quizDueDate', 'quizDueHour', 'quizDueMinute', 'quizDueAmPm', quiz ? quiz.dueDate : null);
   document.getElementById('quizStatus').value = quiz ? quiz.status : 'draft';
   document.getElementById('quizTimeLimit').value = quiz ? quiz.timeLimit || '' : '';
   document.getElementById('quizAttempts').value = quiz ? quiz.attempts || '' : '';
@@ -3996,7 +4111,7 @@ function updateQuizPointsTotal() {
 async function saveQuiz() {
   const title = document.getElementById('quizTitle').value.trim();
   const description = document.getElementById('quizDescription').value.trim();
-  const dueDate = document.getElementById('quizDueDate').value;
+  const dueDate = getDateTimeFromSelectors('quizDueDate', 'quizDueHour', 'quizDueMinute', 'quizDueAmPm');
   const status = document.getElementById('quizStatus').value;
   const timeLimit = parseInt(document.getElementById('quizTimeLimit').value, 10) || 0;
   const attempts = parseInt(document.getElementById('quizAttempts').value, 10) || 0;
@@ -4090,6 +4205,25 @@ async function saveQuiz() {
   renderAssignments();
   renderHome();
   showToast('Quiz saved!', 'success');
+}
+
+function deleteQuiz(quizId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  if (!quiz) return;
+
+  confirm(`Delete "${quiz.title}"? This will also delete all submissions.`, async () => {
+    // Delete from Supabase
+    const success = await supabaseDeleteQuiz(quizId);
+    if (!success) return;
+
+    // Update local state
+    appData.quizzes = appData.quizzes.filter(q => q.id !== quizId);
+    appData.quizSubmissions = appData.quizSubmissions.filter(s => s.quizId !== quizId);
+    saveData(appData);
+    renderAssignments();
+    renderHome();
+    showToast('Quiz deleted', 'success');
+  });
 }
 
 function takeQuiz(quizId) {
@@ -6094,18 +6228,48 @@ async function uploadFile() {
     return;
   }
 
-  const fileData = {
-    id: generateId(),
-    courseId: activeCourseId,
-    name: file.name,
-    type: file.name.split('.').pop(),
-    size: file.size,
-    uploadedBy: appData.currentUser.id,
-    uploadedAt: new Date().toISOString()
-  };
+  if (!supabaseClient) {
+    showToast('Database not connected', 'error');
+    return;
+  }
+
+  const fileId = generateId();
+  const storagePath = `courses/${activeCourseId}/${fileId}_${file.name}`;
+
+  showToast('Uploading file...', 'info');
 
   try {
-    // Save to Supabase
+    // Upload file to Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabaseClient.storage
+      .from('course-files')
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+
+    if (uploadError) {
+      console.error('[uploadFile] Storage upload error:', uploadError);
+      // If storage bucket doesn't exist, just save metadata
+      if (uploadError.message.includes('Bucket not found') || uploadError.statusCode === '404') {
+        console.log('[uploadFile] Storage bucket not configured, saving metadata only');
+      } else {
+        showToast('Upload failed: ' + uploadError.message, 'error');
+        return;
+      }
+    }
+
+    const fileData = {
+      id: fileId,
+      courseId: activeCourseId,
+      name: file.name,
+      type: file.name.split('.').pop(),
+      size: file.size,
+      storagePath: uploadData?.path || storagePath,
+      uploadedBy: appData.currentUser.id,
+      uploadedAt: new Date().toISOString()
+    };
+
+    // Save metadata to Supabase
     const result = await supabaseCreateFile(fileData);
     if (!result) {
       return; // Error already shown
@@ -6968,12 +7132,12 @@ function updateAiActionField(idx, field, value) {
   msg.data[field] = value;
 }
 
-function confirmAiAction(idx, publish = false) {
+async function confirmAiAction(idx, publish = false) {
   const msg = aiThread[idx];
   if (!msg || msg.role !== 'action') return;
 
   if (msg.actionType === 'announcement') {
-    appData.announcements.push({
+    const announcement = {
       id: generateId(),
       courseId: activeCourseId,
       title: msg.data.title,
@@ -6982,7 +7146,16 @@ function confirmAiAction(idx, publish = false) {
       hidden: !publish,
       authorId: appData.currentUser.id,
       createdAt: new Date().toISOString()
-    });
+    };
+
+    // Save to Supabase
+    const result = await supabaseCreateAnnouncement(announcement);
+    if (!result) {
+      showToast('Failed to save announcement to database', 'error');
+      return;
+    }
+
+    appData.announcements.push(announcement);
     msg.wasPublished = publish;
     saveData(appData);
     renderUpdates();
@@ -7004,6 +7177,14 @@ function confirmAiAction(idx, publish = false) {
       questionSelectCount: 0,
       questions: msg.data.questions || []
     };
+
+    // Save to Supabase
+    const result = await supabaseCreateQuiz(newQuiz);
+    if (!result) {
+      showToast('Failed to save quiz to database', 'error');
+      return;
+    }
+
     appData.quizzes.push(newQuiz);
     saveData(appData);
     renderAssignments();
@@ -7023,6 +7204,14 @@ function confirmAiAction(idx, publish = false) {
       lateDeduction: 0,
       allowResubmission: false
     };
+
+    // Save to Supabase
+    const result = await supabaseCreateAssignment(newAssignment);
+    if (!result) {
+      showToast('Failed to save assignment to database', 'error');
+      return;
+    }
+
     appData.assignments.push(newAssignment);
     saveData(appData);
     renderAssignments();
@@ -7039,6 +7228,14 @@ function confirmAiAction(idx, publish = false) {
       position: maxPosition,
       items: []
     };
+
+    // Save to Supabase
+    const result = await supabaseCreateModule(newModule);
+    if (!result) {
+      showToast('Failed to save module to database', 'error');
+      return;
+    }
+
     appData.modules.push(newModule);
     saveData(appData);
     renderModules();
@@ -7904,7 +8101,34 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
           </div>
           <div class="form-group">
             <label class="form-label">Due Date</label>
-            <input type="datetime-local" class="form-input" id="assignmentDueDate">
+            <input type="date" class="form-input" id="assignmentDueDate" style="margin-bottom:8px;">
+            <div style="display:flex; gap:8px; align-items:center;">
+              <select class="form-select" id="assignmentDueHour" style="width:auto;">
+                <option value="12">12</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+                <option value="11">11</option>
+              </select>
+              <span>:</span>
+              <select class="form-select" id="assignmentDueMinute" style="width:auto;">
+                <option value="00">00</option>
+                <option value="15">15</option>
+                <option value="30">30</option>
+                <option value="45">45</option>
+              </select>
+              <select class="form-select" id="assignmentDueAmPm" style="width:auto;">
+                <option value="AM">AM</option>
+                <option value="PM">PM</option>
+              </select>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">Status</label>
@@ -7957,7 +8181,34 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
           <div class="form-grid">
             <div class="form-group">
               <label class="form-label">Due Date</label>
-              <input type="datetime-local" class="form-input" id="quizDueDate">
+              <input type="date" class="form-input" id="quizDueDate" style="margin-bottom:8px;">
+              <div style="display:flex; gap:8px; align-items:center;">
+                <select class="form-select" id="quizDueHour" style="width:auto;">
+                  <option value="12">12</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                  <option value="9">9</option>
+                  <option value="10">10</option>
+                  <option value="11">11</option>
+                </select>
+                <span>:</span>
+                <select class="form-select" id="quizDueMinute" style="width:auto;">
+                  <option value="00">00</option>
+                  <option value="15">15</option>
+                  <option value="30">30</option>
+                  <option value="45">45</option>
+                </select>
+                <select class="form-select" id="quizDueAmPm" style="width:auto;">
+                  <option value="AM">AM</option>
+                  <option value="PM">PM</option>
+                </select>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label">Status</label>
