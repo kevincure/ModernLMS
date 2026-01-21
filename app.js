@@ -660,16 +660,18 @@ async function debugAuthState(operation = 'unknown') {
   }
 
   try {
-    const { data: { user }, error } = await supabaseClient.auth.getUser();
+    // Use getSession() instead of getUser() - getSession() reads from local cache
+    // while getUser() makes a network call that can hang during auth state changes
+    const { data: { session }, error } = await supabaseClient.auth.getSession();
 
     if (error) {
-      console.error(`[Auth Debug - ${operation}] Error getting user:`, error);
+      console.error(`[Auth Debug - ${operation}] Error getting session:`, error);
       return null;
     }
 
+    const user = session?.user;
     if (!user) {
-      console.warn(`[Auth Debug - ${operation}] ⚠️ NO USER - auth.uid() will be NULL`);
-      console.warn(`[Auth Debug - ${operation}] RLS policies requiring auth.uid() will FAIL`);
+      console.warn(`[Auth Debug - ${operation}] ⚠️ NO SESSION/USER - auth.uid() will be NULL`);
       return null;
     }
 
@@ -681,13 +683,7 @@ async function debugAuthState(operation = 'unknown') {
       aud: user.aud
     });
 
-    // Also check the session
-    const { data: { session } } = await supabaseClient.auth.getSession();
-    if (session) {
-      console.log(`[Auth Debug - ${operation}] ✓ Session valid, expires:`, new Date(session.expires_at * 1000).toISOString());
-    } else {
-      console.warn(`[Auth Debug - ${operation}] ⚠️ No session found (token may be expired)`);
-    }
+    console.log(`[Auth Debug - ${operation}] ✓ Session expires:`, new Date(session.expires_at * 1000).toISOString());
 
     return user;
   } catch (err) {
@@ -2402,44 +2398,70 @@ async function signInWithGoogle() {
 async function handleAuthStateChange(event, session) {
   console.log('[Auth] Auth state changed:', event, session?.user?.email);
 
-  if (event === 'SIGNED_IN' && session?.user) {
+  if (event === 'INITIAL_SESSION') {
+    // This fires on page load - either user has session or not
+    if (session?.user) {
+      await handleSignedIn(session.user);
+    } else {
+      console.log('[Auth] No existing session on load');
+      showLoginScreen();
+    }
+  } else if (event === 'SIGNED_IN' && session?.user) {
+    // This fires after OAuth redirect or token refresh
+    // The idempotent guard in handleSignedIn will prevent duplicate bootstraps
     await handleSignedIn(session.user);
   } else if (event === 'SIGNED_OUT') {
     handleSignedOut();
-  } else if (event === 'INITIAL_SESSION' && session?.user) {
-    // User was already signed in (page refresh)
-    await handleSignedIn(session.user);
   }
 }
 
+// Guard variables to prevent duplicate bootstrap from multiple auth events
+let bootstrappingUserId = null;
+let bootstrappingPromise = null;
+
 // Handle successful sign-in
 async function handleSignedIn(user) {
-  console.log('[Auth] User signed in:', user.email);
-
-  // Map Supabase user to app user format
-  appData.currentUser = {
-    id: user.id,
-    email: user.email,
-    name: user.user_metadata?.full_name || user.email.split('@')[0],
-    avatar: getInitials(user.user_metadata?.full_name || user.email)
-  };
-
-  console.log('[Auth] Current user set:', appData.currentUser);
-
-  // Load data from Supabase
-  await loadDataFromSupabase();
-
-  // Load user's Gemini key from Supabase profile
-  const userGeminiKey = await supabaseLoadUserGeminiKey(user.id);
-  if (userGeminiKey) {
-    console.log('[Auth] Loaded Gemini key from user profile');
-    appData.settings.geminiKey = userGeminiKey;
-    // Set on window for immediate use (takes priority over config.js)
-    window.GEMINI_API_KEY = userGeminiKey;
+  // Prevent duplicate bootstraps (e.g., SIGNED_IN firing during token refresh)
+  if (bootstrappingUserId === user.id && bootstrappingPromise) {
+    console.log('[Auth] Bootstrap already in progress for user, waiting...');
+    return await bootstrappingPromise;
   }
 
-  // Initialize the app UI
-  initApp();
+  console.log('[Auth] User signed in:', user.email);
+
+  bootstrappingUserId = user.id;
+  bootstrappingPromise = (async () => {
+    // Map Supabase user to app user format
+    appData.currentUser = {
+      id: user.id,
+      email: user.email,
+      name: user.user_metadata?.full_name || user.email.split('@')[0],
+      avatar: getInitials(user.user_metadata?.full_name || user.email)
+    };
+
+    console.log('[Auth] Current user set:', appData.currentUser);
+
+    // Load data from Supabase
+    await loadDataFromSupabase();
+
+    // Load user's Gemini key from Supabase profile
+    const userGeminiKey = await supabaseLoadUserGeminiKey(user.id);
+    if (userGeminiKey) {
+      console.log('[Auth] Loaded Gemini key from user profile');
+      appData.settings.geminiKey = userGeminiKey;
+      // Set on window for immediate use (takes priority over config.js)
+      window.GEMINI_API_KEY = userGeminiKey;
+    }
+
+    // Initialize the app UI
+    initApp();
+  })();
+
+  try {
+    await bootstrappingPromise;
+  } finally {
+    bootstrappingPromise = null;
+  }
 }
 
 // Handle sign-out
@@ -11924,11 +11946,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // Listen for auth state changes
+  // Listen for auth state changes (handles INITIAL_SESSION on page refresh and SIGNED_IN after OAuth)
   supabaseClient.auth.onAuthStateChange(handleAuthStateChange);
 
-  // Check for existing session (handles page refresh and OAuth redirect)
-  await checkExistingSession();
+  // NOTE: We rely on onAuthStateChange with INITIAL_SESSION instead of checkExistingSession()
+  // to avoid double-bootstrap race conditions
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
