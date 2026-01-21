@@ -1553,6 +1553,81 @@ async function supabaseUpdateFile(file) {
   return data;
 }
 
+// Question Bank operations
+async function supabaseCreateQuestionBank(bank) {
+  if (!supabaseClient) {
+    console.log('[Supabase] Storing question bank locally only');
+    return bank;
+  }
+  console.log('[Supabase] Creating question bank:', bank.name);
+
+  const authUser = await debugAuthState('createQuestionBank');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create question bank: not authenticated');
+    return bank; // Return local copy
+  }
+
+  const { data, error } = await supabaseClient.from('question_banks').insert({
+    id: bank.id,
+    course_id: bank.courseId,
+    name: bank.name,
+    description: bank.description || null,
+    questions: JSON.stringify(bank.questions || []),
+    created_by: appData.currentUser?.id
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating question bank:', error);
+    // Continue with local storage
+    return bank;
+  }
+  console.log('[Supabase] Question bank created successfully');
+  return data;
+}
+
+async function supabaseUpdateQuestionBank(bank) {
+  if (!supabaseClient) {
+    console.log('[Supabase] Updating question bank locally only');
+    return bank;
+  }
+  console.log('[Supabase] Updating question bank:', bank.id);
+
+  const authUser = await debugAuthState('updateQuestionBank');
+  if (!authUser) {
+    return bank;
+  }
+
+  const { data, error } = await supabaseClient.from('question_banks').update({
+    name: bank.name,
+    description: bank.description,
+    questions: JSON.stringify(bank.questions || [])
+  }).eq('id', bank.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating question bank:', error);
+    return bank;
+  }
+  return data;
+}
+
+async function supabaseDeleteQuestionBank(bankId) {
+  if (!supabaseClient) {
+    return true;
+  }
+  console.log('[Supabase] Deleting question bank:', bankId);
+
+  const authUser = await debugAuthState('deleteQuestionBank');
+  if (!authUser) {
+    return true;
+  }
+
+  const { error } = await supabaseClient.from('question_banks').delete().eq('id', bankId);
+  if (error) {
+    console.error('[Supabase] Error deleting question bank:', error);
+  }
+  return true;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3665,7 +3740,8 @@ function renderAssignments() {
   
   if (isStaffUser && !studentViewMode) {
     setHTML('assignmentsActions', `
-      <button class="btn btn-primary" onclick="openCreateAssignmentTypeModal()">+ Create</button>
+      <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
+      <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
     `);
   } else {
     setHTML('assignmentsActions', '');
@@ -4116,6 +4192,619 @@ function deleteAssignment(assignmentId) {
     renderHome();
     showToast('Assignment deleted', 'success');
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUESTION BANK MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let currentEditQuestionBankId = null;
+let questionBankDraftQuestions = [];
+
+function openQuestionBankModal() {
+  ensureModalsRendered();
+  renderQuestionBankList();
+  openModal('questionBankModal');
+}
+
+function renderQuestionBankList() {
+  const banks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
+
+  let html = '';
+  if (banks.length === 0) {
+    html = '<div style="text-align:center; padding:40px; color:var(--text-secondary);">No question banks yet. Create one to get started.</div>';
+  } else {
+    html = '<div style="display:flex; flex-direction:column; gap:12px;">';
+    banks.forEach(bank => {
+      const questionCount = (bank.questions || []).length;
+      html += `
+        <div class="card" style="padding:16px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600;">${escapeHtml(bank.name)}</div>
+            <div style="font-size:0.875rem; color:var(--text-secondary);">${questionCount} question${questionCount !== 1 ? 's' : ''}${bank.description ? ' · ' + escapeHtml(bank.description) : ''}</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="editQuestionBank('${bank.id}')">Edit</button>
+            <button class="btn btn-secondary btn-sm" onclick="deleteQuestionBank('${bank.id}')">Delete</button>
+          </div>
+        </div>
+      `;
+    });
+    html += '</div>';
+  }
+
+  setHTML('questionBankModalBody', html);
+}
+
+function openCreateQuestionBankForm() {
+  currentEditQuestionBankId = null;
+  questionBankDraftQuestions = [];
+
+  document.getElementById('questionBankEditTitle').textContent = 'New Question Bank';
+  document.getElementById('questionBankName').value = '';
+  document.getElementById('questionBankDescription').value = '';
+  document.getElementById('questionBankSaveBtn').textContent = 'Create Bank';
+
+  renderQuestionBankQuestions();
+  closeModal('questionBankModal');
+  openModal('questionBankEditModal');
+}
+
+function editQuestionBank(bankId) {
+  const bank = appData.questionBanks.find(b => b.id === bankId);
+  if (!bank) return;
+
+  currentEditQuestionBankId = bankId;
+  questionBankDraftQuestions = JSON.parse(JSON.stringify(bank.questions || []));
+
+  document.getElementById('questionBankEditTitle').textContent = 'Edit Question Bank';
+  document.getElementById('questionBankName').value = bank.name;
+  document.getElementById('questionBankDescription').value = bank.description || '';
+  document.getElementById('questionBankSaveBtn').textContent = 'Save Changes';
+
+  renderQuestionBankQuestions();
+  closeModal('questionBankModal');
+  openModal('questionBankEditModal');
+}
+
+function deleteQuestionBank(bankId) {
+  const bank = appData.questionBanks.find(b => b.id === bankId);
+  if (!bank) return;
+
+  confirm(`Delete "${bank.name}"? This cannot be undone.`, async () => {
+    await supabaseDeleteQuestionBank(bankId);
+    appData.questionBanks = appData.questionBanks.filter(b => b.id !== bankId);
+    saveData(appData);
+    renderQuestionBankList();
+    showToast('Question bank deleted', 'success');
+  });
+}
+
+function renderQuestionBankQuestions() {
+  const container = document.getElementById('questionBankQuestionsContainer');
+  if (!container) return;
+
+  if (questionBankDraftQuestions.length === 0) {
+    container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-secondary); border:1px dashed var(--border); border-radius:var(--radius);">No questions yet. Click "Add Question" to create one.</div>';
+    return;
+  }
+
+  let html = '';
+  questionBankDraftQuestions.forEach((q, index) => {
+    const typeLabel = q.type === 'true_false' ? 'True/False' : q.type === 'multiple_choice' ? 'Multiple Choice' : 'Written/Rubric';
+    html += `
+      <div class="card" style="padding:12px; margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+          <div>
+            <span style="font-size:0.75rem; background:var(--primary-light); color:var(--primary); padding:2px 8px; border-radius:999px;">${typeLabel}</span>
+            <span style="margin-left:8px; font-weight:500;">${q.points || 1} pt${(q.points || 1) !== 1 ? 's' : ''}</span>
+          </div>
+          <div style="display:flex; gap:4px;">
+            <button class="btn btn-secondary btn-sm" onclick="editQuestionInBank(${index})">Edit</button>
+            <button class="btn btn-secondary btn-sm" onclick="removeQuestionFromBank(${index})">Remove</button>
+          </div>
+        </div>
+        <div style="font-size:0.9rem;">${escapeHtml(q.prompt || q.question || 'No question text')}</div>
+        ${q.type === 'multiple_choice' && q.options ? `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Options: ${q.options.length}, Correct: ${q.correctAnswer || 'Not set'}</div>` : ''}
+        ${q.type === 'true_false' ? `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Correct: ${q.correctAnswer === true || q.correctAnswer === 'true' ? 'True' : 'False'}</div>` : ''}
+        ${q.gradingNotes ? `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Grading notes: ${escapeHtml(q.gradingNotes.substring(0, 50))}${q.gradingNotes.length > 50 ? '...' : ''}</div>` : ''}
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function addQuestionToBankForm() {
+  const newQuestion = {
+    id: generateId(),
+    type: 'multiple_choice',
+    prompt: '',
+    options: ['', '', '', ''],
+    correctAnswer: 0,
+    points: 1,
+    introNotes: '',
+    gradingNotes: ''
+  };
+  questionBankDraftQuestions.push(newQuestion);
+  openQuestionEditor(questionBankDraftQuestions.length - 1);
+}
+
+function editQuestionInBank(index) {
+  openQuestionEditor(index);
+}
+
+function removeQuestionFromBank(index) {
+  questionBankDraftQuestions.splice(index, 1);
+  renderQuestionBankQuestions();
+}
+
+let currentEditQuestionIndex = null;
+
+function openQuestionEditor(index) {
+  currentEditQuestionIndex = index;
+  const question = questionBankDraftQuestions[index];
+
+  // Build a simple inline editor form
+  const container = document.getElementById('questionBankQuestionsContainer');
+
+  let optionsHtml = '';
+  if (question.type === 'multiple_choice') {
+    const options = question.options || ['', '', '', ''];
+    optionsHtml = `
+      <div class="form-group">
+        <label class="form-label">Answer Options</label>
+        ${options.map((opt, i) => `
+          <div style="display:flex; gap:8px; margin-bottom:4px; align-items:center;">
+            <input type="radio" name="correctAnswer" value="${i}" ${question.correctAnswer === i ? 'checked' : ''}>
+            <input type="text" class="form-input" id="questionOption${i}" value="${escapeHtml(opt)}" placeholder="Option ${i + 1}">
+            ${i >= 2 ? `<button class="btn btn-secondary btn-sm" onclick="removeQuestionOption(${i})">×</button>` : ''}
+          </div>
+        `).join('')}
+        <button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="addQuestionOption()">+ Add Option</button>
+        <div class="hint" style="margin-top:4px;">Select the radio button next to the correct answer</div>
+      </div>
+    `;
+  } else if (question.type === 'true_false') {
+    optionsHtml = `
+      <div class="form-group">
+        <label class="form-label">Correct Answer</label>
+        <select class="form-select" id="questionCorrectTF">
+          <option value="true" ${question.correctAnswer === true || question.correctAnswer === 'true' ? 'selected' : ''}>True</option>
+          <option value="false" ${question.correctAnswer === false || question.correctAnswer === 'false' ? 'selected' : ''}>False</option>
+        </select>
+      </div>
+    `;
+  } else {
+    // Written/rubric type
+    optionsHtml = `
+      <div class="form-group">
+        <label class="form-label">Rubric / Grading Criteria</label>
+        <textarea class="form-textarea" id="questionRubric" rows="3" placeholder="Describe how this question should be graded...">${escapeHtml(question.rubric || '')}</textarea>
+      </div>
+    `;
+  }
+
+  container.innerHTML = `
+    <div class="card" style="padding:16px; background:var(--surface);">
+      <h4 style="margin-bottom:12px;">Edit Question</h4>
+      <div class="form-group">
+        <label class="form-label">Question Type</label>
+        <select class="form-select" id="questionType" onchange="changeQuestionType()">
+          <option value="multiple_choice" ${question.type === 'multiple_choice' ? 'selected' : ''}>Multiple Choice</option>
+          <option value="true_false" ${question.type === 'true_false' ? 'selected' : ''}>True/False</option>
+          <option value="written" ${question.type === 'written' ? 'selected' : ''}>Written/Rubric</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Question Text</label>
+        <textarea class="form-textarea" id="questionPrompt" rows="2" placeholder="Enter the question...">${escapeHtml(question.prompt || question.question || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Points</label>
+        <input type="number" class="form-input" id="questionPoints" value="${question.points || 1}" min="1" style="width:100px;">
+      </div>
+      <div id="questionTypeSpecificFields">
+        ${optionsHtml}
+      </div>
+      <div class="form-group">
+        <label class="form-label">Intro Notes (shown to students)</label>
+        <textarea class="form-textarea" id="questionIntroNotes" rows="2" placeholder="Optional context or hints for students...">${escapeHtml(question.introNotes || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Grading Notes (private - for instructors only)</label>
+        <textarea class="form-textarea" id="questionGradingNotes" rows="2" placeholder="Notes for graders...">${escapeHtml(question.gradingNotes || '')}</textarea>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-secondary" onclick="cancelQuestionEdit()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveQuestionEdit()">Save Question</button>
+      </div>
+    </div>
+  `;
+}
+
+function changeQuestionType() {
+  const type = document.getElementById('questionType').value;
+  questionBankDraftQuestions[currentEditQuestionIndex].type = type;
+
+  // Reset type-specific fields
+  if (type === 'multiple_choice') {
+    questionBankDraftQuestions[currentEditQuestionIndex].options = ['', '', '', ''];
+    questionBankDraftQuestions[currentEditQuestionIndex].correctAnswer = 0;
+  } else if (type === 'true_false') {
+    questionBankDraftQuestions[currentEditQuestionIndex].correctAnswer = true;
+  }
+
+  openQuestionEditor(currentEditQuestionIndex);
+}
+
+function addQuestionOption() {
+  const question = questionBankDraftQuestions[currentEditQuestionIndex];
+  if (!question.options) question.options = [];
+
+  // Save current values first
+  const currentOptions = [];
+  let i = 0;
+  while (document.getElementById(`questionOption${i}`)) {
+    currentOptions.push(document.getElementById(`questionOption${i}`).value);
+    i++;
+  }
+  question.options = currentOptions;
+  question.options.push('');
+
+  // Get selected correct answer
+  const selected = document.querySelector('input[name="correctAnswer"]:checked');
+  if (selected) question.correctAnswer = parseInt(selected.value);
+
+  openQuestionEditor(currentEditQuestionIndex);
+}
+
+function removeQuestionOption(index) {
+  const question = questionBankDraftQuestions[currentEditQuestionIndex];
+
+  // Save current values first
+  const currentOptions = [];
+  let i = 0;
+  while (document.getElementById(`questionOption${i}`)) {
+    currentOptions.push(document.getElementById(`questionOption${i}`).value);
+    i++;
+  }
+  question.options = currentOptions;
+  question.options.splice(index, 1);
+
+  // Adjust correct answer if needed
+  if (question.correctAnswer >= question.options.length) {
+    question.correctAnswer = question.options.length - 1;
+  }
+
+  openQuestionEditor(currentEditQuestionIndex);
+}
+
+function cancelQuestionEdit() {
+  // If it was a new question with no content, remove it
+  const question = questionBankDraftQuestions[currentEditQuestionIndex];
+  if (!question.prompt && !question.question) {
+    questionBankDraftQuestions.splice(currentEditQuestionIndex, 1);
+  }
+  currentEditQuestionIndex = null;
+  renderQuestionBankQuestions();
+}
+
+function saveQuestionEdit() {
+  const question = questionBankDraftQuestions[currentEditQuestionIndex];
+
+  question.prompt = document.getElementById('questionPrompt').value.trim();
+  question.points = parseInt(document.getElementById('questionPoints').value) || 1;
+  question.introNotes = document.getElementById('questionIntroNotes').value.trim();
+  question.gradingNotes = document.getElementById('questionGradingNotes').value.trim();
+
+  if (question.type === 'multiple_choice') {
+    const options = [];
+    let i = 0;
+    while (document.getElementById(`questionOption${i}`)) {
+      options.push(document.getElementById(`questionOption${i}`).value);
+      i++;
+    }
+    question.options = options;
+    const selected = document.querySelector('input[name="correctAnswer"]:checked');
+    question.correctAnswer = selected ? parseInt(selected.value) : 0;
+  } else if (question.type === 'true_false') {
+    question.correctAnswer = document.getElementById('questionCorrectTF').value === 'true';
+  } else if (question.type === 'written') {
+    question.rubric = document.getElementById('questionRubric').value.trim();
+  }
+
+  if (!question.prompt) {
+    showToast('Please enter question text', 'error');
+    return;
+  }
+
+  currentEditQuestionIndex = null;
+  renderQuestionBankQuestions();
+}
+
+async function saveQuestionBank() {
+  const name = document.getElementById('questionBankName').value.trim();
+  const description = document.getElementById('questionBankDescription').value.trim();
+
+  if (!name) {
+    showToast('Please enter a bank name', 'error');
+    return;
+  }
+
+  if (currentEditQuestionBankId) {
+    // Update existing bank
+    const bank = appData.questionBanks.find(b => b.id === currentEditQuestionBankId);
+    if (bank) {
+      bank.name = name;
+      bank.description = description;
+      bank.questions = questionBankDraftQuestions;
+      await supabaseUpdateQuestionBank(bank);
+    }
+  } else {
+    // Create new bank
+    const newBank = {
+      id: generateId(),
+      courseId: activeCourseId,
+      name: name,
+      description: description,
+      questions: questionBankDraftQuestions,
+      createdAt: new Date().toISOString()
+    };
+    appData.questionBanks.push(newBank);
+    await supabaseCreateQuestionBank(newBank);
+  }
+
+  saveData(appData);
+  closeModal('questionBankEditModal');
+  showToast(currentEditQuestionBankId ? 'Question bank updated' : 'Question bank created', 'success');
+
+  // Refresh the list if returning to it
+  currentEditQuestionBankId = null;
+  questionBankDraftQuestions = [];
+  openQuestionBankModal();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEW ASSIGNMENT MODAL (with type dropdown)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let currentNewAssignmentEditId = null;
+
+function openNewAssignmentModal(assignmentId = null) {
+  ensureModalsRendered();
+  currentNewAssignmentEditId = assignmentId;
+
+  // Populate question bank dropdown
+  populateQuestionBankDropdown();
+
+  if (assignmentId) {
+    // Editing existing assignment
+    const assignment = appData.assignments.find(a => a.id === assignmentId);
+    if (!assignment) return;
+
+    document.getElementById('newAssignmentModalTitle').textContent = 'Edit Assignment';
+    document.getElementById('newAssignmentSubmitBtn').textContent = 'Save Changes';
+    document.getElementById('newAssignmentType').value = assignment.category || 'essay';
+    document.getElementById('newAssignmentTitle').value = assignment.title || '';
+    document.getElementById('newAssignmentDescription').value = assignment.description || '';
+    document.getElementById('newAssignmentIntroNotes').value = assignment.introNotes || '';
+    document.getElementById('newAssignmentPoints').value = assignment.points || 100;
+    document.getElementById('newAssignmentStatus').value = assignment.status || 'draft';
+    document.getElementById('newAssignmentAllowLate').checked = assignment.allowLateSubmissions !== false;
+    document.getElementById('newAssignmentLatePenaltyType').value = assignment.latePenaltyType || 'per_day';
+    document.getElementById('newAssignmentLatePenalty').value = assignment.lateDeduction || 10;
+    document.getElementById('newAssignmentGradingNotes').value = assignment.gradingNotes || '';
+    document.getElementById('newAssignmentAllowResubmit').checked = assignment.allowResubmission !== false;
+
+    // Question bank settings
+    if (assignment.questionBankId) {
+      document.getElementById('newAssignmentQuestionBank').value = assignment.questionBankId;
+    }
+    document.getElementById('newAssignmentNumQuestions').value = assignment.numQuestions || '';
+    document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions !== false;
+    document.getElementById('newAssignmentRandomizeAnswers').checked = assignment.randomizeAnswers !== false;
+
+    // Dates
+    if (assignment.availableFrom) {
+      document.getElementById('newAssignmentAvailableFrom').value = assignment.availableFrom.split('T')[0];
+    }
+    if (assignment.availableUntil) {
+      document.getElementById('newAssignmentAvailableUntil').value = assignment.availableUntil.split('T')[0];
+    }
+    setDateTimeSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm', assignment.dueDate);
+
+    handleNewAssignmentTypeChange();
+  } else {
+    resetNewAssignmentModal();
+  }
+
+  openModal('newAssignmentModal');
+}
+
+function resetNewAssignmentModal() {
+  currentNewAssignmentEditId = null;
+  document.getElementById('newAssignmentModalTitle').textContent = 'New Assignment';
+  document.getElementById('newAssignmentSubmitBtn').textContent = 'Create Assignment';
+  document.getElementById('newAssignmentType').value = 'essay';
+  document.getElementById('newAssignmentTitle').value = '';
+  document.getElementById('newAssignmentDescription').value = '';
+  document.getElementById('newAssignmentIntroNotes').value = '';
+  document.getElementById('newAssignmentPoints').value = '100';
+  document.getElementById('newAssignmentAvailableFrom').value = '';
+  document.getElementById('newAssignmentAvailableUntil').value = '';
+  setDateTimeSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm', null);
+  document.getElementById('newAssignmentStatus').value = 'draft';
+  document.getElementById('newAssignmentAllowLate').checked = true;
+  document.getElementById('newAssignmentLatePenaltyType').value = 'per_day';
+  document.getElementById('newAssignmentLatePenalty').value = '10';
+  document.getElementById('newAssignmentGradingNotes').value = '';
+  document.getElementById('newAssignmentAllowResubmit').checked = true;
+  document.getElementById('newAssignmentQuestionBank').value = '';
+  document.getElementById('newAssignmentNumQuestions').value = '';
+  document.getElementById('newAssignmentRandomizeQuestions').checked = true;
+  document.getElementById('newAssignmentRandomizeAnswers').checked = true;
+
+  handleNewAssignmentTypeChange();
+}
+
+function populateQuestionBankDropdown() {
+  const banks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
+  const select = document.getElementById('newAssignmentQuestionBank');
+  if (!select) return;
+
+  let html = '<option value="">-- Select a question bank --</option>';
+  banks.forEach(bank => {
+    const count = (bank.questions || []).length;
+    html += `<option value="${bank.id}">${escapeHtml(bank.name)} (${count} questions)</option>`;
+  });
+  select.innerHTML = html;
+}
+
+function handleNewAssignmentTypeChange() {
+  const type = document.getElementById('newAssignmentType').value;
+  const questionBankSection = document.getElementById('questionBankSection');
+
+  if (type === 'quiz' || type === 'exam') {
+    questionBankSection.style.display = 'block';
+  } else {
+    questionBankSection.style.display = 'none';
+  }
+}
+
+async function saveNewAssignment() {
+  const type = document.getElementById('newAssignmentType').value;
+  const title = document.getElementById('newAssignmentTitle').value.trim();
+  const description = document.getElementById('newAssignmentDescription').value.trim();
+  const introNotes = document.getElementById('newAssignmentIntroNotes').value.trim();
+  const points = parseInt(document.getElementById('newAssignmentPoints').value) || 100;
+  const availableFrom = document.getElementById('newAssignmentAvailableFrom').value;
+  const availableUntil = document.getElementById('newAssignmentAvailableUntil').value;
+  const dueDate = getDateTimeFromSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm');
+  const status = document.getElementById('newAssignmentStatus').value;
+  const allowLate = document.getElementById('newAssignmentAllowLate').checked;
+  const latePenaltyType = document.getElementById('newAssignmentLatePenaltyType').value;
+  const latePenalty = parseInt(document.getElementById('newAssignmentLatePenalty').value) || 0;
+  const gradingNotes = document.getElementById('newAssignmentGradingNotes').value.trim();
+  const allowResubmit = document.getElementById('newAssignmentAllowResubmit').checked;
+
+  // Quiz/Exam specific
+  let questionBankId = null;
+  let numQuestions = null;
+  let randomizeQuestions = true;
+  let randomizeAnswers = true;
+
+  if (type === 'quiz' || type === 'exam') {
+    questionBankId = document.getElementById('newAssignmentQuestionBank').value;
+    numQuestions = parseInt(document.getElementById('newAssignmentNumQuestions').value) || 0;
+    randomizeQuestions = document.getElementById('newAssignmentRandomizeQuestions').checked;
+    randomizeAnswers = document.getElementById('newAssignmentRandomizeAnswers').checked;
+
+    if (!questionBankId) {
+      showToast('Please select a question bank for quiz/exam', 'error');
+      return;
+    }
+  }
+
+  if (!title) {
+    showToast('Please enter a title', 'error');
+    return;
+  }
+
+  if (!dueDate) {
+    showToast('Please set a due date', 'error');
+    return;
+  }
+
+  if (currentNewAssignmentEditId) {
+    // Update existing assignment
+    const assignment = appData.assignments.find(a => a.id === currentNewAssignmentEditId);
+    if (!assignment) return;
+
+    const original = { ...assignment };
+
+    assignment.title = title;
+    assignment.description = description;
+    assignment.category = type;
+    assignment.introNotes = introNotes;
+    assignment.points = points;
+    assignment.availableFrom = availableFrom ? new Date(availableFrom).toISOString() : null;
+    assignment.availableUntil = availableUntil ? new Date(availableUntil).toISOString() : null;
+    assignment.dueDate = new Date(dueDate).toISOString();
+    assignment.status = status;
+    assignment.allowLateSubmissions = allowLate;
+    assignment.latePenaltyType = latePenaltyType;
+    assignment.lateDeduction = latePenalty;
+    assignment.gradingNotes = gradingNotes;
+    assignment.allowResubmission = allowResubmit;
+    assignment.questionBankId = questionBankId;
+    assignment.numQuestions = numQuestions;
+    assignment.randomizeQuestions = randomizeQuestions;
+    assignment.randomizeAnswers = randomizeAnswers;
+
+    const result = await supabaseUpdateAssignment(assignment);
+    if (!result) {
+      Object.assign(assignment, original);
+      return;
+    }
+
+    saveData(appData);
+    closeModal('newAssignmentModal');
+    resetNewAssignmentModal();
+    renderAssignments();
+    renderHome();
+    showToast('Assignment updated!', 'success');
+  } else {
+    // Create new assignment
+    const newAssignment = {
+      id: generateId(),
+      courseId: activeCourseId,
+      title: title,
+      description: description,
+      category: type,
+      introNotes: introNotes,
+      points: points,
+      availableFrom: availableFrom ? new Date(availableFrom).toISOString() : null,
+      availableUntil: availableUntil ? new Date(availableUntil).toISOString() : null,
+      dueDate: new Date(dueDate).toISOString(),
+      status: status,
+      allowLateSubmissions: allowLate,
+      latePenaltyType: latePenaltyType,
+      lateDeduction: latePenalty,
+      gradingNotes: gradingNotes,
+      allowResubmission: allowResubmit,
+      questionBankId: questionBankId,
+      numQuestions: numQuestions,
+      randomizeQuestions: randomizeQuestions,
+      randomizeAnswers: randomizeAnswers,
+      createdAt: new Date().toISOString(),
+      createdBy: appData.currentUser?.id
+    };
+
+    const result = await supabaseCreateAssignment(newAssignment);
+    if (result) {
+      appData.assignments.push(newAssignment);
+      saveData(appData);
+
+      // Notify students if published
+      if (status === 'published') {
+        const students = appData.enrollments
+          .filter(e => e.courseId === activeCourseId && e.role === 'student')
+          .map(e => e.userId);
+
+        students.forEach(studentId => {
+          addNotification(studentId, 'assignment', 'New Assignment Posted',
+            `${title} is now available`, activeCourseId);
+        });
+      }
+
+      closeModal('newAssignmentModal');
+      resetNewAssignmentModal();
+      renderAssignments();
+      renderHome();
+      showToast('Assignment created!', 'success');
+    }
+  }
 }
 
 function submitAssignment(assignmentId) {
@@ -9643,6 +10332,219 @@ student3@example.com, 92, Well done" rows="10"></textarea>
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Question Bank Modal -->
+    <div class="modal-overlay" id="questionBankModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="questionBankModalTitle">Question Banks</h2>
+          <button class="modal-close" onclick="closeModal('questionBankModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="questionBankModalBody">
+          <!-- Content rendered dynamically -->
+        </div>
+        <div class="modal-footer" id="questionBankModalFooter">
+          <button class="btn btn-secondary" onclick="closeModal('questionBankModal')">Close</button>
+          <button class="btn btn-primary" onclick="openCreateQuestionBankForm()">New Question Bank</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Question Bank Edit Modal -->
+    <div class="modal-overlay" id="questionBankEditModal">
+      <div class="modal" style="max-width:900px;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="questionBankEditTitle">New Question Bank</h2>
+          <button class="modal-close" onclick="closeModal('questionBankEditModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Bank Name</label>
+            <input type="text" class="form-input" id="questionBankName" placeholder="e.g., Chapter 1 Questions">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description (optional)</label>
+            <textarea class="form-textarea" id="questionBankDescription" rows="2" placeholder="Description of this question bank..."></textarea>
+          </div>
+          <div class="form-group">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <label class="form-label" style="margin:0;">Questions</label>
+              <button class="btn btn-secondary btn-sm" onclick="addQuestionToBankForm()">+ Add Question</button>
+            </div>
+            <div id="questionBankQuestionsContainer">
+              <!-- Questions rendered here -->
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('questionBankEditModal'); openQuestionBankModal();">Cancel</button>
+          <button class="btn btn-primary" id="questionBankSaveBtn" onclick="saveQuestionBank()">Save Bank</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- New Assignment Modal (direct creation with type) -->
+    <div class="modal-overlay" id="newAssignmentModal">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="newAssignmentModalTitle">New Assignment</h2>
+          <button class="modal-close" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Assignment Type</label>
+            <select class="form-select" id="newAssignmentType" onchange="handleNewAssignmentTypeChange()">
+              <option value="essay">Essay</option>
+              <option value="project">Project</option>
+              <option value="homework">Homework</option>
+              <option value="participation">Participation</option>
+              <option value="quiz">Quiz</option>
+              <option value="exam">Exam</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Title</label>
+            <input type="text" class="form-input" id="newAssignmentTitle" placeholder="Enter title">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description / Instructions</label>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('newAssignmentDescription')" title="Insert Link">🔗 Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('newAssignmentDescription')" title="Insert File">📄 File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('newAssignmentDescription')" title="Insert Video">📹 Video</button>
+            </div>
+            <textarea class="form-textarea" id="newAssignmentDescription" placeholder="Describe the assignment... (supports Markdown)"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Intro Notes (visible to students before starting)</label>
+            <textarea class="form-textarea" id="newAssignmentIntroNotes" rows="2" placeholder="Optional notes shown to students before they begin..."></textarea>
+          </div>
+
+          <!-- Question Bank Section (for Quiz/Exam) -->
+          <div id="questionBankSection" style="display:none; background:var(--surface); padding:16px; border-radius:var(--radius); margin-bottom:16px;">
+            <h4 style="margin-bottom:12px;">Question Bank Settings</h4>
+            <div class="form-group">
+              <label class="form-label">Select Question Bank</label>
+              <select class="form-select" id="newAssignmentQuestionBank">
+                <option value="">-- Select a question bank --</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="openQuestionBankModal()">Manage Question Banks</button>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Number of Questions</label>
+              <input type="number" class="form-input" id="newAssignmentNumQuestions" value="10" min="1" placeholder="Number of questions to include">
+              <div class="hint">Leave blank or 0 to include all questions from the bank</div>
+            </div>
+            <div class="form-group">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="newAssignmentRandomizeQuestions" checked>
+                <span>Randomize question order</span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="newAssignmentRandomizeAnswers" checked>
+                <span>Randomize answer choices</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Points</label>
+            <input type="number" class="form-input" id="newAssignmentPoints" value="100" min="1">
+          </div>
+
+          <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+            <div class="form-group">
+              <label class="form-label">Available From</label>
+              <input type="date" class="form-input" id="newAssignmentAvailableFrom">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Available Until</label>
+              <input type="date" class="form-input" id="newAssignmentAvailableUntil">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Due Date</label>
+            <input type="date" class="form-input" id="newAssignmentDueDate" style="margin-bottom:8px;">
+            <div style="display:flex; gap:8px; align-items:center;">
+              <select class="form-select" id="newAssignmentDueHour" style="width:auto;">
+                <option value="12">12</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+                <option value="11" selected>11</option>
+              </select>
+              <span>:</span>
+              <select class="form-select" id="newAssignmentDueMinute" style="width:auto;">
+                <option value="00">00</option>
+                <option value="15">15</option>
+                <option value="30">30</option>
+                <option value="45">45</option>
+                <option value="59" selected>59</option>
+              </select>
+              <select class="form-select" id="newAssignmentDueAmPm" style="width:auto;">
+                <option value="AM">AM</option>
+                <option value="PM" selected>PM</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select class="form-select" id="newAssignmentStatus">
+              <option value="draft">Draft (not visible to students)</option>
+              <option value="published">Published</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="newAssignmentAllowLate" checked>
+              <span>Allow late submissions</span>
+            </label>
+          </div>
+
+          <div id="latePenaltySection">
+            <div class="form-group">
+              <label class="form-label">Late Penalty Type</label>
+              <select class="form-select" id="newAssignmentLatePenaltyType">
+                <option value="per_day">Percentage per day late</option>
+                <option value="flat">Flat percentage overall</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Penalty Amount (%)</label>
+              <input type="number" class="form-input" id="newAssignmentLatePenalty" value="10" min="0" max="100">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Grading Notes (private - only visible to instructors)</label>
+            <textarea class="form-textarea" id="newAssignmentGradingNotes" rows="2" placeholder="Notes for graders (rubric guidance, common issues to watch for, etc.)"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="newAssignmentAllowResubmit" checked>
+              <span>Allow resubmission</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">Cancel</button>
+          <button class="btn btn-primary" id="newAssignmentSubmitBtn" onclick="saveNewAssignment()">Create Assignment</button>
         </div>
       </div>
     </div>
