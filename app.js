@@ -2491,11 +2491,22 @@ function renderTopBarCourse() {
   }
 
   const course = getCourseById(activeCourseId);
-  const role = getUserRole(appData.currentUser?.id, activeCourseId);
   if (course) {
     titleEl.textContent = course.name;
-    const viewModeText = studentViewMode ? ' (Student View)' : '';
-    subtitleEl.textContent = `${course.code} · ${role}${viewModeText}`;
+    // Show "You are a student" when in student view mode, otherwise show actual role
+    let roleDisplay;
+    if (studentViewMode) {
+      roleDisplay = 'You are a student';
+    } else {
+      const role = getUserRole(appData.currentUser?.id, activeCourseId);
+      const roleLabels = {
+        'instructor': 'You are the instructor',
+        'ta': 'You are a TA',
+        'student': 'You are a student'
+      };
+      roleDisplay = roleLabels[role] || role;
+    }
+    subtitleEl.textContent = `${course.code} · ${roleDisplay}`;
   } else {
     titleEl.textContent = 'Select a course';
     subtitleEl.textContent = 'Choose a course from the Courses tab';
@@ -9352,7 +9363,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:12px;">
-            Upload a CSV with email addresses (one per row).
+            Upload a file with email addresses (comma-delimited or one per row).
           </div>
           <div class="form-group">
             <label class="form-label">CSV File</label>
@@ -9865,10 +9876,30 @@ function processBulkStudentImport() {
 
   reader.onload = function(event) {
     const text = event.target.result;
-    const lines = text.split('\n').map(line => line.trim()).filter(line => line);
 
-    if (!lines.length) {
-      showToast('CSV file is empty', 'error');
+    // Support both comma-delimited and row-delimited formats
+    // Split by newlines first, then by commas within each line
+    const rawLines = text.split('\n').map(line => line.trim()).filter(line => line);
+
+    // Extract all emails from the file (handles both formats)
+    const emails = [];
+    rawLines.forEach((line, index) => {
+      // Skip header row if it looks like a header
+      if (index === 0 && line.toLowerCase().includes('email')) {
+        return;
+      }
+      // Split each line by comma to handle comma-delimited emails
+      const parts = line.split(',').map(part => part.trim()).filter(part => part);
+      parts.forEach(part => {
+        // Only add if it looks like an email
+        if (part.includes('@')) {
+          emails.push(part);
+        }
+      });
+    });
+
+    if (!emails.length) {
+      showToast('No valid email addresses found', 'error');
       return;
     }
 
@@ -9876,19 +9907,7 @@ function processBulkStudentImport() {
     let invited = 0;
     let errors = 0;
 
-    lines.forEach((line, index) => {
-      if (index === 0 && line.toLowerCase().includes('email')) {
-        return;
-      }
-
-      const parts = line.split(',').map(part => part.trim());
-      const email = parts[0];
-      const name = parts[1] || '';
-      const roleRaw = parts[2] || '';
-      const role = ['student', 'ta', 'instructor'].includes(roleRaw.toLowerCase())
-        ? roleRaw.toLowerCase()
-        : defaultRole;
-
+    emails.forEach(email => {
       if (!email || !email.includes('@')) {
         errors += 1;
         return;
@@ -9898,12 +9917,12 @@ function processBulkStudentImport() {
       if (user) {
         const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === activeCourseId);
         if (existing) {
-          existing.role = role;
+          existing.role = defaultRole;
         } else {
           appData.enrollments.push({
             userId: user.id,
             courseId: activeCourseId,
-            role: role
+            role: defaultRole
           });
         }
         added += 1;
@@ -9914,10 +9933,9 @@ function processBulkStudentImport() {
       appData.invites.push({
         courseId: activeCourseId,
         email: email,
-        role: role,
+        role: defaultRole,
         status: 'pending',
-        sentAt: new Date().toISOString(),
-        name: name || undefined
+        sentAt: new Date().toISOString()
       });
       invited += 1;
     });
