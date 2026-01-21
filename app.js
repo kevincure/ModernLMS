@@ -2541,27 +2541,37 @@ function renderCourses() {
   setHTML('coursesActions', actionsHTML);
   
   if (courses.length === 0) {
-    setHTML('coursesList', '<div class="empty-state"><div class="empty-state-icon">📚</div><div class="empty-state-title">No courses yet</div><div class="empty-state-text">Create a course or join one with an invite code</div></div>');
+    setHTML('coursesList', '<div class="empty-state"><div class="empty-state-title">No courses yet</div><div class="empty-state-text">Create a course or join one with an invite code</div></div>');
     return;
   }
   
-  const html = courses.map(c => `
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <div class="card-title">${c.name}</div>
-          <div class="muted">${c.code} · ${c.role}</div>
+  const html = courses.map(c => {
+    // Format role label
+    const roleLabels = {
+      'instructor': 'You are the instructor',
+      'ta': 'You are a TA',
+      'student': 'You are a student'
+    };
+    const roleLabel = roleLabels[c.role] || c.role;
+
+    return `
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">${c.name}</div>
+            <div class="muted">${c.code} · ${roleLabel}</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>
+            ${c.role === 'instructor' ? `
+              <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
+            ` : ''}
+          </div>
         </div>
-        <div style="display:flex; gap:8px;">
-          <button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>
-          ${c.role === 'instructor' ? `
-            <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
-          ` : ''}
-        </div>
+        ${c.description ? `<div style="margin-top:8px;" class="muted">${c.description}</div>` : ''}
       </div>
-      ${c.description ? `<div style="margin-top:8px;" class="muted">${c.description}</div>` : ''}
-    </div>
-  `).join('');
+    `;
+  }).join('');
   
   setHTML('coursesList', html);
 }
@@ -2845,6 +2855,43 @@ async function createCourse() {
   // Set up Start Here content - with syllabus reference if created via syllabus upload
   let startHereContent = `Welcome to ${name}.`;
   let startHereLinks = [];
+
+  // If syllabus was uploaded, save it as a file and add to pinned essentials
+  const syllabusInput = document.getElementById('courseCreationSyllabus');
+  let syllabusFileId = null;
+  if (syllabusInput && syllabusInput.files.length > 0) {
+    const syllabusFile = syllabusInput.files[0];
+    syllabusFileId = generateId();
+    const syllabusFileData = {
+      id: syllabusFileId,
+      courseId: courseId,
+      name: syllabusFile.name,
+      type: syllabusFile.name.split('.').pop(),
+      size: syllabusFile.size,
+      storagePath: `courses/${courseId}/${syllabusFileId}_${syllabusFile.name}`,
+      uploadedBy: appData.currentUser.id,
+      uploadedAt: new Date().toISOString()
+    };
+
+    // Try to upload to Supabase Storage
+    if (supabaseClient) {
+      const { data: uploadData, error: uploadError } = await supabaseClient.storage
+        .from('course-files')
+        .upload(syllabusFileData.storagePath, syllabusFile, { cacheControl: '3600', upsert: false });
+
+      if (uploadData) {
+        syllabusFileData.storagePath = uploadData.path;
+      }
+    }
+
+    // Save file metadata
+    await supabaseCreateFile(syllabusFileData);
+    appData.files.push(syllabusFileData);
+
+    // Add syllabus to pinned essentials
+    startHereLinks.push({ label: 'Syllabus', fileId: syllabusFileId });
+  }
+
   if (hasSyllabusData && selectedModuleIndices.size > 0) {
     startHereContent = `Welcome to ${name}.\n\nThis course was set up from the uploaded syllabus. Review the modules below for course content.`;
   }
@@ -3120,9 +3167,17 @@ function renderHome() {
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
     .slice(0, 5);
   
+  // Get parent card elements for visibility control
+  const upcomingContainer = document.getElementById('homeUpcoming');
+  const updatesContainer = document.getElementById('homeUpdates');
+  const upcomingCard = upcomingContainer?.closest('.card');
+  const updatesCard = updatesContainer?.closest('.card');
+
   if (upcoming.length === 0) {
-    setHTML('homeUpcoming', '<div class="muted" style="padding:12px;">No upcoming work</div>');
+    // Hide the entire Upcoming card when empty
+    if (upcomingCard) upcomingCard.style.display = 'none';
   } else {
+    if (upcomingCard) upcomingCard.style.display = '';
     const html = upcoming.map(item => `
       <div style="padding:12px; border-bottom:1px solid var(--border-light);">
         <div style="font-weight:500;">${item.title}</div>
@@ -3131,16 +3186,18 @@ function renderHome() {
     `).join('');
     setHTML('homeUpcoming', html);
   }
-  
-  // Recent updates (clickable)
+
+  // Recent announcements (clickable)
   const updates = appData.announcements
     .filter(a => a.courseId === activeCourseId)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 5);
 
   if (updates.length === 0) {
-    setHTML('homeUpdates', '<div class="muted" style="padding:12px;">No recent updates</div>');
+    // Hide the entire Recent Announcements card when empty
+    if (updatesCard) updatesCard.style.display = 'none';
   } else {
+    if (updatesCard) updatesCard.style.display = '';
     const html = updates.map(u => {
       const author = getUserById(u.authorId);
       return `
@@ -3178,9 +3235,17 @@ function renderStartHere(course) {
   const pinnedLinks = course.startHereLinks || [];
 
   const pinnedHtml = pinnedLinks.length
-    ? `<div class="start-here-links">${pinnedLinks.map((link, idx) =>
-        `<a href="${escapeHtml(link.url)}" target="_blank" class="pill pill-link">${escapeHtml(link.label)}</a>`
-      ).join('')}</div>`
+    ? `<div class="start-here-links">${pinnedLinks.map((link, idx) => {
+        // Support both URL links and file links
+        if (link.fileId) {
+          const file = appData.files.find(f => f.id === link.fileId);
+          if (file) {
+            return `<a href="#" onclick="openFile('${file.id}'); return false;" class="pill pill-link">📄 ${escapeHtml(link.label)}</a>`;
+          }
+          return ''; // File not found
+        }
+        return `<a href="${escapeHtml(link.url)}" target="_blank" class="pill pill-link">${escapeHtml(link.label)}</a>`;
+      }).join('')}</div>`
     : (isStaffUser ? '<div class="muted">Add essential links for students.</div>' : '');
 
   const pinnedSection = pinnedLinks.length || isStaffUser ? `
@@ -3230,16 +3295,50 @@ function renderStartHereLinksEditor() {
   const container = document.getElementById('startHereLinksEditor');
   if (!container) return;
 
+  const courseId = document.getElementById('startHereCourseId')?.value;
+  const courseFiles = courseId ? appData.files.filter(f => f.courseId === courseId) : [];
+
   if (startHereLinksEditing.length === 0) {
     container.innerHTML = '<div class="muted">No pinned links yet.</div>';
   } else {
-    container.innerHTML = startHereLinksEditing.map((link, idx) => `
-      <div class="start-here-link-row" style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-        <input type="text" class="form-input" style="flex:1" value="${escapeHtml(link.label)}" placeholder="Label" onchange="updateStartHereLink(${idx}, 'label', this.value)">
-        <input type="text" class="form-input" style="flex:2" value="${escapeHtml(link.url)}" placeholder="URL" onchange="updateStartHereLink(${idx}, 'url', this.value)">
-        <button class="btn btn-secondary btn-sm" onclick="removeStartHereLink(${idx})" title="Remove">&times;</button>
-      </div>
-    `).join('');
+    container.innerHTML = startHereLinksEditing.map((link, idx) => {
+      const isFile = !!link.fileId;
+      const fileOptions = courseFiles.map(f =>
+        `<option value="${f.id}" ${link.fileId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`
+      ).join('');
+
+      return `
+        <div class="start-here-link-row" style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+          <input type="text" class="form-input" style="flex:1; min-width:100px;" value="${escapeHtml(link.label || '')}" placeholder="Label" onchange="updateStartHereLink(${idx}, 'label', this.value)">
+          <select class="form-select" style="width:80px;" onchange="toggleStartHereLinkType(${idx}, this.value)">
+            <option value="url" ${!isFile ? 'selected' : ''}>URL</option>
+            <option value="file" ${isFile ? 'selected' : ''}>File</option>
+          </select>
+          ${isFile ? `
+            <select class="form-select" style="flex:2; min-width:150px;" onchange="updateStartHereLink(${idx}, 'fileId', this.value)">
+              <option value="">Select a file...</option>
+              ${fileOptions}
+            </select>
+          ` : `
+            <input type="text" class="form-input" style="flex:2; min-width:150px;" value="${escapeHtml(link.url || '')}" placeholder="https://..." onchange="updateStartHereLink(${idx}, 'url', this.value)">
+          `}
+          <button class="btn btn-secondary btn-sm" onclick="removeStartHereLink(${idx})" title="Remove">&times;</button>
+        </div>
+      `;
+    }).join('');
+  }
+}
+
+function toggleStartHereLinkType(idx, type) {
+  if (startHereLinksEditing[idx]) {
+    if (type === 'file') {
+      delete startHereLinksEditing[idx].url;
+      startHereLinksEditing[idx].fileId = '';
+    } else {
+      delete startHereLinksEditing[idx].fileId;
+      startHereLinksEditing[idx].url = '';
+    }
+    renderStartHereLinksEditor();
   }
 }
 
@@ -3268,8 +3367,20 @@ function saveStartHere() {
 
   course.startHereTitle = title || 'Start Here';
   course.startHereContent = content;
-  // Save only valid links (both label and url must be filled)
-  course.startHereLinks = startHereLinksEditing.filter(link => link.label.trim() && link.url.trim());
+  // Save only valid links (label required, and either url or fileId must be filled)
+  // Also ensure URLs have proper protocol
+  course.startHereLinks = startHereLinksEditing
+    .filter(link =>
+      link.label && link.label.trim() && (
+        (link.url && link.url.trim()) || (link.fileId && link.fileId.trim())
+      )
+    )
+    .map(link => {
+      if (link.url) {
+        return { ...link, url: ensureUrlProtocol(link.url) };
+      }
+      return link;
+    });
   saveData(appData);
 
   closeModal('startHereModal');
@@ -3297,7 +3408,7 @@ function renderUpdates() {
 
   if (effectiveStaff) {
     setHTML('updatesActions', `
-      <button class="btn btn-primary" onclick="openModal('announcementModal')">New Update</button>
+      <button class="btn btn-primary" onclick="openModal('announcementModal')">New Announcement</button>
     `);
   } else {
     setHTML('updatesActions', '');
@@ -3317,7 +3428,7 @@ function renderUpdates() {
   }
 
   if (announcements.length === 0) {
-    setHTML('updatesList', '<div class="empty-state"><div class="empty-state-icon">📢</div><div class="empty-state-title">No updates yet</div></div>');
+    setHTML('updatesList', '<div class="empty-state"><div class="empty-state-title">No announcements yet</div></div>');
     return;
   }
 
@@ -3404,7 +3515,7 @@ async function createAnnouncement() {
     resetAnnouncementModal();
     renderUpdates();
     renderHome();
-    showToast('Update posted!', 'success');
+    showToast('Announcement posted!', 'success');
   } catch (err) {
     console.error('[createAnnouncement] Error:', err);
     showToast('Failed to create announcement: ' + err.message, 'error');
@@ -3421,7 +3532,7 @@ function deleteAnnouncement(id) {
     saveData(appData);
     renderUpdates();
     renderHome();
-    showToast('Update deleted', 'success');
+    showToast('Announcement deleted', 'success');
   });
 }
 
@@ -3440,7 +3551,7 @@ function editAnnouncement(id) {
   document.getElementById('announcementPinned').checked = announcement.pinned || false;
   
   // Change modal title and button text
-  document.getElementById('announcementModalTitle').textContent = 'Edit Update';
+  document.getElementById('announcementModalTitle').textContent = 'Edit Announcement';
   document.getElementById('announcementSubmitBtn').textContent = 'Save Changes';
   
   openModal('announcementModal');
@@ -3448,7 +3559,7 @@ function editAnnouncement(id) {
 
 function resetAnnouncementModal() {
   currentEditAnnouncementId = null;
-  document.getElementById('announcementModalTitle').textContent = 'New Update';
+  document.getElementById('announcementModalTitle').textContent = 'New Announcement';
   document.getElementById('announcementSubmitBtn').textContent = 'Post';
   document.getElementById('announcementTitle').value = '';
   document.getElementById('announcementContent').value = '';
@@ -3503,7 +3614,7 @@ async function updateAnnouncement() {
 
   renderUpdates();
   renderHome();
-  showToast('Update saved', 'success');
+  showToast('Announcement saved', 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3545,7 +3656,7 @@ function renderAssignments() {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   
   if (assignments.length === 0 && quizzes.length === 0) {
-    setHTML('assignmentsList', '<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-title">No assignments or quizzes yet</div></div>');
+    setHTML('assignmentsList', '<div class="empty-state"><div class="empty-state-title">No assignments or quizzes yet</div></div>');
     return;
   }
   
@@ -3697,7 +3808,7 @@ function renderCalendar() {
   });
   
   if (items.length === 0) {
-    setHTML('calendarList', '<div class="empty-state"><div class="empty-state-icon">🗓️</div><div class="empty-state-title">No upcoming work</div></div>');
+    setHTML('calendarList', '<div class="empty-state"><div class="empty-state-title">No upcoming work</div></div>');
     return;
   }
   
@@ -5119,9 +5230,7 @@ function renderModules() {
       ? '<div class="empty-state"><div class="empty-state-text">No modules match your search</div></div>'
       : `
       <div class="empty-state">
-        <div class="empty-state-icon">📦</div>
         <div class="empty-state-title">No modules yet</div>
-        <div class="empty-state-text">Organize your course content into modules</div>
       </div>
     `);
     return;
@@ -6306,7 +6415,6 @@ function renderSpeedGrader() {
   } else {
     document.getElementById('speedGraderSubmission').innerHTML = `
       <div class="empty-state">
-        <div class="empty-state-icon">📭</div>
         <div class="empty-state-text">No submission yet</div>
       </div>
     `;
@@ -6602,7 +6710,7 @@ function renderFiles() {
   if (files.length === 0) {
     setHTML('filesList', filesSearch
       ? '<div class="empty-state"><div class="empty-state-text">No files match your search</div></div>'
-      : '<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No files yet</div></div>');
+      : '<div class="empty-state"><div class="empty-state-title">No files yet</div></div>');
     return;
   }
 
@@ -6703,12 +6811,66 @@ async function convertPlaceholderToLink(fileId) {
   }
 }
 
-async function uploadFile() {
-  const fileInput = document.getElementById('fileUpload');
-  const file = fileInput.files[0];
+// Store files selected for upload
+let pendingUploadFiles = [];
 
-  if (!file) {
-    showToast('Please select a file', 'error');
+function handleFilesDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dropZone = document.getElementById('fileDropZone');
+  if (dropZone) {
+    dropZone.style.borderColor = 'var(--border-color)';
+    dropZone.style.background = '';
+  }
+
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length > 50) {
+    showToast('Maximum 50 files allowed at once', 'error');
+    pendingUploadFiles = files.slice(0, 50);
+  } else {
+    pendingUploadFiles = files;
+  }
+  updateFileUploadPreview();
+}
+
+function updateFileUploadPreview() {
+  const fileInput = document.getElementById('fileUpload');
+  const preview = document.getElementById('fileUploadPreview');
+  if (!preview) return;
+
+  // If files came from input, use those
+  if (fileInput && fileInput.files.length > 0) {
+    const files = Array.from(fileInput.files);
+    if (files.length > 50) {
+      showToast('Maximum 50 files allowed at once', 'error');
+      pendingUploadFiles = files.slice(0, 50);
+    } else {
+      pendingUploadFiles = files;
+    }
+  }
+
+  if (pendingUploadFiles.length === 0) {
+    preview.innerHTML = '';
+    return;
+  }
+
+  preview.innerHTML = `
+    <div style="font-weight:500; margin-bottom:8px;">${pendingUploadFiles.length} file${pendingUploadFiles.length > 1 ? 's' : ''} selected:</div>
+    <div style="max-height:150px; overflow-y:auto; border:1px solid var(--border-light); border-radius:var(--radius); padding:8px;">
+      ${pendingUploadFiles.map(f => `<div class="muted" style="font-size:0.85rem; padding:2px 0;">📄 ${escapeHtml(f.name)} (${formatFileSize(f.size)})</div>`).join('')}
+    </div>
+  `;
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function uploadFiles() {
+  if (pendingUploadFiles.length === 0) {
+    showToast('Please select files to upload', 'error');
     return;
   }
 
@@ -6718,79 +6880,87 @@ async function uploadFile() {
   }
 
   // Verify auth state before attempting upload
-  const authUser = await debugAuthState('uploadFile');
+  const authUser = await debugAuthState('uploadFiles');
   if (!authUser) {
-    console.error('[uploadFile] Cannot upload: not authenticated');
+    console.error('[uploadFiles] Cannot upload: not authenticated');
     showToast('Not authenticated - please sign in again', 'error');
     return;
   }
 
-  const fileId = generateId();
-  const storagePath = `courses/${activeCourseId}/${fileId}_${file.name}`;
+  const totalFiles = pendingUploadFiles.length;
+  showToast(`Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''}...`, 'info');
 
-  console.log('[uploadFile] Attempting upload:', {
-    bucket: 'course-files',
-    path: storagePath,
-    userId: authUser.id,
-    fileSize: file.size
-  });
+  let successCount = 0;
+  let errorCount = 0;
 
-  showToast('Uploading file...', 'info');
+  for (const file of pendingUploadFiles) {
+    try {
+      const fileId = generateId();
+      const storagePath = `courses/${activeCourseId}/${fileId}_${file.name}`;
 
-  try {
-    // Upload file to Supabase Storage
-    const { data: uploadData, error: uploadError } = await supabaseClient.storage
-      .from('course-files')
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: false
-      });
+      // Upload file to Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabaseClient.storage
+        .from('course-files')
+        .upload(storagePath, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
 
-    if (uploadError) {
-      console.error('[uploadFile] Storage upload error:', uploadError);
-      console.error('[uploadFile] Error details:', {
-        message: uploadError.message,
-        statusCode: uploadError.statusCode,
-        error: uploadError.error
-      });
-      // If storage bucket doesn't exist, just save metadata
-      if (uploadError.message.includes('Bucket not found') || uploadError.statusCode === '404') {
-        console.log('[uploadFile] Storage bucket not configured, saving metadata only');
-      } else {
-        showToast('Upload failed: ' + uploadError.message, 'error');
-        return;
+      if (uploadError) {
+        console.error('[uploadFiles] Storage upload error:', uploadError);
+        // If storage bucket doesn't exist, just save metadata
+        if (!uploadError.message.includes('Bucket not found') && uploadError.statusCode !== '404') {
+          errorCount++;
+          continue;
+        }
       }
-    } else {
-      console.log('[uploadFile] ✓ Storage upload successful:', uploadData);
+
+      const fileData = {
+        id: fileId,
+        courseId: activeCourseId,
+        name: file.name,
+        type: file.name.split('.').pop(),
+        size: file.size,
+        storagePath: uploadData?.path || storagePath,
+        uploadedBy: appData.currentUser.id,
+        uploadedAt: new Date().toISOString()
+      };
+
+      // Save metadata to Supabase
+      const result = await supabaseCreateFile(fileData);
+      if (result) {
+        appData.files.push(fileData);
+        successCount++;
+      } else {
+        errorCount++;
+      }
+    } catch (err) {
+      console.error('[uploadFiles] Error uploading file:', file.name, err);
+      errorCount++;
     }
-
-    const fileData = {
-      id: fileId,
-      courseId: activeCourseId,
-      name: file.name,
-      type: file.name.split('.').pop(),
-      size: file.size,
-      storagePath: uploadData?.path || storagePath,
-      uploadedBy: appData.currentUser.id,
-      uploadedAt: new Date().toISOString()
-    };
-
-    // Save metadata to Supabase
-    const result = await supabaseCreateFile(fileData);
-    if (!result) {
-      return; // Error already shown
-    }
-
-    appData.files.push(fileData);
-    saveData(appData);
-    closeModal('fileUploadModal');
-    renderFiles();
-    showToast('File uploaded!', 'success');
-    fileInput.value = '';
-  } catch (err) {
-    console.error('[uploadFile] Error:', err);
-    showToast('Failed to upload file: ' + err.message, 'error');
   }
+
+  saveData(appData);
+  closeModal('fileUploadModal');
+  renderFiles();
+
+  // Reset state
+  pendingUploadFiles = [];
+  const fileInput = document.getElementById('fileUpload');
+  if (fileInput) fileInput.value = '';
+  const preview = document.getElementById('fileUploadPreview');
+  if (preview) preview.innerHTML = '';
+
+  if (errorCount === 0) {
+    showToast(`${successCount} file${successCount > 1 ? 's' : ''} uploaded!`, 'success');
+  } else {
+    showToast(`Uploaded ${successCount}, failed ${errorCount}`, errorCount > successCount ? 'error' : 'warning');
+  }
+}
+
+// Legacy single file upload function (kept for compatibility)
+async function uploadFile() {
+  await uploadFiles();
 }
 
 function deleteFile(id) {
@@ -8393,7 +8563,7 @@ function generateModals() {
             <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('announcement')">
               <div style="font-size:1.5rem; margin-bottom:8px;">📢</div>
               <div class="demo-title">Announcement</div>
-              <div class="demo-sub">Updates for students</div>
+              <div class="demo-sub">Announcements for students</div>
             </button>
             <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('file')">
               <div style="font-size:1.5rem; margin-bottom:8px;">📄</div>
@@ -8462,7 +8632,7 @@ function generateModals() {
     <div class="modal-overlay" id="announcementModal">
       <div class="modal">
         <div class="modal-header">
-          <h2 class="modal-title" id="announcementModalTitle">New Update</h2>
+          <h2 class="modal-title" id="announcementModalTitle">New Announcement</h2>
           <button class="modal-close" onclick="closeModal('announcementModal'); resetAnnouncementModal();">&times;</button>
         </div>
         <div class="modal-body">
@@ -8483,9 +8653,9 @@ function generateModals() {
           <div class="form-group">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
               <input type="checkbox" id="announcementPinned">
-              <span>Pin this update</span>
+              <span>Pin this announcement</span>
             </label>
-            <div class="hint">Pinned updates appear at the top of the Updates page</div>
+            <div class="hint">Pinned announcements appear at the top of the Announcements page</div>
           </div>
         </div>
         <div class="modal-footer">
@@ -8878,19 +9048,29 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
     <div class="modal-overlay" id="fileUploadModal">
       <div class="modal">
         <div class="modal-header">
-          <h2 class="modal-title">Upload File</h2>
+          <h2 class="modal-title">Upload Files</h2>
           <button class="modal-close" onclick="closeModal('fileUploadModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Select File</label>
-            <input type="file" class="form-input" id="fileUpload">
-            <div class="hint">Metadata only stored in this demo. Implement Supabase storage for production.</div>
+            <label class="form-label">Select Files (up to 50)</label>
+            <div id="fileDropZone"
+                 style="border:2px dashed var(--border-color); border-radius:var(--radius); padding:32px; text-align:center; cursor:pointer; transition: all 0.2s;"
+                 ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'; this.style.background='var(--primary-light)';"
+                 ondragleave="this.style.borderColor='var(--border-color)'; this.style.background='';"
+                 ondrop="handleFilesDrop(event)"
+                 onclick="document.getElementById('fileUpload').click()">
+              <div style="font-size:2rem; margin-bottom:8px; opacity:0.5;">📁</div>
+              <div style="font-weight:500; margin-bottom:4px;">Drag and drop files here</div>
+              <div class="muted">or click to browse</div>
+            </div>
+            <input type="file" class="form-input" id="fileUpload" multiple style="display:none;" onchange="updateFileUploadPreview()">
+            <div id="fileUploadPreview" style="margin-top:12px;"></div>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('fileUploadModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="uploadFile()">Upload</button>
+          <button class="btn btn-primary" onclick="uploadFiles()">Upload</button>
         </div>
       </div>
     </div>
@@ -9154,14 +9334,14 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:12px;">
-            Upload a CSV with columns: Email, Name (optional), Role (optional: student/ta/instructor).
+            Upload a CSV with columns: Email, Name (optional).
           </div>
           <div class="form-group">
             <label class="form-label">CSV File</label>
             <input type="file" class="form-input" id="bulkStudentFile" accept=".csv,text/csv">
           </div>
           <div class="form-group">
-            <label class="form-label">Default Role</label>
+            <label class="form-label">Role</label>
             <select class="form-select" id="bulkStudentRole">
               <option value="student" selected>Student</option>
               <option value="ta">Teaching Assistant</option>
@@ -9171,7 +9351,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('bulkStudentImportModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="processBulkStudentImport()">Import Students</button>
+          <button class="btn btn-primary" onclick="processBulkStudentImport()">Import</button>
         </div>
       </div>
     </div>
@@ -10356,8 +10536,21 @@ function openExternalLinkModal(prefillData = null) {
   openModal('externalLinkModal');
 }
 
+function ensureUrlProtocol(url) {
+  if (!url) return url;
+  url = url.trim();
+  // If URL doesn't start with a protocol, add https://
+  if (!/^https?:\/\//i.test(url) && !/^mailto:/i.test(url) && !/^tel:/i.test(url)) {
+    return 'https://' + url;
+  }
+  return url;
+}
+
 function convertYouTubeUrl(url) {
   if (!url) return url;
+
+  // Ensure URL has protocol before processing
+  url = ensureUrlProtocol(url);
 
   // Convert YouTube watch URLs to embed URLs
   const watchMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
@@ -10382,6 +10575,9 @@ function saveExternalLink() {
     showToast('Please fill in title and URL', 'error');
     return;
   }
+
+  // Ensure URL has a protocol
+  url = ensureUrlProtocol(url);
 
   // Auto-convert YouTube URLs to embed format
   const convertedUrl = convertYouTubeUrl(url);
@@ -10604,12 +10800,23 @@ function renderTopBarViewToggle() {
   const isStaffUser = activeCourseId && isStaff(appData.currentUser.id, activeCourseId);
 
   if (isStaffUser) {
-    // Button shows where you're going TO, not where you ARE
-    container.innerHTML = `
-      <button class="btn ${studentViewMode ? 'btn-primary' : 'btn-secondary'}" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
-        ${studentViewMode ? 'Instructor View' : 'Student View'}
-      </button>
-    `;
+    if (studentViewMode) {
+      // Show "You are a student" indicator with exit button
+      container.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:0.85rem; color:var(--primary); font-weight:500;">You are a student</span>
+          <button class="btn btn-secondary" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
+            Exit Preview
+          </button>
+        </div>
+      `;
+    } else {
+      container.innerHTML = `
+        <button class="btn btn-secondary" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
+          Student View
+        </button>
+      `;
+    }
     container.style.display = 'block';
   } else {
     container.innerHTML = '';
