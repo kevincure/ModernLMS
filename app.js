@@ -767,9 +767,21 @@ async function supabaseCreateEnrollment(enrollment) {
 
 // Assignment operations
 async function supabaseCreateAssignment(assignment) {
-  if (!supabaseClient) return null;
-  console.log('[Supabase] Creating assignment:', assignment.title);
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create assignment: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating assignment:', assignment.title, 'for course:', assignment.courseId);
 
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createAssignment');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create assignment: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting assignments.insert with created_by:', appData.currentUser?.id);
   const { data, error } = await supabaseClient.from('assignments').insert({
     id: assignment.id,
     course_id: assignment.courseId,
@@ -787,17 +799,30 @@ async function supabaseCreateAssignment(assignment) {
 
   if (error) {
     console.error('[Supabase] Error creating assignment:', error);
-    showToast('Failed to save assignment to database', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save assignment: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Assignment created:', data.id);
+  console.log('[Supabase] Assignment created successfully:', data.id);
   return data;
 }
 
 async function supabaseUpdateAssignment(assignment) {
-  if (!supabaseClient) return null;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot update assignment: client not initialized');
+    return null;
+  }
   console.log('[Supabase] Updating assignment:', assignment.id);
 
+  // Verify auth state before attempting update
+  const authUser = await debugAuthState('updateAssignment');
+  if (!authUser) {
+    console.error('[Supabase] Cannot update assignment: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting assignments.update for id:', assignment.id);
   const { data, error } = await supabaseClient.from('assignments').update({
     title: assignment.title,
     description: assignment.description,
@@ -812,33 +837,59 @@ async function supabaseUpdateAssignment(assignment) {
 
   if (error) {
     console.error('[Supabase] Error updating assignment:', error);
-    showToast('Failed to update assignment', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to update assignment: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Assignment updated');
+  console.log('[Supabase] Assignment updated successfully');
   return data;
 }
 
 async function supabaseDeleteAssignment(assignmentId) {
-  if (!supabaseClient) return false;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot delete assignment: client not initialized');
+    return false;
+  }
   console.log('[Supabase] Deleting assignment:', assignmentId);
 
+  // Verify auth state before attempting delete
+  const authUser = await debugAuthState('deleteAssignment');
+  if (!authUser) {
+    console.error('[Supabase] Cannot delete assignment: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return false;
+  }
+
+  console.log('[Supabase] Attempting assignments.delete for id:', assignmentId);
   const { error } = await supabaseClient.from('assignments').delete().eq('id', assignmentId);
 
   if (error) {
     console.error('[Supabase] Error deleting assignment:', error);
-    showToast('Failed to delete assignment', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to delete assignment: ' + error.message, 'error');
     return false;
   }
-  console.log('[Supabase] Assignment deleted');
+  console.log('[Supabase] Assignment deleted successfully');
   return true;
 }
 
 // Announcement operations
 async function supabaseCreateAnnouncement(announcement) {
-  if (!supabaseClient) return null;
-  console.log('[Supabase] Creating announcement:', announcement.title);
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create announcement: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating announcement:', announcement.title, 'for course:', announcement.courseId);
 
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createAnnouncement');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create announcement: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting announcements.insert with author_id:', announcement.authorId);
   const { data, error } = await supabaseClient.from('announcements').insert({
     id: announcement.id,
     course_id: announcement.courseId,
@@ -851,17 +902,30 @@ async function supabaseCreateAnnouncement(announcement) {
 
   if (error) {
     console.error('[Supabase] Error creating announcement:', error);
-    showToast('Failed to save announcement', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save announcement: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Announcement created:', data.id);
+  console.log('[Supabase] Announcement created successfully:', data.id);
   return data;
 }
 
 async function supabaseUpdateAnnouncement(announcement) {
-  if (!supabaseClient) return null;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot update announcement: client not initialized');
+    return null;
+  }
   console.log('[Supabase] Updating announcement:', announcement.id);
 
+  // Verify auth state before attempting update
+  const authUser = await debugAuthState('updateAnnouncement');
+  if (!authUser) {
+    console.error('[Supabase] Cannot update announcement: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting announcements.update for id:', announcement.id);
   const { data, error } = await supabaseClient.from('announcements').update({
     title: announcement.title,
     content: announcement.content,
@@ -871,33 +935,59 @@ async function supabaseUpdateAnnouncement(announcement) {
 
   if (error) {
     console.error('[Supabase] Error updating announcement:', error);
-    showToast('Failed to update announcement', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to update announcement: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Announcement updated');
+  console.log('[Supabase] Announcement updated successfully');
   return data;
 }
 
 async function supabaseDeleteAnnouncement(announcementId) {
-  if (!supabaseClient) return false;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot delete announcement: client not initialized');
+    return false;
+  }
   console.log('[Supabase] Deleting announcement:', announcementId);
 
+  // Verify auth state before attempting delete
+  const authUser = await debugAuthState('deleteAnnouncement');
+  if (!authUser) {
+    console.error('[Supabase] Cannot delete announcement: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return false;
+  }
+
+  console.log('[Supabase] Attempting announcements.delete for id:', announcementId);
   const { error } = await supabaseClient.from('announcements').delete().eq('id', announcementId);
 
   if (error) {
     console.error('[Supabase] Error deleting announcement:', error);
-    showToast('Failed to delete announcement', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to delete announcement: ' + error.message, 'error');
     return false;
   }
-  console.log('[Supabase] Announcement deleted');
+  console.log('[Supabase] Announcement deleted successfully');
   return true;
 }
 
 // Module operations
 async function supabaseCreateModule(module) {
-  if (!supabaseClient) return null;
-  console.log('[Supabase] Creating module:', module.name);
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create module: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating module:', module.name, 'for course:', module.courseId);
 
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createModule');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create module: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting modules.insert');
   const { data, error } = await supabaseClient.from('modules').insert({
     id: module.id,
     course_id: module.courseId,
@@ -908,17 +998,30 @@ async function supabaseCreateModule(module) {
 
   if (error) {
     console.error('[Supabase] Error creating module:', error);
-    showToast('Failed to save module', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save module: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Module created:', data.id);
+  console.log('[Supabase] Module created successfully:', data.id);
   return data;
 }
 
 async function supabaseUpdateModule(module) {
-  if (!supabaseClient) return null;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot update module: client not initialized');
+    return null;
+  }
   console.log('[Supabase] Updating module:', module.id);
 
+  // Verify auth state before attempting update
+  const authUser = await debugAuthState('updateModule');
+  if (!authUser) {
+    console.error('[Supabase] Cannot update module: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting modules.update for id:', module.id);
   const { data, error } = await supabaseClient.from('modules').update({
     name: module.name,
     position: module.position,
@@ -927,32 +1030,59 @@ async function supabaseUpdateModule(module) {
 
   if (error) {
     console.error('[Supabase] Error updating module:', error);
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to update module: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Module updated');
+  console.log('[Supabase] Module updated successfully');
   return data;
 }
 
 async function supabaseDeleteModule(moduleId) {
-  if (!supabaseClient) return false;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot delete module: client not initialized');
+    return false;
+  }
   console.log('[Supabase] Deleting module:', moduleId);
 
+  // Verify auth state before attempting delete
+  const authUser = await debugAuthState('deleteModule');
+  if (!authUser) {
+    console.error('[Supabase] Cannot delete module: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return false;
+  }
+
+  console.log('[Supabase] Attempting modules.delete for id:', moduleId);
   const { error } = await supabaseClient.from('modules').delete().eq('id', moduleId);
 
   if (error) {
     console.error('[Supabase] Error deleting module:', error);
-    showToast('Failed to delete module', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to delete module: ' + error.message, 'error');
     return false;
   }
-  console.log('[Supabase] Module deleted');
+  console.log('[Supabase] Module deleted successfully');
   return true;
 }
 
 // Module item operations
 async function supabaseCreateModuleItem(item, moduleId) {
-  if (!supabaseClient) return null;
-  console.log('[Supabase] Creating module item:', item.type);
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create module item: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating module item:', item.type, 'for module:', moduleId);
 
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createModuleItem');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create module item: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting module_items.insert');
   const { data, error } = await supabaseClient.from('module_items').insert({
     id: item.id,
     module_id: moduleId,
@@ -965,31 +1095,59 @@ async function supabaseCreateModuleItem(item, moduleId) {
 
   if (error) {
     console.error('[Supabase] Error creating module item:', error);
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to create module item: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Module item created:', data.id);
+  console.log('[Supabase] Module item created successfully:', data.id);
   return data;
 }
 
 async function supabaseDeleteModuleItem(itemId) {
-  if (!supabaseClient) return false;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot delete module item: client not initialized');
+    return false;
+  }
   console.log('[Supabase] Deleting module item:', itemId);
 
+  // Verify auth state before attempting delete
+  const authUser = await debugAuthState('deleteModuleItem');
+  if (!authUser) {
+    console.error('[Supabase] Cannot delete module item: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return false;
+  }
+
+  console.log('[Supabase] Attempting module_items.delete for id:', itemId);
   const { error } = await supabaseClient.from('module_items').delete().eq('id', itemId);
 
   if (error) {
     console.error('[Supabase] Error deleting module item:', error);
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to delete module item: ' + error.message, 'error');
     return false;
   }
-  console.log('[Supabase] Module item deleted');
+  console.log('[Supabase] Module item deleted successfully');
   return true;
 }
 
 // Submission operations
 async function supabaseCreateSubmission(submission) {
-  if (!supabaseClient) return null;
-  console.log('[Supabase] Creating submission for assignment:', submission.assignmentId);
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create submission: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating submission for assignment:', submission.assignmentId, 'user:', submission.userId);
 
+  // Verify auth state before attempting upsert
+  const authUser = await debugAuthState('createSubmission');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create submission: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting submissions.upsert');
   const { data, error } = await supabaseClient.from('submissions').upsert({
     id: submission.id,
     assignment_id: submission.assignmentId,
@@ -1001,18 +1159,31 @@ async function supabaseCreateSubmission(submission) {
 
   if (error) {
     console.error('[Supabase] Error creating submission:', error);
-    showToast('Failed to save submission', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save submission: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Submission created/updated:', data.id);
+  console.log('[Supabase] Submission created/updated successfully:', data.id);
   return data;
 }
 
 // Grade operations
 async function supabaseCreateGrade(grade) {
-  if (!supabaseClient) return null;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create grade: client not initialized');
+    return null;
+  }
   console.log('[Supabase] Creating grade for submission:', grade.submissionId);
 
+  // Verify auth state before attempting upsert
+  const authUser = await debugAuthState('createGrade');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create grade: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting grades.upsert with graded_by:', grade.gradedBy || appData.currentUser?.id);
   const { data, error } = await supabaseClient.from('grades').upsert({
     submission_id: grade.submissionId,
     score: grade.score,
@@ -1023,18 +1194,31 @@ async function supabaseCreateGrade(grade) {
 
   if (error) {
     console.error('[Supabase] Error creating grade:', error);
-    showToast('Failed to save grade', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save grade: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Grade created/updated');
+  console.log('[Supabase] Grade created/updated successfully');
   return data;
 }
 
 // Invite operations
 async function supabaseCreateInvite(invite) {
-  if (!supabaseClient) return null;
-  console.log('[Supabase] Creating invite:', invite.email);
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create invite: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating invite:', invite.email, 'for course:', invite.courseId);
 
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createInvite');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create invite: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting invites.insert with invited_by:', appData.currentUser?.id);
   const { data, error } = await supabaseClient.from('invites').insert({
     course_id: invite.courseId,
     email: invite.email,
@@ -1045,9 +1229,11 @@ async function supabaseCreateInvite(invite) {
 
   if (error) {
     console.error('[Supabase] Error creating invite:', error);
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to create invite: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Invite created:', data.id);
+  console.log('[Supabase] Invite created successfully:', data.id);
   return data;
 }
 
@@ -1116,8 +1302,21 @@ async function supabaseLoadUserGeminiKey(userId) {
 
 // Quiz operations
 async function supabaseCreateQuiz(quiz) {
-  if (!supabaseClient) return;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create quiz: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating quiz:', quiz.title, 'for course:', quiz.courseId);
 
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createQuiz');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create quiz: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting quizzes.insert');
   const { data, error } = await supabaseClient.from('quizzes').insert({
     id: quiz.id,
     course_id: quiz.courseId,
@@ -1132,20 +1331,34 @@ async function supabaseCreateQuiz(quiz) {
     question_pool_enabled: quiz.questionPoolEnabled,
     question_select_count: quiz.questionSelectCount,
     questions: quiz.questions
-  });
+  }).select().single();
 
   if (error) {
     console.error('[Supabase] Error creating quiz:', error);
-    showToast('Failed to save quiz to database', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save quiz: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Quiz created:', quiz.id);
+  console.log('[Supabase] Quiz created successfully:', quiz.id);
   return data;
 }
 
 async function supabaseUpdateQuiz(quiz) {
-  if (!supabaseClient) return;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot update quiz: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Updating quiz:', quiz.id);
 
+  // Verify auth state before attempting update
+  const authUser = await debugAuthState('updateQuiz');
+  if (!authUser) {
+    console.error('[Supabase] Cannot update quiz: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting quizzes.update for id:', quiz.id);
   const { data, error } = await supabaseClient.from('quizzes').update({
     title: quiz.title,
     description: quiz.description,
@@ -1157,34 +1370,62 @@ async function supabaseUpdateQuiz(quiz) {
     question_pool_enabled: quiz.questionPoolEnabled,
     question_select_count: quiz.questionSelectCount,
     questions: quiz.questions
-  }).eq('id', quiz.id);
+  }).eq('id', quiz.id).select().single();
 
   if (error) {
     console.error('[Supabase] Error updating quiz:', error);
-    showToast('Failed to update quiz in database', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to update quiz: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Quiz updated:', quiz.id);
+  console.log('[Supabase] Quiz updated successfully:', quiz.id);
   return data;
 }
 
 async function supabaseDeleteQuiz(quizId) {
-  if (!supabaseClient) return;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot delete quiz: client not initialized');
+    return false;
+  }
+  console.log('[Supabase] Deleting quiz:', quizId);
 
+  // Verify auth state before attempting delete
+  const authUser = await debugAuthState('deleteQuiz');
+  if (!authUser) {
+    console.error('[Supabase] Cannot delete quiz: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return false;
+  }
+
+  console.log('[Supabase] Attempting quizzes.delete for id:', quizId);
   const { error } = await supabaseClient.from('quizzes').delete().eq('id', quizId);
   if (error) {
     console.error('[Supabase] Error deleting quiz:', error);
-    showToast('Failed to delete quiz from database', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to delete quiz: ' + error.message, 'error');
     return false;
   }
-  console.log('[Supabase] Quiz deleted:', quizId);
+  console.log('[Supabase] Quiz deleted successfully:', quizId);
   return true;
 }
 
 // Quiz submission operations
 async function supabaseUpsertQuizSubmission(submission) {
-  if (!supabaseClient) return;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot save quiz submission: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Saving quiz submission for quiz:', submission.quizId, 'user:', submission.userId);
 
+  // Verify auth state before attempting upsert
+  const authUser = await debugAuthState('upsertQuizSubmission');
+  if (!authUser) {
+    console.error('[Supabase] Cannot save quiz submission: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting quiz_submissions.upsert');
   const { data, error } = await supabaseClient.from('quiz_submissions').upsert({
     id: submission.id,
     quiz_id: submission.quizId,
@@ -1194,21 +1435,35 @@ async function supabaseUpsertQuizSubmission(submission) {
     auto_score: submission.autoScore,
     graded: submission.graded,
     submitted_at: submission.submittedAt
-  });
+  }).select().single();
 
   if (error) {
     console.error('[Supabase] Error saving quiz submission:', error);
-    showToast('Failed to save quiz submission', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save quiz submission: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] Quiz submission saved');
+  console.log('[Supabase] Quiz submission saved successfully');
   return data;
 }
 
 // File operations
 async function supabaseCreateFile(file) {
-  if (!supabaseClient) return;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot create file: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Creating file:', file.name, 'for course:', file.courseId);
 
+  // Verify auth state before attempting insert
+  const authUser = await debugAuthState('createFile');
+  if (!authUser) {
+    console.error('[Supabase] Cannot create file: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting files.insert with uploaded_by:', file.uploadedBy);
   const { data, error } = await supabaseClient.from('files').insert({
     id: file.id,
     course_id: file.courseId,
@@ -1222,34 +1477,61 @@ async function supabaseCreateFile(file) {
     is_placeholder: file.isPlaceholder,
     is_youtube: file.isYouTube,
     hidden: file.hidden || false
-  });
+  }).select().single();
 
   if (error) {
     console.error('[Supabase] Error creating file:', error);
-    showToast('Failed to save file to database', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to save file: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] File created:', file.id);
+  console.log('[Supabase] File created successfully:', file.id);
   return data;
 }
 
 async function supabaseDeleteFile(fileId) {
-  if (!supabaseClient) return;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot delete file: client not initialized');
+    return false;
+  }
+  console.log('[Supabase] Deleting file:', fileId);
 
+  // Verify auth state before attempting delete
+  const authUser = await debugAuthState('deleteFile');
+  if (!authUser) {
+    console.error('[Supabase] Cannot delete file: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return false;
+  }
+
+  console.log('[Supabase] Attempting files.delete for id:', fileId);
   const { error } = await supabaseClient.from('files').delete().eq('id', fileId);
   if (error) {
     console.error('[Supabase] Error deleting file:', error);
-    showToast('Failed to delete file from database', 'error');
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to delete file: ' + error.message, 'error');
     return false;
   }
-  console.log('[Supabase] File deleted:', fileId);
+  console.log('[Supabase] File deleted successfully:', fileId);
   return true;
 }
 
 async function supabaseUpdateFile(file) {
-  if (!supabaseClient) return null;
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot update file: client not initialized');
+    return null;
+  }
   console.log('[Supabase] Updating file:', file.id);
 
+  // Verify auth state before attempting update
+  const authUser = await debugAuthState('updateFile');
+  if (!authUser) {
+    console.error('[Supabase] Cannot update file: not authenticated');
+    showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  console.log('[Supabase] Attempting files.update for id:', file.id);
   const { data, error } = await supabaseClient.from('files').update({
     name: file.name,
     type: file.type,
@@ -1263,9 +1545,11 @@ async function supabaseUpdateFile(file) {
 
   if (error) {
     console.error('[Supabase] Error updating file:', error);
+    console.error('[Supabase] Error details - code:', error.code, 'message:', error.message, 'hint:', error.hint);
+    showToast('Failed to update file: ' + error.message, 'error');
     return null;
   }
-  console.log('[Supabase] File updated');
+  console.log('[Supabase] File updated successfully');
   return data;
 }
 
