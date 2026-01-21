@@ -2398,17 +2398,32 @@ async function signInWithGoogle() {
   }
 }
 
+// Track if app is already initialized for current user (prevents duplicate loads on token refresh)
+let appInitializedForUser = null;
+
 // Handle auth state changes (called on page load and after OAuth redirect)
 async function handleAuthStateChange(event, session) {
   console.log('[Auth] Auth state changed:', event, session?.user?.email);
 
   if (event === 'SIGNED_IN' && session?.user) {
+    // Skip if already initialized for this user (token refresh case)
+    if (appInitializedForUser === session.user.id) {
+      console.log('[Auth] Skipping reload - already initialized for this user (token refresh)');
+      return;
+    }
     await handleSignedIn(session.user);
   } else if (event === 'SIGNED_OUT') {
     handleSignedOut();
   } else if (event === 'INITIAL_SESSION' && session?.user) {
     // User was already signed in (page refresh)
+    if (appInitializedForUser === session.user.id) {
+      console.log('[Auth] Skipping reload - already initialized for this user');
+      return;
+    }
     await handleSignedIn(session.user);
+  } else if (event === 'TOKEN_REFRESHED') {
+    // Token refreshed - no action needed, session is still valid
+    console.log('[Auth] Token refreshed - no reload needed');
   }
 }
 
@@ -2429,17 +2444,12 @@ async function handleSignedIn(user) {
   // Load data from Supabase
   await loadDataFromSupabase();
 
-  // Load user's Gemini key from Supabase profile
-  const userGeminiKey = await supabaseLoadUserGeminiKey(user.id);
-  if (userGeminiKey) {
-    console.log('[Auth] Loaded Gemini key from user profile');
-    appData.settings.geminiKey = userGeminiKey;
-    // Set on window for immediate use (takes priority over config.js)
-    window.GEMINI_API_KEY = userGeminiKey;
-  }
-
   // Initialize the app UI
   initApp();
+
+  // Mark as initialized for this user (prevents duplicate loads on token refresh)
+  appInitializedForUser = user.id;
+  console.log('[Auth] App initialized for user:', user.id);
 }
 
 // Handle sign-out
@@ -2448,6 +2458,7 @@ function handleSignedOut() {
   appData.currentUser = null;
   appData = JSON.parse(JSON.stringify(defaultData)); // Reset data
   activeCourseId = null;
+  appInitializedForUser = null; // Clear initialization flag
   showLoginScreen();
 }
 
