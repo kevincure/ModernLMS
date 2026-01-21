@@ -3226,10 +3226,27 @@ function viewAnnouncement(announcementId) {
 
 function renderStartHere(course) {
   const isStaffUser = isStaff(appData.currentUser.id, course.id);
+  const effectiveStaff = isStaffUser && !studentViewMode;
   const startHereTitle = course.startHereTitle || 'Start Here';
   // Default welcome message with course name
   const defaultContent = `Welcome to ${course.name}.`;
   const startHereContent = course.startHereContent || defaultContent;
+
+  // Determine role label for display
+  let roleLabel = '';
+  if (studentViewMode) {
+    roleLabel = 'You are a student';
+  } else {
+    const enrollment = appData.enrollments.find(e => e.userId === appData.currentUser.id && e.courseId === course.id);
+    if (enrollment) {
+      const roleLabels = {
+        'instructor': 'You are the instructor',
+        'ta': 'You are a TA',
+        'student': 'You are a student'
+      };
+      roleLabel = roleLabels[enrollment.role] || '';
+    }
+  }
 
   // Use only user-added links (stored in course.startHereLinks)
   const pinnedLinks = course.startHereLinks || [];
@@ -3246,9 +3263,9 @@ function renderStartHere(course) {
         }
         return `<a href="${escapeHtml(link.url)}" target="_blank" class="pill pill-link">${escapeHtml(link.label)}</a>`;
       }).join('')}</div>`
-    : (isStaffUser ? '<div class="muted">Add essential links for students.</div>' : '');
+    : '';
 
-  const pinnedSection = pinnedLinks.length || isStaffUser ? `
+  const pinnedSection = pinnedLinks.length ? `
     <div style="margin-top:12px;">
       <div class="muted" style="margin-bottom:6px;">Pinned essentials</div>
       ${pinnedHtml}
@@ -3256,10 +3273,11 @@ function renderStartHere(course) {
   ` : '';
 
   setHTML('homeStartHere', `
+    ${roleLabel ? `<div style="margin-bottom:12px; padding:8px 12px; background:var(--primary-light); border-radius:var(--radius); font-weight:500; color:var(--primary);">${roleLabel}</div>` : ''}
     <div class="card">
       <div class="card-header">
         <div class="card-title">${startHereTitle}</div>
-        ${isStaffUser ? `<button class="btn btn-secondary btn-sm" onclick="openStartHereModal('${course.id}')">Edit</button>` : ''}
+        ${effectiveStaff ? `<button class="btn btn-secondary btn-sm" onclick="openStartHereModal('${course.id}')">Edit</button>` : ''}
       </div>
       <div class="markdown-content">${renderMarkdown(startHereContent)}</div>
       ${pinnedSection}
@@ -9334,7 +9352,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:12px;">
-            Upload a CSV with columns: Email, Name (optional).
+            Upload a CSV with email addresses (one per row).
           </div>
           <div class="form-group">
             <label class="form-label">CSV File</label>
@@ -10801,14 +10819,11 @@ function renderTopBarViewToggle() {
 
   if (isStaffUser) {
     if (studentViewMode) {
-      // Show "You are a student" indicator with exit button
+      // Show exit button only - role indicator is shown on Home page
       container.innerHTML = `
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-size:0.85rem; color:var(--primary); font-weight:500;">You are a student</span>
-          <button class="btn btn-secondary" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
-            Exit Preview
-          </button>
-        </div>
+        <button class="btn btn-primary" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
+          Exit Student View
+        </button>
       `;
     } else {
       container.innerHTML = `

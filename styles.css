@@ -1358,7 +1358,7 @@ body {
     top: auto;
     bottom: 0;
     width: 100%;
-    height: 64px;
+    height: auto;
     min-height: 64px;
     flex-direction: row;
     align-items: stretch;
@@ -1374,6 +1374,7 @@ body {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     -ms-overflow-style: none;
+    z-index: 1000;
   }
 
   .toolbar::-webkit-scrollbar {
@@ -1384,10 +1385,10 @@ body {
     display: none;
   }
 
-  /* Touch-friendly tap targets - fill entire toolbar height */
+  /* Touch-friendly tap targets - explicit height, no percentage */
   .tool-btn {
     width: 48px;
-    height: 100%;
+    height: 64px;
     min-width: 48px;
     min-height: 64px;
     flex: 0 0 auto;
@@ -1395,12 +1396,12 @@ body {
     position: relative;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
-    /* Ensure full button is clickable */
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10;
-    padding: 8px 0;
+    z-index: 1001;
+    padding: 0;
+    margin: 0;
   }
 
   /* Remove the pseudo-element touch expansion - button now fills toolbar */
@@ -1623,6 +1624,7 @@ body {
   .ai-page-body {
     height: calc(100vh - 160px);
     height: calc(100dvh - 160px);
+    max-height: 500px;
   }
 
   .ai-thread-container {
