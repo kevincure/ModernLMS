@@ -785,6 +785,43 @@ async function supabaseCreateEnrollment(enrollment) {
   return data;
 }
 
+async function supabaseDeleteEnrollment(userId, courseId) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Deleting enrollment:', userId, courseId);
+
+  const { error } = await supabaseClient.from('enrollments')
+    .delete()
+    .eq('user_id', userId)
+    .eq('course_id', courseId);
+
+  if (error) {
+    console.error('[Supabase] Error deleting enrollment:', error);
+    showToast('Failed to remove from course', 'error');
+    return null;
+  }
+  console.log('[Supabase] Enrollment deleted');
+  return true;
+}
+
+async function supabaseUpdateEnrollment(userId, courseId, role) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating enrollment role:', userId, courseId, role);
+
+  const { data, error } = await supabaseClient.from('enrollments')
+    .update({ role })
+    .eq('user_id', userId)
+    .eq('course_id', courseId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[Supabase] Error updating enrollment:', error);
+    return null;
+  }
+  console.log('[Supabase] Enrollment updated');
+  return data;
+}
+
 // Assignment operations
 async function supabaseCreateAssignment(assignment) {
   if (!supabaseClient) {
@@ -1644,6 +1681,127 @@ async function supabaseDeleteQuestionBank(bankId) {
   const { error } = await supabaseClient.from('question_banks').delete().eq('id', bankId);
   if (error) {
     console.error('[Supabase] Error deleting question bank:', error);
+  }
+  return true;
+}
+
+// Grade Category operations
+async function supabaseCreateGradeCategory(category) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating grade category:', category.name);
+
+  const { data, error } = await supabaseClient.from('grade_categories').insert({
+    id: category.id,
+    course_id: category.courseId,
+    name: category.name,
+    weight: category.weight
+  }).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error creating grade category:', error);
+    return null;
+  }
+  return data;
+}
+
+async function supabaseUpdateGradeCategory(category) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating grade category:', category.id);
+
+  const { data, error } = await supabaseClient.from('grade_categories').update({
+    name: category.name,
+    weight: category.weight
+  }).eq('id', category.id).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating grade category:', error);
+    return null;
+  }
+  return data;
+}
+
+async function supabaseDeleteGradeCategory(categoryId) {
+  if (!supabaseClient) return true;
+  console.log('[Supabase] Deleting grade category:', categoryId);
+
+  const { error } = await supabaseClient.from('grade_categories').delete().eq('id', categoryId);
+  if (error) {
+    console.error('[Supabase] Error deleting grade category:', error);
+    return false;
+  }
+  return true;
+}
+
+// Rubric operations
+async function supabaseCreateRubric(assignmentId, criteria) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Creating rubric for assignment:', assignmentId);
+
+  // First create the rubric
+  const { data: rubric, error: rubricError } = await supabaseClient.from('rubrics').insert({
+    assignment_id: assignmentId
+  }).select().single();
+
+  if (rubricError) {
+    console.error('[Supabase] Error creating rubric:', rubricError);
+    return null;
+  }
+
+  // Then create criteria
+  if (criteria && criteria.length > 0) {
+    const criteriaToInsert = criteria.map((c, idx) => ({
+      rubric_id: rubric.id,
+      name: c.name,
+      description: c.description || '',
+      points: c.points,
+      position: idx
+    }));
+
+    const { error: criteriaError } = await supabaseClient.from('rubric_criteria').insert(criteriaToInsert);
+    if (criteriaError) {
+      console.error('[Supabase] Error creating rubric criteria:', criteriaError);
+    }
+  }
+
+  return rubric;
+}
+
+async function supabaseUpdateRubric(rubricId, criteria) {
+  if (!supabaseClient) return null;
+  console.log('[Supabase] Updating rubric:', rubricId);
+
+  // Delete existing criteria
+  await supabaseClient.from('rubric_criteria').delete().eq('rubric_id', rubricId);
+
+  // Insert new criteria
+  if (criteria && criteria.length > 0) {
+    const criteriaToInsert = criteria.map((c, idx) => ({
+      rubric_id: rubricId,
+      name: c.name,
+      description: c.description || '',
+      points: c.points,
+      position: idx
+    }));
+
+    const { error } = await supabaseClient.from('rubric_criteria').insert(criteriaToInsert);
+    if (error) {
+      console.error('[Supabase] Error updating rubric criteria:', error);
+      return null;
+    }
+  }
+
+  return { id: rubricId };
+}
+
+async function supabaseDeleteRubric(rubricId) {
+  if (!supabaseClient) return true;
+  console.log('[Supabase] Deleting rubric:', rubricId);
+
+  // Criteria will be cascade deleted due to FK constraint
+  const { error } = await supabaseClient.from('rubrics').delete().eq('id', rubricId);
+  if (error) {
+    console.error('[Supabase] Error deleting rubric:', error);
+    return false;
   }
   return true;
 }
@@ -3043,7 +3201,7 @@ async function createCourse() {
     }
   }
 
-  saveData(appData);
+
   activeCourseId = courseId;
 
   closeModal('createCourseModal');
@@ -3488,7 +3646,7 @@ async function toggleAnnouncementVisibility(id) {
     return;
   }
 
-  saveData(appData);
+
   renderUpdates();
   renderHome();
   showToast(announcement.hidden ? 'Announcement hidden' : 'Announcement published', 'info');
@@ -3523,7 +3681,7 @@ async function createAnnouncement() {
 
     // Update local state
     appData.announcements.push(announcement);
-    saveData(appData);
+  
 
     closeModal('announcementModal');
     resetAnnouncementModal();
@@ -3543,7 +3701,7 @@ function deleteAnnouncement(id) {
 
     // Update local state
     appData.announcements = appData.announcements.filter(a => a.id !== id);
-    saveData(appData);
+  
     renderUpdates();
     renderHome();
     showToast('Announcement deleted', 'success');
@@ -3621,7 +3779,7 @@ async function updateAnnouncement() {
     announcement.pinned = originalPinned;
     return;
   }
-  saveData(appData);
+
 
   closeModal('announcementModal');
   resetAnnouncementModal();
@@ -3896,7 +4054,7 @@ async function createAssignment() {
 
     // Update local state
     appData.assignments.push(assignment);
-    saveData(appData);
+  
 
     closeModal('assignmentModal');
     resetAssignmentModal();
@@ -4049,7 +4207,7 @@ async function updateAssignment() {
     Object.assign(assignment, original);
     return;
   }
-  saveData(appData);
+
 
   closeModal('assignmentModal');
   resetAssignmentModal();
@@ -4074,7 +4232,7 @@ function deleteAssignment(assignmentId) {
     // Update local state
     appData.assignments = appData.assignments.filter(a => a.id !== assignmentId);
     appData.submissions = appData.submissions.filter(s => s.assignmentId !== assignmentId);
-    saveData(appData);
+  
     renderAssignments();
     renderHome();
     showToast('Assignment deleted', 'success');
@@ -4161,7 +4319,7 @@ function deleteQuestionBank(bankId) {
   confirm(`Delete "${bank.name}"? This cannot be undone.`, async () => {
     await supabaseDeleteQuestionBank(bankId);
     appData.questionBanks = appData.questionBanks.filter(b => b.id !== bankId);
-    saveData(appData);
+  
     renderQuestionBankList();
     showToast('Question bank deleted', 'success');
   });
@@ -4442,7 +4600,7 @@ async function saveQuestionBank() {
     await supabaseCreateQuestionBank(newBank);
   }
 
-  saveData(appData);
+
   closeModal('questionBankEditModal');
   showToast(currentEditQuestionBankId ? 'Question bank updated' : 'Question bank created', 'success');
 
@@ -4635,7 +4793,7 @@ async function saveNewAssignment() {
       return;
     }
 
-    saveData(appData);
+  
     closeModal('newAssignmentModal');
     resetNewAssignmentModal();
     renderAssignments();
@@ -4671,7 +4829,7 @@ async function saveNewAssignment() {
     const result = await supabaseCreateAssignment(newAssignment);
     if (result) {
       appData.assignments.push(newAssignment);
-      saveData(appData);
+    
 
       closeModal('newAssignmentModal');
       resetNewAssignmentModal();
@@ -4738,7 +4896,7 @@ function saveSubmission() {
       reader.onload = function(e) {
         submission.fileData = e.target.result;
         appData.submissions.push(submission);
-        saveData(appData);
+      
         
         closeModal('submitModal');
         renderAssignments();
@@ -4755,7 +4913,7 @@ function saveSubmission() {
   }
   
   appData.submissions.push(submission);
-  saveData(appData);
+
   
   closeModal('submitModal');
   renderAssignments();
@@ -4936,30 +5094,33 @@ function calculateRubricScore(assignmentId) {
   showToast('Score calculated from rubric', 'success');
 }
 
-function saveGrade(submissionId) {
+async function saveGrade(submissionId) {
   const score = parseFloat(document.getElementById('gradeScore').value);
   const feedback = document.getElementById('gradeFeedback').value.trim();
   const released = document.getElementById('gradeReleased').checked;
-  
+
   if (isNaN(score) || !feedback) {
     showToast('Please provide score and feedback', 'error');
     return;
   }
-  
-  // Remove existing grade if any
+
+  // Remove existing grade if any from local state
   appData.grades = appData.grades.filter(g => g.submissionId !== submissionId);
-  
-  // Add new grade
-  appData.grades.push({
+
+  // Create new grade
+  const gradeObj = {
     submissionId: submissionId,
     score: score,
     feedback: feedback,
     released: released,
     gradedBy: appData.currentUser.id,
     gradedAt: new Date().toISOString()
-  });
-  
-  saveData(appData);
+  };
+
+  // Save to Supabase
+  await supabaseUpsertGrade(gradeObj);
+
+  appData.grades.push(gradeObj);
   closeModal('gradeModal');
   closeModal('submissionsModal');
   renderGradebook();
@@ -5309,7 +5470,7 @@ async function saveQuiz() {
     appData.quizzes.push(quizData);
   }
   
-  saveData(appData);
+
   
   closeModal('quizModal');
   renderAssignments();
@@ -5329,7 +5490,7 @@ function deleteQuiz(quizId) {
     // Update local state
     appData.quizzes = appData.quizzes.filter(q => q.id !== quizId);
     appData.quizSubmissions = appData.quizSubmissions.filter(s => s.quizId !== quizId);
-    saveData(appData);
+  
     renderAssignments();
     renderHome();
     showToast('Quiz deleted', 'success');
@@ -5488,7 +5649,7 @@ async function submitQuiz() {
   await supabaseUpsertQuizSubmission(submission);
 
   appData.quizSubmissions.push(submission);
-  saveData(appData);
+
   
   if (quizTimerInterval) {
     clearInterval(quizTimerInterval);
@@ -5607,25 +5768,25 @@ function openQuizGradeModal(quizId, submissionId) {
   openModal('quizGradeModal');
 }
 
-function saveQuizGrade() {
+async function saveQuizGrade() {
   const submissionId = document.getElementById('quizGradeSubmissionId').value;
   const quizId = document.getElementById('quizGradeQuizId').value;
   const score = parseFloat(document.getElementById('quizGradeScore').value) || 0;
   const feedback = document.getElementById('quizGradeFeedback').value.trim();
-  
+
   const submission = appData.quizSubmissions.find(s => s.id === submissionId);
   if (!submission) return;
-  
+
   submission.score = score;
   submission.feedback = feedback;
   submission.released = true;
   submission.needsManual = false;
   submission.gradedAt = new Date().toISOString();
   submission.gradedBy = appData.currentUser.id;
-  
-  saveData(appData);
-  
-  const quiz = appData.quizzes.find(q => q.id === quizId);
+
+  // Save to Supabase
+  await supabaseUpsertQuizSubmission(submission);
+
   closeModal('quizGradeModal');
   renderAssignments();
   viewQuizSubmissions(quizId);
@@ -5870,7 +6031,7 @@ function handleModuleDragOver(event) {
   event.dataTransfer.dropEffect = 'move';
 }
 
-function handleModuleDrop(event) {
+async function handleModuleDrop(event) {
   event.preventDefault();
   const draggedId = event.dataTransfer.getData('text/plain');
   const targetEl = event.target.closest('.module-card');
@@ -5889,13 +6050,15 @@ function handleModuleDrop(event) {
   const [removed] = modules.splice(draggedIndex, 1);
   modules.splice(targetIndex, 0, removed);
 
-  // Update positions
-  modules.forEach((m, i) => {
-    const mod = appData.modules.find(x => x.id === m.id);
-    if (mod) mod.position = i;
-  });
+  // Update positions in local state and Supabase
+  for (let i = 0; i < modules.length; i++) {
+    const mod = appData.modules.find(x => x.id === modules[i].id);
+    if (mod && mod.position !== i) {
+      mod.position = i;
+      await supabaseUpdateModule(mod);
+    }
+  }
 
-  saveData(appData);
   renderModules();
 }
 
@@ -5921,7 +6084,7 @@ function handleModuleItemDragOver(event) {
   event.dataTransfer.dropEffect = 'move';
 }
 
-function handleModuleItemDrop(event) {
+async function handleModuleItemDrop(event) {
   event.preventDefault();
   event.stopPropagation();
 
@@ -5955,7 +6118,27 @@ function handleModuleItemDrop(event) {
   sourceModule.items.forEach((item, i) => item.position = i);
   targetModule.items.forEach((item, i) => item.position = i);
 
-  saveData(appData);
+  // Persist to Supabase - update the module_item's module_id if it changed
+  if (sourceModule.id !== targetModule.id) {
+    // Item moved to different module - update module_id
+    await supabaseClient.from('module_items').update({
+      module_id: targetModule.id,
+      position: movedItem.position
+    }).eq('id', movedItem.id);
+  }
+
+  // Update positions for source module items
+  for (const item of sourceModule.items) {
+    await supabaseClient.from('module_items').update({ position: item.position }).eq('id', item.id);
+  }
+
+  // Update positions for target module items (if different from source)
+  if (sourceModule.id !== targetModule.id) {
+    for (const item of targetModule.items) {
+      await supabaseClient.from('module_items').update({ position: item.position }).eq('id', item.id);
+    }
+  }
+
   renderModules();
 }
 
@@ -6010,7 +6193,7 @@ async function saveModule() {
     appData.modules.push(newModule);
   }
 
-  saveData(appData);
+
   closeModal('moduleModal');
   renderModules();
   showToast(moduleId ? 'Module updated!' : 'Module created!', 'success');
@@ -6027,7 +6210,7 @@ function deleteModule(moduleId) {
 
     // Update local state
     appData.modules = appData.modules.filter(m => m.id !== moduleId);
-    saveData(appData);
+  
     renderModules();
     showToast('Module deleted', 'success');
   });
@@ -6049,7 +6232,7 @@ async function toggleModuleVisibility(moduleId) {
     return;
   }
 
-  saveData(appData);
+
   renderModules();
   showToast(module.hidden ? 'Module hidden from students' : 'Module visible to students', 'info');
 }
@@ -6070,7 +6253,7 @@ async function toggleFileVisibility(fileId) {
     return;
   }
 
-  saveData(appData);
+
   renderModules();
   renderFiles();
   showToast(file.hidden ? 'File hidden from students' : 'File visible to students', 'info');
@@ -6137,7 +6320,7 @@ async function addModuleItem() {
 
   // Update local state
   module.items.push(newItem);
-  saveData(appData);
+
 
   closeModal('addModuleItemModal');
   renderModules();
@@ -6155,7 +6338,7 @@ async function removeModuleItem(moduleId, itemId) {
   module.items = module.items.filter(i => i.id !== itemId);
   module.items.forEach((item, i) => item.position = i);
 
-  saveData(appData);
+
   renderModules();
   showToast('Item removed from module', 'success');
 }
@@ -6381,7 +6564,7 @@ function renderSyllabusParsedPreview(parsed) {
   `;
 }
 
-function importParsedSyllabus() {
+async function importParsedSyllabus() {
   if (!parsedSyllabusData || !parsedSyllabusData.modules) {
     showToast('No parsed data to import', 'error');
     return;
@@ -6405,8 +6588,10 @@ function importParsedSyllabus() {
     checkedItemsMap[modIdx].add(itemIdx);
   });
 
-  parsedSyllabusData.modules.forEach((mod, modIndex) => {
-    if (!checkedModuleIndices.has(modIndex)) return;
+  showToast('Importing syllabus content...', 'info');
+
+  for (const [modIndex, mod] of parsedSyllabusData.modules.entries()) {
+    if (!checkedModuleIndices.has(modIndex)) continue;
 
     const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
     const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
@@ -6419,8 +6604,8 @@ function importParsedSyllabus() {
       items: []
     };
 
-    (mod.items || []).forEach((item, itemIndex) => {
-      if (!checkedItemsMap[modIndex] || !checkedItemsMap[modIndex].has(itemIndex)) return;
+    for (const [itemIndex, item] of (mod.items || []).entries()) {
+      if (!checkedItemsMap[modIndex] || !checkedItemsMap[modIndex].has(itemIndex)) continue;
 
       let refId = null;
 
@@ -6440,8 +6625,9 @@ function importParsedSyllabus() {
           questionPoolEnabled: false,
           questionSelectCount: 0,
           questions: [],
-          isPlaceholder: true  // Mark as placeholder
+          isPlaceholder: true
         };
+        await supabaseCreateQuiz(newQuiz);
         appData.quizzes.push(newQuiz);
         refId = newQuiz.id;
         placeholdersCreated++;
@@ -6460,12 +6646,13 @@ function importParsedSyllabus() {
           name: item.title,
           type: 'placeholder',
           size: 0,
-          visible: false,  // Hidden by default
+          hidden: true,
           isPlaceholder: true,
           description: item.description || '',
           uploadedBy: appData.currentUser.id,
           uploadedAt: new Date().toISOString()
         };
+        await supabaseCreateFile(newFile);
         appData.files.push(newFile);
         refId = newFile.id;
         placeholdersCreated++;
@@ -6492,8 +6679,9 @@ function importParsedSyllabus() {
           allowResubmission: false,
           category: 'homework',
           rubric: null,
-          isPlaceholder: true  // Mark as placeholder
+          isPlaceholder: true
         };
+        await supabaseCreateAssignment(newAssignment);
         appData.assignments.push(newAssignment);
         refId = newAssignment.id;
         placeholdersCreated++;
@@ -6507,13 +6695,20 @@ function importParsedSyllabus() {
       }
 
       itemsCreated++;
-    });
+    }
+
+    // Save module to Supabase (without items - items saved separately)
+    await supabaseCreateModule(newModule);
+
+    // Save module items to Supabase
+    for (const moduleItem of newModule.items) {
+      await supabaseCreateModuleItem(newModule.id, moduleItem);
+    }
 
     appData.modules.push(newModule);
     modulesCreated++;
-  });
+  }
 
-  saveData(appData);
   closeModal('syllabusParserModal');
   renderModules();
   renderAssignments();
@@ -6737,7 +6932,7 @@ function renderAudioParsedPreview(parsed, outputType) {
   }
 }
 
-function applyAudioParsedResult() {
+async function applyAudioParsedResult() {
   if (!parsedAudioData) {
     showToast('No parsed data to apply', 'error');
     return;
@@ -6746,7 +6941,7 @@ function applyAudioParsedResult() {
   if (parsedAudioData.outputType === 'announcement' && parsedAudioData.announcement) {
     const ann = parsedAudioData.announcement;
 
-    appData.announcements.push({
+    const newAnnouncement = {
       id: generateId(),
       courseId: activeCourseId,
       title: ann.title || 'Untitled Announcement',
@@ -6755,9 +6950,15 @@ function applyAudioParsedResult() {
       authorId: appData.currentUser.id,
       createdAt: new Date().toISOString(),
       scheduledFor: ann.scheduledFor || null
-    });
+    };
 
-    saveData(appData);
+    // Save to Supabase
+    const result = await supabaseCreateAnnouncement(newAnnouncement);
+    if (!result) {
+      return; // Error already shown
+    }
+
+    appData.announcements.push(newAnnouncement);
     closeModal('audioInputModal');
     renderUpdates();
     showToast('Announcement created!', 'success');
@@ -6781,8 +6982,13 @@ function applyAudioParsedResult() {
       questions: []
     };
 
+    // Save to Supabase
+    const result = await supabaseCreateQuiz(newQuiz);
+    if (!result) {
+      return; // Error already shown
+    }
+
     appData.quizzes.push(newQuiz);
-    saveData(appData);
     closeModal('audioInputModal');
 
     // Open quiz editor
@@ -7025,7 +7231,7 @@ Provide a score (0-${assignment.points}) and constructive feedback. Return JSON:
   }
 }
 
-function saveSpeedGraderGrade() {
+async function saveSpeedGraderGrade() {
   const current = speedGraderStudents[currentSpeedGraderStudentIndex];
   if (!current.submission) {
     showToast('No submission to grade', 'error');
@@ -7057,10 +7263,10 @@ function saveSpeedGraderGrade() {
     rubricScores = Array.from(rubricInputs).map(input => parseFloat(input.value) || 0);
   }
 
-  // Remove existing grade
+  // Remove existing grade from local state
   appData.grades = appData.grades.filter(g => g.submissionId !== current.submission.id);
 
-  // Add new grade
+  // Create new grade
   const gradeObj = {
     submissionId: current.submission.id,
     score: finalScore,
@@ -7074,12 +7280,14 @@ function saveSpeedGraderGrade() {
     gradeObj.rubricScores = rubricScores;
   }
 
+  // Save to Supabase
+  await supabaseUpsertGrade(gradeObj);
+
   appData.grades.push(gradeObj);
 
   // Update local state
   current.grade = gradeObj;
 
-  saveData(appData);
   showToast(`Grade saved${lateDeduction > 0 ? ` (${lateDeduction}% late penalty applied)` : ''}!`, 'success');
 
   // Auto-advance to next ungraded
@@ -7238,7 +7446,7 @@ function convertPlaceholderToFile(fileId) {
       file.hidden = false;
       // Persist to Supabase
       await supabaseUpdateFile(file);
-      saveData(appData);
+    
       renderFiles();
       renderModules();
       showToast('File uploaded!', 'success');
@@ -7262,7 +7470,7 @@ async function convertPlaceholderToLink(fileId) {
     file.hidden = false;
     // Persist to Supabase
     await supabaseUpdateFile(file);
-    saveData(appData);
+  
     renderFiles();
     renderModules();
     showToast('External link added!', 'success');
@@ -7398,7 +7606,7 @@ async function uploadFiles() {
     }
   }
 
-  saveData(appData);
+
   closeModal('fileUploadModal');
   renderFiles();
 
@@ -7427,7 +7635,7 @@ function deleteFile(id) {
     await supabaseDeleteFile(id);
 
     appData.files = appData.files.filter(f => f.id !== id);
-    saveData(appData);
+  
     renderFiles();
     showToast('File deleted', 'success');
   });
@@ -7797,7 +8005,7 @@ async function saveManualGrade() {
 
   // Save grade to Supabase
   await supabaseUpsertGrade(existingGrade);
-  saveData(appData);
+
 
   closeModal('manualGradeModal');
   renderGradebook();
@@ -8345,7 +8553,7 @@ async function confirmAiAction(idx, publish = false) {
 
     appData.announcements.push(announcement);
     msg.wasPublished = publish;
-    saveData(appData);
+  
     renderUpdates();
     renderHome();
     showToast(publish ? 'Announcement published!' : 'Announcement created as draft!', 'success');
@@ -8374,7 +8582,7 @@ async function confirmAiAction(idx, publish = false) {
     }
 
     appData.quizzes.push(newQuiz);
-    saveData(appData);
+  
     renderAssignments();
     showToast('Quiz created as draft! Click Preview to see full details.', 'success');
   } else if (msg.actionType === 'quiz_from_bank') {
@@ -8413,7 +8621,7 @@ async function confirmAiAction(idx, publish = false) {
     }
 
     appData.assignments.push(newAssignment);
-    saveData(appData);
+  
     renderAssignments();
     showToast(`${msg.data.category === 'exam' ? 'Exam' : 'Quiz'} created as draft!`, 'success');
   } else if (msg.actionType === 'assignment') {
@@ -8440,7 +8648,7 @@ async function confirmAiAction(idx, publish = false) {
     }
 
     appData.assignments.push(newAssignment);
-    saveData(appData);
+  
     renderAssignments();
     showToast('Assignment created as draft!', 'success');
   } else if (msg.actionType === 'module') {
@@ -8464,7 +8672,7 @@ async function confirmAiAction(idx, publish = false) {
     }
 
     appData.modules.push(newModule);
-    saveData(appData);
+  
     renderModules();
     showToast('Module created!', 'success');
   }
@@ -9649,16 +9857,12 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="settingsGeminiKey">Gemini API Key (AI Features)</label>
-            <input type="password" class="form-input" id="settingsGeminiKey"
-                   placeholder="AIza..."
-                   value="${window.GEMINI_API_KEY || appData.settings.geminiKey || ''}"
-                   autocomplete="off" spellcheck="false">
-            <div class="hint">
-              ${window.GEMINI_API_KEY ? '✓ Loaded (saved to your profile)' : 'For AI features. Get from Google AI Studio. Your key is securely stored in your profile.'}
+            <div class="hint" style="background: var(--bg-color); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color);">
+              <strong>AI Features</strong><br>
+              AI features are configured server-side and available to all users.
             </div>
           </div>
-          
+
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Cancel</button>
@@ -10366,24 +10570,8 @@ student3@example.com, 92, Well done" rows="10"></textarea>
   `);
 }
 
-async function saveSettings() {
-  const geminiInput = document.getElementById('settingsGeminiKey')?.value.trim();
-
-  // Only save if user explicitly entered a value (don't overwrite config.js with empty)
-  if (geminiInput) {
-    appData.settings.geminiKey = geminiInput;
-    // Also set it on window for immediate use
-    window.GEMINI_API_KEY = geminiInput;
-    console.log('[Settings] Gemini API key updated');
-
-    // Save to Supabase user profile
-    if (appData.currentUser?.id) {
-      await supabaseUpdateUserGeminiKey(appData.currentUser.id, geminiInput);
-    }
-  }
-
-
-  saveData(appData);
+function saveSettings() {
+  // AI settings are now configured server-side via Supabase Edge Function
   closeModal('settingsModal');
   showToast('Settings saved!', 'success');
 }
@@ -10456,7 +10644,7 @@ function openImportContentModal() {
   openModal('importContentModal');
 }
 
-function executeImportContent() {
+async function executeImportContent() {
   const sourceCourseId = document.getElementById('importSourceCourse').value;
   const typesSelect = document.getElementById('importContentTypes');
   const selectedTypes = typesSelect ? Array.from(typesSelect.selectedOptions).map(opt => opt.value) : [];
@@ -10476,11 +10664,12 @@ function executeImportContent() {
     return;
   }
 
+  showToast('Importing content...', 'info');
   let importedCount = 0;
 
   if (selectedTypes.includes('assignments')) {
     const assignments = appData.assignments.filter(a => a.courseId === sourceCourseId);
-    assignments.forEach(assignment => {
+    for (const assignment of assignments) {
       const newAssignment = {
         ...assignment,
         id: generateId(),
@@ -10488,15 +10677,16 @@ function executeImportContent() {
         status: 'draft',
         createdAt: new Date().toISOString()
       };
+      await supabaseCreateAssignment(newAssignment);
       appData.assignments.push(newAssignment);
       importedCount++;
-    });
+    }
   }
 
   if (selectedTypes.includes('quizzes')) {
     const quizzes = appData.quizzes.filter(q => q.courseId === sourceCourseId);
-    quizzes.forEach(quiz => {
-      appData.quizzes.push({
+    for (const quiz of quizzes) {
+      const newQuiz = {
         ...quiz,
         id: generateId(),
         courseId: activeCourseId,
@@ -10506,53 +10696,67 @@ function executeImportContent() {
           ...q,
           id: generateId()
         }))
-      });
+      };
+      await supabaseCreateQuiz(newQuiz);
+      appData.quizzes.push(newQuiz);
       importedCount++;
-    });
+    }
   }
 
   if (selectedTypes.includes('announcements')) {
     const announcements = appData.announcements.filter(a => a.courseId === sourceCourseId);
-    announcements.forEach(announcement => {
-      appData.announcements.push({
+    for (const announcement of announcements) {
+      const newAnnouncement = {
         ...announcement,
         id: generateId(),
         courseId: activeCourseId,
         authorId: appData.currentUser.id,
         createdAt: new Date().toISOString(),
         pinned: false
-      });
+      };
+      await supabaseCreateAnnouncement(newAnnouncement);
+      appData.announcements.push(newAnnouncement);
       importedCount++;
-    });
+    }
   }
 
   if (selectedTypes.includes('files')) {
     const files = appData.files.filter(f => f.courseId === sourceCourseId);
-    files.forEach(file => {
-      appData.files.push({
+    for (const file of files) {
+      const newFile = {
         ...file,
         id: generateId(),
         courseId: activeCourseId,
         uploadedBy: appData.currentUser.id,
         uploadedAt: new Date().toISOString()
-      });
+      };
+      await supabaseCreateFile(newFile);
+      appData.files.push(newFile);
       importedCount++;
-    });
+    }
   }
 
   if (selectedTypes.includes('categoryWeights') && appData.gradeCategories) {
     const weights = appData.gradeCategories.filter(w => w.courseId === sourceCourseId);
+    // Remove existing categories for this course
+    const existingCategories = appData.gradeCategories.filter(w => w.courseId === activeCourseId);
+    for (const cat of existingCategories) {
+      await supabaseDeleteGradeCategory(cat.id);
+    }
     appData.gradeCategories = appData.gradeCategories.filter(w => w.courseId !== activeCourseId);
-    weights.forEach(weight => {
-      appData.gradeCategories.push({
+
+    for (const weight of weights) {
+      const newCategory = {
         ...weight,
+        id: generateId(),
         courseId: activeCourseId
-      });
-    });
+      };
+      await supabaseCreateGradeCategory(newCategory);
+      appData.gradeCategories.push(newCategory);
+    }
     importedCount += weights.length;
   }
 
-  saveData(appData);
   closeModal('importContentModal');
   renderAll();
   showToast(`Imported ${importedCount} items`, 'success');
@@ -10595,7 +10799,7 @@ function processBulkStudentImport() {
   const file = fileInput.files[0];
   const reader = new FileReader();
 
-  reader.onload = function(event) {
+  reader.onload = async function(event) {
     const text = event.target.result;
 
     // Support both comma-delimited and row-delimited formats
@@ -10628,40 +10832,48 @@ function processBulkStudentImport() {
     let invited = 0;
     let errors = 0;
 
-    emails.forEach(email => {
+    for (const email of emails) {
       if (!email || !email.includes('@')) {
         errors += 1;
-        return;
+        continue;
       }
 
       let user = appData.users.find(u => u.email === email);
       if (user) {
         const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === activeCourseId);
         if (existing) {
+          await supabaseUpdateEnrollment(user.id, activeCourseId, defaultRole);
           existing.role = defaultRole;
         } else {
-          appData.enrollments.push({
+          const enrollment = {
             userId: user.id,
             courseId: activeCourseId,
             role: defaultRole
-          });
+          };
+          const result = await supabaseCreateEnrollment(enrollment);
+          if (result) {
+            appData.enrollments.push(enrollment);
+          }
         }
         added += 1;
-        return;
+        continue;
       }
 
       if (!appData.invites) appData.invites = [];
-      appData.invites.push({
+      const invite = {
         courseId: activeCourseId,
         email: email,
         role: defaultRole,
         status: 'pending',
         sentAt: new Date().toISOString()
-      });
+      };
+      const result = await supabaseCreateInvite(invite);
+      if (result) {
+        appData.invites.push({ ...invite, id: result.id });
+      }
       invited += 1;
-    });
+    }
 
-    saveData(appData);
     closeModal('bulkStudentImportModal');
     renderPeople();
     showToast(`Imported ${added} students, invited ${invited}. ${errors} errors.`, errors ? 'error' : 'success');
@@ -10674,55 +10886,64 @@ function processBulkStudentImport() {
   reader.readAsText(file);
 }
 
-function addPersonToCourse() {
+async function addPersonToCourse() {
   const email = document.getElementById('addPersonEmail').value.trim();
   const role = document.getElementById('addPersonRole').value;
-  
+
   if (!email) {
     showToast('Please enter an email address', 'error');
     return;
   }
-  
+
   if (!activeCourseId) {
     showToast('No active course', 'error');
     return;
   }
-  
+
   // Check if user exists
   let user = appData.users.find(u => u.email === email);
-  
+
   if (user) {
     // User exists - check if already enrolled
     const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === activeCourseId);
     if (existing) {
-      // Update role
-      existing.role = role;
-      showToast(`Updated ${user.name}'s role to ${role}`, 'success');
+      // Update role in Supabase
+      const result = await supabaseUpdateEnrollment(user.id, activeCourseId, role);
+      if (result) {
+        existing.role = role;
+        showToast(`Updated ${user.name}'s role to ${role}`, 'success');
+      }
     } else {
-      // Add enrollment
-      appData.enrollments.push({
+      // Add enrollment to Supabase
+      const enrollment = {
         userId: user.id,
         courseId: activeCourseId,
         role: role
-      });
-      showToast(`Added ${user.name} as ${role}`, 'success');
+      };
+      const result = await supabaseCreateEnrollment(enrollment);
+      if (result) {
+        appData.enrollments.push(enrollment);
+        showToast(`Added ${user.name} as ${role}`, 'success');
+      }
     }
   } else {
-    // User doesn't exist - create invite
+    // User doesn't exist - create invite in Supabase
     if (!appData.invites) appData.invites = [];
-    
-    appData.invites.push({
+
+    const invite = {
       courseId: activeCourseId,
       email: email,
       role: role,
       status: 'pending',
       sentAt: new Date().toISOString()
-    });
-    
-    showToast(`Invitation sent to ${email}`, 'success');
+    };
+    const result = await supabaseCreateInvite(invite);
+    if (result) {
+      appData.invites.push({ ...invite, id: result.id });
+      showToast(`Invitation sent to ${email}`, 'success');
+    }
   }
-  
-  saveData(appData);
+
   closeModal('addPersonModal');
   renderPeople();
 }
@@ -10735,9 +10956,15 @@ function removePersonFromCourse(userId, courseId) {
     generateModals();
   }
 
-  confirm(`Remove ${user.name} from this course?`, () => {
+  confirm(`Remove ${user.name} from this course?`, async () => {
+    // Delete from Supabase
+    const result = await supabaseDeleteEnrollment(userId, courseId);
+    if (!result) {
+      return; // Error already shown
+    }
+
+    // Update local state
     appData.enrollments = appData.enrollments.filter(e => !(e.userId === userId && e.courseId === courseId));
-    saveData(appData);
     renderPeople();
     showToast(`Removed ${user.name}`, 'success');
   });
@@ -10759,7 +10986,7 @@ function revokeInvite(inviteId) {
 
     // Remove from local state
     appData.invites = appData.invites.filter(i => i.id !== inviteId);
-    saveData(appData);
+  
     renderPeople();
     showToast('Invitation revoked', 'success');
   });
@@ -10882,34 +11109,39 @@ function updateRubricCriterion(index, field, value) {
   renderRubricCriteria();
 }
 
-function saveRubric() {
+async function saveRubric() {
   if (!currentRubricAssignment) return;
-  
+
   const assignment = appData.assignments.find(a => a.id === currentRubricAssignment);
   const totalPoints = rubricCriteria.reduce((sum, c) => sum + (parseFloat(c.points) || 0), 0);
-  
+
   if (Math.abs(totalPoints - assignment.points) > 0.1) {
     showToast('Rubric points must equal assignment points', 'error');
     return;
   }
-  
+
   if (!appData.rubrics) appData.rubrics = [];
-  
-  // Remove existing rubric for this assignment
-  appData.rubrics = appData.rubrics.filter(r => r.assignmentId !== currentRubricAssignment);
-  
-  // Add new rubric
-  const rubricId = generateId();
-  appData.rubrics.push({
-    id: rubricId,
-    assignmentId: currentRubricAssignment,
-    criteria: JSON.parse(JSON.stringify(rubricCriteria)) // Deep copy
-  });
-  
-  // Update assignment to reference rubric
-  assignment.rubric = rubricId;
-  
-  saveData(appData);
+
+  // Check for existing rubric
+  const existingRubric = appData.rubrics.find(r => r.assignmentId === currentRubricAssignment);
+
+  if (existingRubric) {
+    // Update existing rubric in Supabase
+    await supabaseUpdateRubric(existingRubric.id, rubricCriteria);
+    existingRubric.criteria = JSON.parse(JSON.stringify(rubricCriteria));
+  } else {
+    // Create new rubric in Supabase
+    const result = await supabaseCreateRubric(currentRubricAssignment, rubricCriteria);
+    if (result) {
+      appData.rubrics.push({
+        id: result.id,
+        assignmentId: currentRubricAssignment,
+        criteria: JSON.parse(JSON.stringify(rubricCriteria))
+      });
+      assignment.rubric = result.id;
+    }
+  }
+
   closeModal('rubricModal');
   renderAssignments();
   showToast('Rubric saved', 'success');
@@ -10975,33 +11207,44 @@ function updateTotalWeight() {
   }
 }
 
-function saveCategoryWeights() {
+async function saveCategoryWeights() {
   const inputs = document.querySelectorAll('.category-weight');
   let total = 0;
-  
+
   const weights = [];
   inputs.forEach(input => {
     const weight = parseFloat(input.value) || 0;
     total += weight;
     weights.push({
+      id: generateId(),
       courseId: activeCourseId,
       name: input.dataset.category,
       weight: weight / 100
     });
   });
-  
+
   if (Math.abs(total - 100) > 0.1) {
     showToast('Weights must add up to 100%', 'error');
     return;
   }
-  
-  // Remove old weights for this course
+
+  // Delete old weights for this course from Supabase
+  const existingCategories = appData.gradeCategories.filter(c => c.courseId === activeCourseId);
+  for (const cat of existingCategories) {
+    if (cat.id) {
+      await supabaseDeleteGradeCategory(cat.id);
+    }
+  }
+
+  // Remove old weights for this course from local state
   appData.gradeCategories = appData.gradeCategories.filter(c => c.courseId !== activeCourseId);
-  
-  // Add new weights
-  appData.gradeCategories.push(...weights);
-  
-  saveData(appData);
+
+  // Add new weights to Supabase and local state
+  for (const weight of weights) {
+    await supabaseCreateGradeCategory(weight);
+    appData.gradeCategories.push(weight);
+  }
+
   closeModal('categoryWeightsModal');
   renderGradebook();
   showToast('Category weights saved', 'success');
@@ -11066,73 +11309,76 @@ function openBulkGradeModal(assignmentId) {
   openModal('bulkGradeModal');
 }
 
-function processBulkGrades() {
+async function processBulkGrades() {
   const data = document.getElementById('bulkGradeData').value.trim();
   const release = document.getElementById('bulkGradeRelease').checked;
-  
+
   if (!data) {
     showToast('Please paste grade data', 'error');
     return;
   }
-  
+
   const lines = data.split('\n').filter(l => l.trim());
   let imported = 0;
   let errors = 0;
-  
-  lines.forEach(line => {
+
+  for (const line of lines) {
     const parts = line.split(',').map(p => p.trim());
     if (parts.length < 2) {
       errors++;
-      return;
+      continue;
     }
-    
+
     const email = parts[0];
     const score = parseFloat(parts[1]);
     const feedback = parts[2] || 'No feedback provided';
-    
+
     if (isNaN(score)) {
       errors++;
-      return;
+      continue;
     }
-    
+
     // Find user
     const user = appData.users.find(u => u.email === email);
     if (!user) {
       errors++;
-      return;
+      continue;
     }
-    
+
     // Find submission
-    const submission = appData.submissions.find(s => 
+    const submission = appData.submissions.find(s =>
       s.assignmentId === currentBulkAssignmentId && s.userId === user.id
     );
-    
+
     if (!submission) {
       errors++;
-      return;
+      continue;
     }
-    
-    // Remove existing grade
+
+    // Remove existing grade from local state
     appData.grades = appData.grades.filter(g => g.submissionId !== submission.id);
-    
-    // Add new grade
-    appData.grades.push({
+
+    // Create new grade
+    const gradeObj = {
       submissionId: submission.id,
       score: score,
       feedback: feedback,
       released: release,
       gradedBy: appData.currentUser.id,
       gradedAt: new Date().toISOString()
-    });
-    
+    };
+
+    // Save to Supabase
+    await supabaseUpsertGrade(gradeObj);
+
+    appData.grades.push(gradeObj);
     imported++;
-  });
-  
-  saveData(appData);
+  }
+
   closeModal('bulkGradeModal');
   renderGradebook();
   showToast(`Imported ${imported} grades. ${errors} errors.`, imported > 0 ? 'success' : 'error');
-  
+
   document.getElementById('bulkGradeData').value = '';
   document.getElementById('bulkGradeRelease').checked = false;
 }
@@ -11151,7 +11397,7 @@ function bulkReleaseGrades(assignmentId) {
       }
     });
     
-    saveData(appData);
+  
     renderGradebook();
     showToast(`Released ${released} grades`, 'success');
   });
@@ -11339,7 +11585,7 @@ function saveExternalLink() {
       uploadedBy: appData.currentUser.id,
       uploadedAt: new Date().toISOString()
     });
-    saveData(appData);
+  
     closeModal('externalLinkModal');
     renderFiles();
     showToast('External link added to files!', 'success');
@@ -11357,7 +11603,7 @@ function saveExternalLink() {
           isYouTube: isYouTube,
           position: module.items.length
         });
-        saveData(appData);
+      
         closeModal('externalLinkModal');
         renderModules();
         showToast('External link added to module!', 'success');
@@ -11391,7 +11637,7 @@ function toggleAssignmentVisibility(assignmentId) {
   const wasPublished = assignment.status === 'published';
   assignment.status = wasPublished ? 'draft' : 'published';
 
-  saveData(appData);
+
   renderAssignments();
   showToast(wasPublished ? 'Assignment hidden from students' : 'Assignment published!', 'success');
 }
@@ -11403,7 +11649,7 @@ function toggleQuizVisibility(quizId) {
   const wasPublished = quiz.status === 'published';
   quiz.status = wasPublished ? 'draft' : 'published';
 
-  saveData(appData);
+
   renderAssignments();
   showToast(wasPublished ? 'Quiz hidden from students' : 'Quiz published!', 'success');
 }
