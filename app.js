@@ -130,8 +130,6 @@ window.checkAuth = async function() {
   }
 })();
 
-const ALLOWED_DOMAINS = ['university.edu', 'demo.edu'];
-
 // Default data structure
 const defaultData = {
   currentUser: null,
@@ -262,10 +260,7 @@ const defaultData = {
   questionBanks: [
     // { id, courseId, name, questions: [{ id, type, prompt, options, correctAnswer, points }] }
   ],
-  settings: {
-    geminiKey: '',
-    googleClientId: ''
-  }
+  settings: {}
 };
 
 // State - Initialize with empty structure (will be populated from Supabase)
@@ -577,10 +572,8 @@ async function loadDataFromSupabase() {
       weight: gc.weight
     }));
 
-    // Settings from Gemini key (stored in window config)
-    appData.settings = {
-      geminiKey: window.GEMINI_API_KEY_API_KEY || ''
-    };
+    // Settings - Gemini API key is handled via Supabase Edge Function
+    appData.settings = {};
 
     console.log('[Supabase] Data loaded successfully');
     console.log('[Supabase] Summary:', {
@@ -605,12 +598,54 @@ function loadData() {
   return appData;
 }
 
-// Save data to Supabase (called after mutations)
-// This is a debounced sync - actual saves happen via specific Supabase calls
-function saveData(data) {
-  console.log('[Data] saveData called - data persisted via Supabase');
-  // In Supabase mode, individual operations save directly to the database
-  // This function is kept for compatibility but doesn't use localStorage
+// ═══════════════════════════════════════════════════════════════════════════════
+// GEMINI AI - Via Supabase Edge Function
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Call Gemini API via Supabase Edge Function (API key is stored as secret)
+async function callGeminiAPI(contents, generationConfig = null) {
+  if (!supabaseClient) {
+    throw new Error('Database not connected');
+  }
+
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) {
+    throw new Error('Not authenticated - please sign in again');
+  }
+
+  const supabaseUrl = window.SUPABASE_URL;
+  const response = await fetch(`${supabaseUrl}/functions/v1/gemini`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify({ contents, generationConfig })
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Gemini API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// Helper for retrying Gemini calls
+async function callGeminiAPIWithRetry(contents, generationConfig = null, maxRetries = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await callGeminiAPI(contents, generationConfig);
+    } catch (err) {
+      lastError = err;
+      console.warn(`[Gemini] Attempt ${attempt}/${maxRetries} failed:`, err.message);
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  }
+  throw lastError;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -699,14 +734,21 @@ async function supabaseUpdateCourse(course) {
   if (!supabaseClient) return null;
   console.log('[Supabase] Updating course:', course.id);
 
-  const { data, error } = await supabaseClient.from('courses').update({
+  const updateData = {
     name: course.name,
     code: course.code,
     description: course.description,
     start_here_title: course.startHereTitle,
     start_here_content: course.startHereContent,
     active: course.active
-  }).eq('id', course.id).select().single();
+  };
+
+  // Include start_here_links if provided
+  if (course.startHereLinks !== undefined) {
+    updateData.start_here_links = course.startHereLinks;
+  }
+
+  const { data, error } = await supabaseClient.from('courses').update(updateData).eq('id', course.id).select().single();
 
   if (error) {
     console.error('[Supabase] Error updating course:', error);
@@ -2693,12 +2735,6 @@ function clearSyllabusParserUpload() {
 let courseCreationSyllabusData = null;
 
 async function parseCourseSyllabus() {
-  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
-  if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
-    return;
-  }
-
   const fileInput = document.getElementById('courseCreationSyllabus');
   if (!fileInput.files.length) {
     showToast('Please select a syllabus file', 'error');
@@ -2732,23 +2768,14 @@ async function parseCourseSyllabus() {
 }
 Extract EACH reading/chapter as a SEPARATE item. For exams/quizzes use type "quiz". For homework/essays use "assignment".`;
 
-    const requestBody = {
-      contents: [{
-        parts: [
-          { inlineData: { mimeType, data: base64Data } },
-          { text: systemPrompt }
-        ]
-      }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
-    };
+    const contents = [{
+      parts: [
+        { inlineData: { mimeType, data: base64Data } },
+        { text: systemPrompt }
+      ]
+    }];
 
-    const response = await fetchWithRetry(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) },
-      3
-    );
-
-    const data = await response.json();
+    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: "application/json", temperature: 0.2 });
     if (data.error) throw new Error(data.error.message);
 
     const text = data.candidates[0].content.parts[0].text;
@@ -3048,39 +3075,47 @@ async function createCourse() {
   courseCreationSyllabusData = null;
 }
 
-function joinCourse() {
+async function joinCourse() {
   const code = document.getElementById('joinCode').value.trim().toUpperCase();
-  
+
   if (!code) {
     showToast('Please enter an invite code', 'error');
     return;
   }
-  
+
   const course = appData.courses.find(c => c.inviteCode === code);
-  
+
   if (!course) {
     showToast('Invalid invite code', 'error');
     return;
   }
-  
-  const existing = appData.enrollments.find(e => 
+
+  const existing = appData.enrollments.find(e =>
     e.userId === appData.currentUser.id && e.courseId === course.id
   );
-  
+
   if (existing) {
     showToast('You are already enrolled in this course', 'error');
     return;
   }
-  
-  appData.enrollments.push({
+
+  const enrollment = {
     userId: appData.currentUser.id,
     courseId: course.id,
     role: 'student'
-  });
-  
-  saveData(appData);
+  };
+
+  // Save to Supabase
+  const result = await supabaseCreateEnrollment(enrollment);
+  if (!result) {
+    showToast('Failed to join course', 'error');
+    return;
+  }
+
+  // Update local state
+  appData.enrollments.push(enrollment);
   activeCourseId = course.id;
-  
+
   closeModal('joinCourseModal');
   renderAll();
   navigateTo('home');
@@ -3332,7 +3367,7 @@ function removeStartHereLink(idx) {
   renderStartHereLinksEditor();
 }
 
-function saveStartHere() {
+async function saveStartHere() {
   const courseId = document.getElementById('startHereCourseId').value;
   const title = document.getElementById('startHereTitle').value.trim();
   const content = document.getElementById('startHereContent').value.trim();
@@ -3355,7 +3390,12 @@ function saveStartHere() {
       }
       return link;
     });
-  saveData(appData);
+
+  // Save to Supabase
+  const result = await supabaseUpdateCourse(course);
+  if (!result) {
+    return; // Error already shown
+  }
 
   closeModal('startHereModal');
   renderHome();
@@ -4633,18 +4673,6 @@ async function saveNewAssignment() {
       appData.assignments.push(newAssignment);
       saveData(appData);
 
-      // Notify students if published
-      if (status === 'published') {
-        const students = appData.enrollments
-          .filter(e => e.courseId === activeCourseId && e.role === 'student')
-          .map(e => e.userId);
-
-        students.forEach(studentId => {
-          addNotification(studentId, 'assignment', 'New Assignment Posted',
-            `${title} is now available`, activeCourseId);
-        });
-      }
-
       closeModal('newAssignmentModal');
       resetNewAssignmentModal();
       renderAssignments();
@@ -4939,16 +4967,9 @@ function saveGrade(submissionId) {
 }
 
 async function draftGradeWithAI(submissionId, assignmentId) {
-  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
-  
-  if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
-    return;
-  }
-  
   const submission = appData.submissions.find(s => s.id === submissionId);
   const assignment = appData.assignments.find(a => a.id === assignmentId);
-  
+
   const prompt = `You are grading a student submission for an assignment.
 
 Assignment: ${assignment.title}
@@ -4965,25 +4986,14 @@ The score should be between 0 and ${assignment.points}. The feedback should be c
 
   try {
     showToast('Drafting grade with AI...', 'info');
-    
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2
-        }
-      })
-    });
-    
-    const data = await response.json();
-    
+
+    const contents = [{ parts: [{ text: prompt }] }];
+    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.2 });
+
     if (data.error) {
       throw new Error(data.error.message);
     }
-    
+
     const text = data.candidates[0].content.parts[0].text;
     
     // Try to parse JSON from response
@@ -6163,12 +6173,6 @@ function openSyllabusParserModal() {
 }
 
 async function parseSyllabus() {
-  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
-  if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
-    return;
-  }
-
   const fileInput = document.getElementById('syllabusFile');
   const textInput = document.getElementById('syllabusText').value.trim();
 
@@ -6205,7 +6209,7 @@ IMPORTANT RULES:
 4. Group items by week/module/unit as presented in the syllabus
 5. Extract course metadata (name, code, instructor) if available at the top of the syllabus`;
 
-  let requestBody;
+  let contents;
 
   // If file uploaded, send as base64 inline data to Gemini
   if (fileInput.files.length > 0) {
@@ -6214,36 +6218,24 @@ IMPORTANT RULES:
       const base64Data = await fileToBase64(file);
       const mimeType = file.type || 'application/octet-stream';
 
-      requestBody = {
-        contents: [{
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            },
-            { text: systemPrompt }
-          ]
-        }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2
-        }
-      };
+      contents = [{
+        parts: [
+          {
+            inlineData: {
+              mimeType: mimeType,
+              data: base64Data
+            }
+          },
+          { text: systemPrompt }
+        ]
+      }];
     } catch (err) {
       showToast('Could not read file: ' + err.message, 'error');
       return;
     }
   } else if (textInput) {
     // Use pasted text
-    requestBody = {
-      contents: [{ parts: [{ text: systemPrompt + '\n\nSYLLABUS:\n' + textInput }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.2
-      }
-    };
+    contents = [{ parts: [{ text: systemPrompt + '\n\nSYLLABUS:\n' + textInput }] }];
   } else {
     showToast('Please upload a syllabus file or paste syllabus text', 'error');
     return;
@@ -6261,18 +6253,7 @@ IMPORTANT RULES:
     `;
     showToast('Parsing syllabus... please wait', 'info');
 
-    // Use retry logic
-    const response = await fetchWithRetry(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      },
-      3
-    );
-
-    const data = await response.json();
+    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: "application/json", temperature: 0.2 });
     if (data.error) {
       throw new Error(data.error.message);
     }
@@ -6609,12 +6590,6 @@ function stopAudioRecording() {
 }
 
 async function transcribeAudio() {
-  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
-  if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
-    return;
-  }
-
   let audioData = null;
   let mimeType = 'audio/webm';
 
@@ -6675,29 +6650,19 @@ Return ONLY valid JSON:
   try {
     showToast('Transcribing audio with Gemini...', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: audioData
-              }
-            },
-            { text: systemPrompt }
-          ]
-        }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2
-        }
-      })
-    });
+    const contents = [{
+      parts: [
+        {
+          inlineData: {
+            mimeType: mimeType,
+            data: audioData
+          }
+        },
+        { text: systemPrompt }
+      ]
+    }];
 
-    const data = await response.json();
+    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.2 });
     if (data.error) {
       throw new Error(data.error.message);
     }
@@ -7022,12 +6987,6 @@ async function speedGraderDraftWithAI() {
     return;
   }
 
-  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
-  if (!apiKey) {
-    showToast('Gemini API key not configured', 'error');
-    return;
-  }
-
   const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
   const rubric = assignment.rubric ? appData.rubrics.find(r => r.id === assignment.rubric) : null;
 
@@ -7050,19 +7009,8 @@ Provide a score (0-${assignment.points}) and constructive feedback. Return JSON:
   try {
     showToast('Drafting grade with AI...', 'info');
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2
-        }
-      })
-    });
-
-    const data = await response.json();
+    const contents = [{ parts: [{ text: prompt }] }];
+    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.2 });
     if (data.error) throw new Error(data.error.message);
 
     const result = parseAiJsonResponse(data.candidates[0].content.parts[0].text);
@@ -8539,13 +8487,6 @@ async function sendAiMessage(audioBase64 = null) {
 
   if (!message && !audioBase64) return;
 
-  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
-
-  if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
-    return;
-  }
-
   // Prevent double-sends while processing
   if (aiProcessing) return;
   aiProcessing = true;
@@ -8631,38 +8572,21 @@ Respond helpfully and concisely. If asked to create content (and you're an instr
   renderAiThread();
 
   try {
-    let requestBody;
+    let contents;
 
     if (audioBase64) {
       // Voice message - send audio to Gemini
-      requestBody = {
-        contents: [{
-          parts: [
-            { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
-            { text: systemPrompt + '\n\nTranscribe and respond to this voice message:' }
-          ]
-        }],
-        generationConfig: { temperature: 0.4 }
-      };
+      contents = [{
+        parts: [
+          { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
+          { text: systemPrompt + '\n\nTranscribe and respond to this voice message:' }
+        ]
+      }];
     } else {
-      requestBody = {
-        contents: [{ parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }],
-        generationConfig: { temperature: 0.4 }
-      };
+      contents = [{ parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }];
     }
 
-    // Use retry logic for API calls
-    const response = await fetchWithRetry(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      },
-      3
-    );
-
-    const data = await response.json();
+    const data = await callGeminiAPIWithRetry(contents, { temperature: 0.4 });
 
     if (data.error) {
       throw new Error(data.error.message);
@@ -8913,18 +8837,12 @@ function updateAiCreateType() {
 }
 
 async function generateAiDraft() {
-  const apiKey = window.GEMINI_API_KEY || appData.settings.geminiKey;
-  if (!apiKey) {
-    showToast('Gemini API key not configured. Add GEMINI_API_KEY to config.js or configure in Settings.', 'error');
-    return;
-  }
-  
   const prompt = document.getElementById('aiCreatePrompt').value.trim();
   if (!prompt) {
     showToast('Add a prompt to guide the AI', 'error');
     return;
   }
-  
+
   const course = activeCourseId ? getCourseById(activeCourseId) : null;
   let systemPrompt = '';
 
@@ -8951,32 +8869,22 @@ Example: {"title":"...","content":"..."} - do not wrap in code fences or extra t
     const assignment = appData.assignments.find(a => a.id === assignmentId);
     systemPrompt = `Create a grading rubric for this assignment. Return ONLY JSON with key criteria (array). Each criterion must include name, points, description. Total points should sum to ${assignment ? assignment.points : 100}. Example: {"criteria":[{"name":"...","points":10,"description":"..."}]}.`;
   }
-  
+
   const contextualPrompt = `
 Course: ${course ? course.name : 'Unknown'}
 Prompt: ${prompt}
 ${systemPrompt}
 `;
-  
+
   try {
     showToast('Generating draft with AI...', 'info');
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: contextualPrompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.4
-        }
-      })
-    });
-    
-    const data = await response.json();
+    const contents = [{ parts: [{ text: contextualPrompt }] }];
+    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.4 });
+
     if (data.error) {
       throw new Error(data.error.message);
     }
-    
+
     const text = data.candidates[0].content.parts[0].text;
     aiDraft = normalizeAiDraft(parseAiJsonResponse(text), aiDraftType);
     renderAiDraftPreview();
@@ -10510,23 +10418,28 @@ function openEditCourseModal(courseId) {
   openModal('editCourseModal');
 }
 
-function updateCourse() {
+async function updateCourse() {
   if (!currentEditCourseId) return;
-  
+
   const course = getCourseById(currentEditCourseId);
   if (!course) return;
-  
+
   course.name = document.getElementById('editCourseName').value.trim();
   course.code = document.getElementById('editCourseCode').value.trim();
   course.description = document.getElementById('editCourseDescription').value.trim();
   course.active = document.getElementById('editCourseActive').checked;
-  
+
   if (!course.name || !course.code) {
     showToast('Please fill in course name and code', 'error');
     return;
   }
-  
-  saveData(appData);
+
+  // Save to Supabase
+  const result = await supabaseUpdateCourse(course);
+  if (!result) {
+    return; // Error already shown
+  }
+
   closeModal('editCourseModal');
   renderAll();
   showToast('Course updated', 'success');
