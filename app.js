@@ -8171,8 +8171,8 @@ function renderAiThread() {
     } else if (msg.role === 'action') {
       // Pending action with HITL confirmation - editable before acceptance
       const isLatest = idx === aiThread.length - 1 && !msg.confirmed && !msg.rejected;
-      const actionIcon = msg.actionType === 'announcement' ? '' : msg.actionType === 'quiz' ? '' : msg.actionType === 'assignment' ? '' : msg.actionType === 'module' ? '' : '';
-      const actionLabel = msg.actionType === 'announcement' ? 'Create Announcement' : msg.actionType === 'quiz' ? 'Create Quiz' : msg.actionType === 'assignment' ? 'Create Assignment' : msg.actionType === 'module' ? 'Create Module' : 'Action';
+      const actionIcon = msg.actionType === 'announcement' ? '' : msg.actionType === 'quiz' ? '' : msg.actionType === 'quiz_from_bank' ? '' : msg.actionType === 'assignment' ? '' : msg.actionType === 'module' ? '' : '';
+      const actionLabel = msg.actionType === 'announcement' ? 'Create Announcement' : msg.actionType === 'quiz' ? 'Create Quiz' : msg.actionType === 'quiz_from_bank' ? `Create ${msg.data.category === 'exam' ? 'Exam' : 'Quiz'}` : msg.actionType === 'assignment' ? 'Create Assignment' : msg.actionType === 'module' ? 'Create Module' : 'Action';
 
       return `
         <div style="margin-bottom:16px;">
@@ -8189,6 +8189,9 @@ function renderAiThread() {
                   <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
                   <div class="muted">${(msg.data.questions || []).length} questions</div>
                   <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="viewQuizDetails('${msg.createdId || ''}')">View Quiz Details</button>
+                ` : msg.actionType === 'quiz_from_bank' ? `
+                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
+                  <div class="muted">${msg.data.category === 'exam' ? 'Exam' : 'Quiz'} · ${msg.data.points} points · Using "${escapeHtml(msg.data.questionBankName)}"</div>
                 ` : msg.actionType === 'assignment' ? `
                   <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
                   <div class="muted">${msg.data.points} points · ${msg.data.category}</div>
@@ -8236,6 +8239,57 @@ function renderAiThread() {
                     `).join('')}
                     </div>
                   </div>
+                ` : msg.actionType === 'quiz_from_bank' ? `
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Title</label>
+                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
+                  </div>
+                  <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label" style="font-size:0.85rem;">Description</label>
+                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
+                  </div>
+                  <div style="background:var(--bg-color); padding:10px; border-radius:var(--radius); margin-bottom:12px;">
+                    <div style="font-weight:500; margin-bottom:8px;">Question Bank: ${escapeHtml(msg.data.questionBankName)}</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.85rem;">
+                      <div>Questions: ${msg.data.numQuestions || 'All'}</div>
+                      <div>Points: ${msg.data.points}</div>
+                      <div>Randomize order: ${msg.data.randomizeQuestions ? 'Yes' : 'No'}</div>
+                      <div>Shuffle answers: ${msg.data.randomizeAnswers ? 'Yes' : 'No'}</div>
+                    </div>
+                  </div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+                    <div class="form-group" style="margin-bottom:0;">
+                      <label class="form-label" style="font-size:0.85rem;">Points</label>
+                      <input type="number" class="form-input" value="${msg.data.points || 100}" onchange="updateAiActionField(${idx}, 'points', parseInt(this.value))">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                      <label class="form-label" style="font-size:0.85rem;">Type</label>
+                      <select class="form-select" onchange="updateAiActionField(${idx}, 'category', this.value)">
+                        <option value="quiz" ${msg.data.category === 'quiz' ? 'selected' : ''}>Quiz</option>
+                        <option value="exam" ${msg.data.category === 'exam' ? 'selected' : ''}>Exam</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                    <div class="form-group" style="margin-bottom:0;">
+                      <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
+                        <input type="checkbox" ${msg.data.randomizeQuestions ? 'checked' : ''} onchange="updateAiActionField(${idx}, 'randomizeQuestions', this.checked)">
+                        Randomize question order
+                      </label>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                      <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
+                        <input type="checkbox" ${msg.data.randomizeAnswers ? 'checked' : ''} onchange="updateAiActionField(${idx}, 'randomizeAnswers', this.checked)">
+                        Shuffle answer choices
+                      </label>
+                    </div>
+                  </div>
+                  ${msg.data.gradingNotes ? `
+                    <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border-light);">
+                      <label class="form-label" style="font-size:0.85rem;">Grading Notes (instructors only)</label>
+                      <textarea class="form-textarea" rows="2" onchange="updateAiActionField(${idx}, 'gradingNotes', this.value)">${escapeHtml(msg.data.gradingNotes)}</textarea>
+                    </div>
+                  ` : ''}
                 ` : msg.actionType === 'assignment' ? `
                   <div class="form-group" style="margin-bottom:12px;">
                     <label class="form-label" style="font-size:0.85rem;">Title</label>
@@ -8375,6 +8429,45 @@ async function confirmAiAction(idx, publish = false) {
     saveData(appData);
     renderAssignments();
     showToast('Quiz created as draft! Click Preview to see full details.', 'success');
+  } else if (msg.actionType === 'quiz_from_bank') {
+    // Create assignment with question bank reference
+    const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
+    const newAssignment = {
+      id: generateId(),
+      courseId: activeCourseId,
+      title: msg.data.title,
+      description: msg.data.description || '',
+      category: msg.data.category || 'quiz',
+      introNotes: '',
+      points: msg.data.points || 100,
+      availableFrom: msg.data.availableFrom || null,
+      availableUntil: msg.data.availableUntil || msg.data.dueDate || defaultDueDate,
+      dueDate: msg.data.dueDate || defaultDueDate,
+      status: 'draft',
+      allowLateSubmissions: msg.data.allowLateSubmissions !== false,
+      latePenaltyType: msg.data.latePenaltyType || 'per_day',
+      lateDeduction: msg.data.lateDeduction !== undefined ? msg.data.lateDeduction : 10,
+      gradingNotes: msg.data.gradingNotes || '',
+      allowResubmission: false,
+      questionBankId: msg.data.questionBankId,
+      numQuestions: msg.data.numQuestions || 0,
+      randomizeQuestions: msg.data.randomizeQuestions !== undefined ? msg.data.randomizeQuestions : false,
+      randomizeAnswers: msg.data.randomizeAnswers !== undefined ? msg.data.randomizeAnswers : true,
+      createdAt: new Date().toISOString(),
+      createdBy: appData.currentUser?.id
+    };
+
+    // Save to Supabase
+    const result = await supabaseCreateAssignment(newAssignment);
+    if (!result) {
+      showToast('Failed to save quiz/exam to database', 'error');
+      return;
+    }
+
+    appData.assignments.push(newAssignment);
+    saveData(appData);
+    renderAssignments();
+    showToast(`${msg.data.category === 'exam' ? 'Exam' : 'Quiz'} created as draft!`, 'success');
   } else if (msg.actionType === 'assignment') {
     const newAssignment = {
       id: generateId(),
@@ -8475,11 +8568,29 @@ async function sendAiMessage(audioBase64 = null) {
 
 ${isStaffUser ? `The user is an INSTRUCTOR/TA. You can help them create content.
 
-IMPORTANT: If the user asks you to CREATE an announcement, quiz, assignment, or module, you MUST respond with a JSON object in this EXACT format:
+IMPORTANT: If the user asks you to CREATE an announcement, quiz, exam, assignment, or module, you MUST respond with a JSON object in this EXACT format:
 - For announcements: {"action":"create_announcement","title":"...","content":"..."}
-- For quizzes: {"action":"create_quiz","title":"...","description":"...","dueDate":"ISO date string","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B","C","D"],"correctAnswer":0,"points":10},...]}
-- For assignments: {"action":"create_assignment","title":"...","description":"...","points":100,"dueDate":"ISO date string","category":"homework"}
+- For quizzes/exams FROM QUESTION BANK: {"action":"create_quiz_from_bank","title":"...","description":"...","category":"quiz|exam","questionBankId":"BANK_ID","questionBankName":"Bank Name","numQuestions":10,"randomizeQuestions":false,"randomizeAnswers":true,"dueDate":"ISO date","availableFrom":"ISO date or null","availableUntil":"ISO date (same as dueDate if not specified)","points":100,"allowLateSubmissions":true,"latePenaltyType":"per_day|flat","lateDeduction":10,"gradingNotes":"Brief grading notes for instructors"}
+- For assignments: {"action":"create_assignment","title":"...","description":"...","points":100,"dueDate":"ISO date string","category":"essay|project|homework|participation","introNotes":"...","gradingNotes":"...","allowLateSubmissions":true,"latePenaltyType":"per_day","lateDeduction":10}
 - For modules: {"action":"create_module","name":"...","description":"..."}
+
+CRITICAL - QUIZ/EXAM CREATION RULES:
+1. Quizzes and exams MUST use a question bank. Do NOT create inline questions.
+2. If the user asks to create a quiz or exam but does NOT specify which question bank to use (by name or topic matching an existing bank), you MUST respond with a plain text message (NOT JSON):
+   "To create a quiz, I'll need to know which question bank you want the questions to come from. Your available question banks are: [list bank names]. Which one would you like to use?"
+   OR if no banks exist: "To create a quiz, you'll first need to create a question bank. Would you like me to help you set that up?"
+3. If the user DOES specify a topic or name that matches an existing question bank (even partially), create the quiz using that bank.
+4. DEFAULT QUIZ/EXAM SETTINGS (use these unless user specifies otherwise):
+   - randomizeQuestions: false (keep question order)
+   - randomizeAnswers: true (shuffle MC answer options)
+   - availableFrom: null (available immediately)
+   - availableUntil: same as dueDate
+   - allowLateSubmissions: true
+   - latePenaltyType: "per_day"
+   - lateDeduction: 10
+   - numQuestions: 0 (use all questions from the bank)
+   - gradingNotes: Include brief helpful grading notes
+   - points: calculated from question bank or 100 if unknown
 
 FORMATTING for announcement/assignment content (supports markdown):
 - Use **bold** for emphasis, *italic* for terms
@@ -8494,9 +8605,9 @@ Question types: multiple_choice, true_false, short_answer
 For true_false, correctAnswer should be "True" or "False"
 For multiple_choice, correctAnswer should be the index (0-based)
 
-IMPORTANT: If you cannot fully complete the request (e.g., missing information, ambiguous requirements, or limitations), include a "notes" field in your JSON response explaining what was done and what might need adjustment. Example: {"action":"create_quiz",...,"notes":"Created 5 questions. Some topics were unclear, please review question 3."}
+IMPORTANT: If you cannot fully complete the request (e.g., missing information, ambiguous requirements, or limitations), include a "notes" field in your JSON response explaining what was done and what might need adjustment. Example: {"action":"create_quiz_from_bank",...,"notes":"Created quiz using Chapter 1 bank. Please review the point total."}
 
-Only output the JSON when the user clearly wants to CREATE something. For questions about content or help drafting, respond normally.
+Only output the JSON when the user clearly wants to CREATE something AND you have all required information. For questions about content or help drafting, respond normally.
 When creating content, make sure titles and content are professional and appropriate for an academic setting.
 Use the current date/time from context to set appropriate due dates (default to 1 week from now if not specified).
 Reference relevant course files when helpful (see COURSE FILES in context).` : `The user is a STUDENT. Help them with course questions, explain concepts, and provide guidance.
@@ -8571,7 +8682,36 @@ Respond helpfully and concisely. If asked to create content (and you're an instr
             confirmed: false,
             rejected: false
           });
+        } else if (action.action === 'create_quiz_from_bank') {
+          // New quiz/exam creation from question bank
+          const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
+          aiThread.push({
+            role: 'action',
+            actionType: 'quiz_from_bank',
+            data: {
+              title: action.title,
+              description: action.description || '',
+              category: action.category || 'quiz',
+              questionBankId: action.questionBankId,
+              questionBankName: action.questionBankName || '',
+              numQuestions: action.numQuestions || 0,
+              randomizeQuestions: action.randomizeQuestions !== undefined ? action.randomizeQuestions : false,
+              randomizeAnswers: action.randomizeAnswers !== undefined ? action.randomizeAnswers : true,
+              dueDate: action.dueDate || defaultDueDate,
+              availableFrom: action.availableFrom || null,
+              availableUntil: action.availableUntil || action.dueDate || defaultDueDate,
+              points: action.points || 100,
+              allowLateSubmissions: action.allowLateSubmissions !== undefined ? action.allowLateSubmissions : true,
+              latePenaltyType: action.latePenaltyType || 'per_day',
+              lateDeduction: action.lateDeduction !== undefined ? action.lateDeduction : 10,
+              gradingNotes: action.gradingNotes || '',
+              notes: action.notes || ''
+            },
+            confirmed: false,
+            rejected: false
+          });
         } else if (action.action === 'create_quiz') {
+          // Legacy quiz creation (with inline questions)
           aiThread.push({
             role: 'action',
             actionType: 'quiz',
@@ -11573,6 +11713,13 @@ function buildAiContext() {
     return `- "${f.name}" (id: ${f.id}, type: ${f.type}${f.externalUrl ? ', external' : ''}${desc})`;
   }).join('\n');
 
+  // Build question bank list
+  const questionBanks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
+  const questionBankList = questionBanks.map(b => {
+    const questionCount = (b.questions || []).length;
+    return `- "${b.name}" (id: ${b.id}, ${questionCount} questions)${b.description ? ' - ' + b.description : ''}`;
+  }).join('\n');
+
   return `
 COURSE CONTEXT (use this for accurate information):
 - Course Name: ${course.name}
@@ -11593,6 +11740,9 @@ ${assignmentList || 'No assignments yet'}
 
 QUIZZES (${quizzes.length}):
 ${quizList || 'No quizzes yet'}
+
+QUESTION BANKS (${questionBanks.length}) - REQUIRED for creating quizzes/exams:
+${questionBankList || 'No question banks yet'}
 
 COURSE FILES (${files.length}) - Use these file IDs to link to files in announcements/content:
 ${fileList || 'No files yet'}
