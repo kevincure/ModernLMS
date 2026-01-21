@@ -253,9 +253,6 @@ const defaultData = {
   gradeCategories: [
     // { courseId, name, weight } - e.g., { courseId: 'c1', name: 'Homework', weight: 0.3 }
   ],
-  notifications: [
-    // { userId, type, title, message, courseId, read, createdAt }
-  ],
   invites: [
     // { courseId, email, status: 'pending'|'accepted', sentAt }
   ],
@@ -267,8 +264,7 @@ const defaultData = {
   ],
   settings: {
     geminiKey: '',
-    googleClientId: '',
-    emailNotifications: true
+    googleClientId: ''
   }
 };
 
@@ -310,8 +306,6 @@ async function loadDataFromSupabase() {
   console.log('[Supabase] Loading data for user:', appData.currentUser.email);
 
   try {
-    const userId = appData.currentUser.id;
-
     // Parallel fetch all data the user has access to (RLS will filter)
     const [
       profilesRes,
@@ -327,7 +321,6 @@ async function loadDataFromSupabase() {
       quizSubmissionsRes,
       modulesRes,
       moduleItemsRes,
-      notificationsRes,
       invitesRes,
       rubricRes,
       rubricCriteriaRes,
@@ -346,7 +339,6 @@ async function loadDataFromSupabase() {
       supabaseClient.from('quiz_submissions').select('*'),
       supabaseClient.from('modules').select('*'),
       supabaseClient.from('module_items').select('*'),
-      supabaseClient.from('notifications').select('*').eq('user_id', userId),
       supabaseClient.from('invites').select('*'),
       supabaseClient.from('rubrics').select('*'),
       supabaseClient.from('rubric_criteria').select('*'),
@@ -368,7 +360,6 @@ async function loadDataFromSupabase() {
       { name: 'quiz_submissions', res: quizSubmissionsRes },
       { name: 'modules', res: modulesRes },
       { name: 'module_items', res: moduleItemsRes },
-      { name: 'notifications', res: notificationsRes },
       { name: 'invites', res: invitesRes },
       { name: 'rubrics', res: rubricRes },
       { name: 'rubric_criteria', res: rubricCriteriaRes },
@@ -532,18 +523,6 @@ async function loadDataFromSupabase() {
         }))
     }));
 
-    appData.notifications = (notificationsRes.data || []).map(n => ({
-      id: n.id,
-      userId: n.user_id,
-      type: n.type,
-      title: n.title,
-      message: n.message,
-      courseId: n.course_id,
-      refId: n.ref_id,
-      read: n.read,
-      createdAt: n.created_at
-    }));
-
     appData.invites = (invitesRes.data || []).map(i => ({
       id: i.id,
       courseId: i.course_id,
@@ -600,8 +579,7 @@ async function loadDataFromSupabase() {
 
     // Settings from Gemini key (stored in window config)
     appData.settings = {
-      geminiKey: window.GEMINI_API_KEY_API_KEY || '',
-      emailNotifications: true
+      geminiKey: window.GEMINI_API_KEY_API_KEY || ''
     };
 
     console.log('[Supabase] Data loaded successfully');
@@ -2106,106 +2084,6 @@ function getQuizPoints(quiz) {
   return total;
 }
 
-function addNotification(userId, type, title, message, courseId) {
-  if (!appData.notifications) appData.notifications = [];
-  
-  appData.notifications.push({
-    id: generateId(),
-    userId: userId,
-    type: type,
-    title: title,
-    message: message,
-    courseId: courseId,
-    read: false,
-    createdAt: new Date().toISOString()
-  });
-  
-  saveData(appData);
-  updateNotificationBadge();
-}
-
-function getUnreadNotifications(userId) {
-  if (!appData.notifications) return [];
-  return appData.notifications.filter(n => n.userId === userId && !n.read);
-}
-
-function markNotificationRead(notificationId) {
-  if (!appData.notifications) return;
-  
-  const notification = appData.notifications.find(n => n.id === notificationId);
-  if (notification) {
-    notification.read = true;
-    saveData(appData);
-    updateNotificationBadge();
-  }
-}
-
-function markAllNotificationsRead(userId) {
-  if (!appData.notifications) return;
-  appData.notifications.forEach(n => {
-    if (n.userId === userId) n.read = true;
-  });
-  saveData(appData);
-  updateNotificationBadge();
-}
-
-function updateNotificationBadge() {
-  const badge = document.getElementById('notificationBadge');
-  const user = getCurrentUser();
-  if (!badge || !user) return;
-  
-  const unread = getUnreadNotifications(user.id);
-  if (unread.length === 0) {
-    badge.textContent = '';
-    badge.classList.remove('visible');
-    return;
-  }
-  
-  badge.textContent = unread.length > 9 ? '9+' : unread.length;
-  badge.classList.add('visible');
-}
-
-function openNotifications() {
-  renderNotifications();
-  openModal('notificationsModal');
-}
-
-function renderNotifications() {
-  const user = getCurrentUser();
-  const listEl = document.getElementById('notificationsList');
-  if (!user || !listEl) return;
-  
-  const notifications = (appData.notifications || [])
-    .filter(n => n.userId === user.id)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  
-  if (notifications.length === 0) {
-    listEl.innerHTML = '<div class="empty-state-text">No notifications yet</div>';
-    return;
-  }
-  
-  listEl.innerHTML = notifications.map(n => {
-    const course = n.courseId ? getCourseById(n.courseId) : null;
-    const courseLabel = course ? `<span class="muted">• ${course.code}</span>` : '';
-    const statusBadge = n.read ? '' : '<span class="notification-new">New</span>';
-    return `
-      <button class="notification-item ${n.read ? '' : 'unread'}" onclick="openNotificationDetail('${n.id}')">
-        <div class="notification-title">
-          <span>${n.title}</span>
-          ${statusBadge}
-        </div>
-        <div class="notification-message">${n.message}</div>
-        <div class="notification-meta">${formatDate(n.createdAt)} ${courseLabel}</div>
-      </button>
-    `;
-  }).join('');
-}
-
-function openNotificationDetail(notificationId) {
-  markNotificationRead(notificationId);
-  renderNotifications();
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // SUPABASE AUTHENTICATION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2403,7 +2281,6 @@ function initApp() {
 
   populateCourseSelector();
   renderAll();
-  updateNotificationBadge();
   navigateTo('courses');
 
   console.log('[App] App initialized successfully');
@@ -3150,7 +3027,6 @@ function renderHome() {
     setHTML('homeUpcoming', '<div class="empty-state-text">No active course</div>');
     setHTML('homeUpdates', '<div class="empty-state-text">No active course</div>');
     setHTML('homeStartHere', '');
-    setHTML('homeChecklist', '');
     return;
   }
   
@@ -3159,7 +3035,6 @@ function renderHome() {
   setText('homeSubtitle', ''); // Course name is already in the top bar
 
   renderStartHere(course);
-  renderOnboardingChecklist(course);
   
   // Upcoming assignments + quizzes
   const upcomingAssignments = appData.assignments
@@ -3294,11 +3169,6 @@ function renderStartHere(course) {
       ${pinnedSection}
     </div>
   `);
-}
-
-function renderOnboardingChecklist(course) {
-  // Disabled - checklist removed per user request
-  setHTML('homeChecklist', '');
 }
 
 // Temporary storage for pinned links being edited
@@ -3912,18 +3782,6 @@ async function createAssignment() {
     appData.assignments.push(assignment);
     saveData(appData);
 
-    // Send notifications to enrolled students if published
-    if (status === 'published') {
-      const students = appData.enrollments
-        .filter(e => e.courseId === activeCourseId && e.role === 'student')
-        .map(e => e.userId);
-
-      students.forEach(studentId => {
-        addNotification(studentId, 'assignment', 'New Assignment Posted',
-          `${title} is now available`, activeCourseId);
-      });
-    }
-
     closeModal('assignmentModal');
     resetAssignmentModal();
     renderAssignments();
@@ -4077,17 +3935,6 @@ async function updateAssignment() {
   }
   saveData(appData);
 
-  if (previousStatus !== 'published' && status === 'published') {
-    const students = appData.enrollments
-      .filter(e => e.courseId === activeCourseId && e.role === 'student')
-      .map(e => e.userId);
-
-    students.forEach(studentId => {
-      addNotification(studentId, 'assignment', 'New Assignment Posted',
-        `${title} is now available`, activeCourseId);
-    });
-  }
-
   closeModal('assignmentModal');
   resetAssignmentModal();
   renderAssignments();
@@ -4176,18 +4023,6 @@ function saveSubmission() {
         appData.submissions.push(submission);
         saveData(appData);
         
-        // Notify instructor
-        const instructors = appData.enrollments
-          .filter(e => e.courseId === assignment.courseId && e.role === 'instructor')
-          .map(e => e.userId);
-        
-        instructors.forEach(instrId => {
-          addNotification(instrId, 'submission', 'New Submission',
-            `${appData.currentUser.name} submitted ${assignment.title}`,
-            assignment.courseId
-          );
-        });
-        
         closeModal('submitModal');
         renderAssignments();
         showToast('Submission saved!', 'success');
@@ -4204,18 +4039,6 @@ function saveSubmission() {
   
   appData.submissions.push(submission);
   saveData(appData);
-  
-  // Notify instructor
-  const instructors = appData.enrollments
-    .filter(e => e.courseId === assignment.courseId && e.role === 'instructor')
-    .map(e => e.userId);
-  
-  instructors.forEach(instrId => {
-    addNotification(instrId, 'submission', 'New Submission',
-      `${appData.currentUser.name} submitted ${assignment.title}`,
-      assignment.courseId
-    );
-  });
   
   closeModal('submitModal');
   renderAssignments();
@@ -4789,16 +4612,6 @@ async function saveQuiz() {
   
   saveData(appData);
   
-  if (quizData.status === 'published' && previousStatus !== 'published') {
-    const students = appData.enrollments
-      .filter(e => e.courseId === activeCourseId && e.role === 'student')
-      .map(e => e.userId);
-    
-    students.forEach(studentId => {
-      addNotification(studentId, 'quiz', 'New Quiz Posted', `${title} is now available`, activeCourseId);
-    });
-  }
-  
   closeModal('quizModal');
   renderAssignments();
   renderHome();
@@ -4983,16 +4796,7 @@ async function submitQuiz() {
     quizTimerInterval = null;
   }
   
-  const instructors = appData.enrollments
-    .filter(e => e.courseId === activeCourseId && (e.role === 'instructor' || e.role === 'ta'))
-    .map(e => e.userId);
-  
-  instructors.forEach(instrId => {
-    addNotification(instrId, 'quiz', 'New Quiz Submission', `${appData.currentUser.name} submitted ${quiz.title}`, activeCourseId);
-  });
-  
   if (!needsManual) {
-    addNotification(appData.currentUser.id, 'quiz', 'Quiz Graded', `Score: ${autoScore}/${totalPoints}`, activeCourseId);
     showToast(`Quiz submitted! Score: ${autoScore}/${totalPoints}`, 'success');
   } else {
     showToast('Quiz submitted! Awaiting review.', 'success');
@@ -5123,10 +4927,6 @@ function saveQuizGrade() {
   saveData(appData);
   
   const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (quiz) {
-    addNotification(submission.userId, 'quiz', 'Quiz Graded', `Score: ${score}/${getQuizPoints(quiz)}`, quiz.courseId);
-  }
-  
   closeModal('quizGradeModal');
   renderAssignments();
   viewQuizSubmissions(quizId);
@@ -6641,14 +6441,6 @@ function saveSpeedGraderGrade() {
 
   // Update local state
   current.grade = gradeObj;
-
-  // Notify if released
-  if (release) {
-    addNotification(current.userId, 'grade', 'Grade Released',
-      `Your grade for ${assignment.title} is now available`,
-      assignment.courseId
-    );
-  }
 
   saveData(appData);
   showToast(`Grade saved${lateDeduction > 0 ? ` (${lateDeduction}% late penalty applied)` : ''}!`, 'success');
@@ -9129,16 +8921,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               ${window.GEMINI_API_KEY ? '✓ Loaded (saved to your profile)' : 'For AI features. Get from Google AI Studio. Your key is securely stored in your profile.'}
             </div>
           </div>
-          <div class="form-group" style="padding:16px; background:var(--bg-color); border-radius:var(--radius); margin-top:8px;">
-            <div style="font-weight:600; margin-bottom:8px;">Email Notifications</div>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="settingsEmailNotifications" ${appData.settings.emailNotifications !== false ? 'checked' : ''}>
-              <span>Enable email notifications</span>
-            </label>
-            <div class="hint" style="margin-top:8px;">
-              Email notifications require server-side configuration.
-            </div>
-          </div>
+          
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Cancel</button>
@@ -9221,22 +9004,6 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
           <button class="btn btn-secondary" onclick="closeModal('aiCreateModal')">Cancel</button>
           <button class="btn btn-secondary" onclick="generateAiDraft()">Generate Draft</button>
           <button class="btn btn-primary" onclick="applyAiDraft()">Use Draft</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-overlay" id="notificationsModal">
-      <div class="modal" style="max-width:520px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Notifications</h2>
-          <button class="modal-close" onclick="closeModal('notificationsModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div id="notificationsList" class="notification-list"></div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="markAllNotificationsRead(appData.currentUser?.id); renderNotifications();">Mark all read</button>
-          <button class="btn btn-primary" onclick="closeModal('notificationsModal')">Done</button>
         </div>
       </div>
     </div>
@@ -9665,7 +9432,6 @@ async function saveSettings() {
     }
   }
 
-  appData.settings.emailNotifications = document.getElementById('settingsEmailNotifications')?.checked ?? true;
 
   saveData(appData);
   closeModal('settingsModal');
@@ -10404,14 +10170,6 @@ function processBulkGrades() {
       gradedAt: new Date().toISOString()
     });
     
-    // Notify if released
-    if (release) {
-      addNotification(user.id, 'grade', 'Grade Released',
-        `Your grade for ${appData.assignments.find(a => a.id === currentBulkAssignmentId).title} is now available`,
-        appData.assignments.find(a => a.id === currentBulkAssignmentId).courseId
-      );
-    }
-    
     imported++;
   });
   
@@ -10435,12 +10193,6 @@ function bulkReleaseGrades(assignmentId) {
         grade.released = true;
         released++;
         
-        // Notify student
-        const assignment = appData.assignments.find(a => a.id === assignmentId);
-        addNotification(submission.userId, 'grade', 'Grade Released',
-          `Your grade for ${assignment.title} is now available`,
-          assignment.courseId
-        );
       }
     });
     
@@ -10684,18 +10436,6 @@ function toggleAssignmentVisibility(assignmentId) {
   const wasPublished = assignment.status === 'published';
   assignment.status = wasPublished ? 'draft' : 'published';
 
-  if (!wasPublished && assignment.status === 'published') {
-    // Send notifications to students when publishing
-    const students = appData.enrollments
-      .filter(e => e.courseId === activeCourseId && e.role === 'student')
-      .map(e => e.userId);
-
-    students.forEach(studentId => {
-      addNotification(studentId, 'assignment', 'New Assignment Posted',
-        `${assignment.title} is now available`, activeCourseId);
-    });
-  }
-
   saveData(appData);
   renderAssignments();
   showToast(wasPublished ? 'Assignment hidden from students' : 'Assignment published!', 'success');
@@ -10707,18 +10447,6 @@ function toggleQuizVisibility(quizId) {
 
   const wasPublished = quiz.status === 'published';
   quiz.status = wasPublished ? 'draft' : 'published';
-
-  if (!wasPublished && quiz.status === 'published') {
-    // Send notifications to students when publishing
-    const students = appData.enrollments
-      .filter(e => e.courseId === activeCourseId && e.role === 'student')
-      .map(e => e.userId);
-
-    students.forEach(studentId => {
-      addNotification(studentId, 'quiz', 'New Quiz Posted',
-        `${quiz.title} is now available`, activeCourseId);
-    });
-  }
 
   saveData(appData);
   renderAssignments();
