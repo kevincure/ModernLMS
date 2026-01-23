@@ -4,6 +4,329 @@
 ═══════════════════════════════════════════════════════════════════════════════ */
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MODULE IMPORTS
+// These modules contain extracted functionality from app.js
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Constants - role definitions, AI prompts, default values, messages
+import {
+  ROLES,
+  ROLE_LABELS,
+  AI_PROMPTS,
+  DEFAULT_DATA,
+  ERROR_MESSAGES,
+  SUCCESS_MESSAGES,
+  ASSIGNMENT_CATEGORIES,
+  VALID_STATUSES,
+  DEFAULT_QUIZ_SETTINGS,
+  DATE_FORMATS
+} from './constants.js';
+
+// Database interactions - all Supabase CRUD operations
+import {
+  initDatabaseModule,
+  loadDataFromSupabase,
+  supabaseCreateCourse,
+  supabaseUpdateCourse,
+  supabaseDeleteCourse,
+  supabaseCreateEnrollment,
+  supabaseDeleteEnrollment,
+  supabaseCreateAssignment,
+  supabaseUpdateAssignment,
+  supabaseDeleteAssignment,
+  supabaseCreateSubmission,
+  supabaseUpdateSubmission,
+  supabaseDeleteSubmission,
+  supabaseCreateGrade,
+  supabaseUpdateGrade,
+  supabaseDeleteGrade,
+  supabaseCreateAnnouncement,
+  supabaseUpdateAnnouncement,
+  supabaseDeleteAnnouncement,
+  supabaseCreateQuiz,
+  supabaseUpdateQuiz,
+  supabaseDeleteQuiz,
+  supabaseCreateQuizSubmission,
+  supabaseUpdateQuizSubmission,
+  supabaseCreateFile as dbCreateFile,
+  supabaseUpdateFile as dbUpdateFile,
+  supabaseDeleteFile as dbDeleteFile,
+  supabaseCreateModule,
+  supabaseUpdateModule,
+  supabaseDeleteModule,
+  supabaseCreateRubric,
+  supabaseUpdateRubric,
+  supabaseCreateQuestionBank,
+  supabaseUpdateQuestionBank,
+  supabaseDeleteQuestionBank,
+  supabaseCreateUser,
+  supabaseUpdateUser,
+  callGeminiAPI,
+  callGeminiAPIWithRetry
+} from './database_interactions.js';
+
+// UI Helpers - DOM manipulation, formatting, markdown
+import {
+  initUIHelpers,
+  setText,
+  setHTML,
+  escapeHtml,
+  showToast as uiShowToast,
+  formatDate,
+  formatDateShort,
+  formatDateTime,
+  renderMarkdown,
+  generateId,
+  generateInviteCode,
+  openModal as uiOpenModal,
+  closeModal as uiCloseModal,
+  confirm as uiConfirm,
+  getQuizPoints
+} from './ui_helpers.js';
+
+// Auth - Google OAuth via Supabase
+import {
+  initAuthModule,
+  signInWithGoogle,
+  handleAuthStateChange,
+  logout
+} from './auth.js';
+
+// AI Features - Gemini API integration, chat, content generation
+import {
+  initAIModule,
+  sendAiMessage,
+  confirmAiAction,
+  buildAiContext,
+  renderAiThread,
+  draftGradeWithAI,
+  generateAiDraft,
+  setAIActiveCourseId
+} from './ai_features.js';
+
+// Quiz Logic - quiz creation, taking, grading
+import {
+  initQuizModule,
+  openQuizModal,
+  saveQuiz,
+  takeQuiz,
+  submitQuiz,
+  calculateQuizAutoScore,
+  viewQuizSubmissions,
+  saveQuizGrade,
+  reviewQuizSubmission,
+  setQuizActiveCourseId
+} from './quiz_logic.js';
+
+// File Handling - uploads, downloads, syllabus parsing
+import {
+  initFileHandlingModule,
+  handleDragOver,
+  handleDragLeave,
+  handleSyllabusDrop,
+  parseCourseSyllabus,
+  openSyllabusParserModal,
+  parseSyllabus,
+  importParsedSyllabus,
+  renderFiles as moduleRenderFiles,
+  uploadFiles,
+  deleteFile as moduleDeleteFile,
+  toggleFileVisibility,
+  fileToBase64,
+  formatFileSize as moduleFormatFileSize,
+  setActiveCourseId as setFileActiveCourseId,
+  setStudentViewMode as setFileStudentViewMode
+} from './file_handling.js';
+
+// Modals - all modal HTML generation
+import {
+  initModalsModule,
+  generateModals as moduleGenerateModals,
+  setActiveCourseId as setModalsActiveCourseId
+} from './modals.js';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODULE INITIALIZATION
+// Initialize all imported modules with their dependencies
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Initialize all modules with their dependencies
+ * Call this after appData is set up and Supabase is initialized
+ */
+function initModules() {
+  console.log('[Modules] Initializing imported modules...');
+
+  // Get references to local functions that modules need
+  const deps = {
+    appData,
+    supabaseClient,
+    activeCourseId,
+    studentViewMode,
+    // UI Helpers
+    showToast,
+    escapeHtml,
+    generateId,
+    generateInviteCode,
+    formatDate,
+    formatDateTime,
+    renderMarkdown,
+    openModal,
+    closeModal,
+    setText,
+    setHTML,
+    confirm,
+    // Data helpers
+    getCourseById,
+    getUserById,
+    isStaff,
+    getQuizById,
+    getAssignmentById,
+    // Database functions
+    supabaseCreateFile,
+    supabaseUpdateFile,
+    supabaseDeleteFile,
+    supabaseCreateQuiz,
+    supabaseUpdateQuiz,
+    supabaseCreateAssignment,
+    supabaseUpdateAssignment,
+    supabaseCreateModule,
+    supabaseUpdateModule,
+    supabaseCreateQuizSubmission,
+    supabaseUpdateQuizSubmission,
+    callGeminiAPI,
+    callGeminiAPIWithRetry,
+    parseAiJsonResponse,
+    // Render callbacks
+    renderModules,
+    renderAssignments,
+    renderFiles,
+    renderUpdates,
+    generateModals
+  };
+
+  // Initialize database module
+  initDatabaseModule({
+    getSupabaseClient: () => supabaseClient,
+    getAppData: () => appData
+  });
+
+  // Initialize UI helpers
+  initUIHelpers();
+
+  // Initialize auth module
+  initAuthModule({
+    supabaseClient,
+    appData,
+    loadDataFromSupabase,
+    initApp,
+    showToast,
+    setHTML
+  });
+
+  // Initialize AI module
+  initAIModule({
+    appData,
+    showToast,
+    escapeHtml,
+    generateId,
+    formatDate,
+    renderMarkdown,
+    openModal,
+    closeModal,
+    setHTML,
+    getCourseById,
+    getUserById,
+    isStaff,
+    callGeminiAPI,
+    callGeminiAPIWithRetry,
+    parseAiJsonResponse,
+    supabaseCreateAnnouncement,
+    supabaseCreateQuiz,
+    renderUpdates,
+    renderAssignments
+  });
+
+  // Initialize quiz module
+  initQuizModule({
+    appData,
+    showToast,
+    escapeHtml,
+    generateId,
+    formatDate,
+    openModal,
+    closeModal,
+    setHTML,
+    setText,
+    confirm,
+    getCourseById,
+    getUserById,
+    isStaff,
+    supabaseCreateQuiz,
+    supabaseUpdateQuiz,
+    supabaseCreateQuizSubmission,
+    supabaseUpdateQuizSubmission,
+    renderAssignments,
+    renderModules
+  });
+
+  // Initialize file handling module
+  initFileHandlingModule({
+    appData,
+    supabaseClient,
+    showToast,
+    escapeHtml,
+    generateId,
+    formatDate,
+    renderMarkdown,
+    openModal,
+    closeModal,
+    setText,
+    setHTML,
+    confirm,
+    getCourseById,
+    getUserById,
+    isStaff,
+    supabaseCreateFile,
+    supabaseUpdateFile,
+    supabaseDeleteFile,
+    supabaseCreateQuiz,
+    supabaseCreateAssignment,
+    supabaseCreateModule,
+    callGeminiAPIWithRetry,
+    parseAiJsonResponse,
+    renderModules,
+    generateModals
+  });
+
+  // Initialize modals module
+  initModalsModule({
+    appData,
+    setHTML,
+    escapeHtml
+  });
+
+  console.log('[Modules] All modules initialized');
+}
+
+/**
+ * Update module state when active course changes
+ */
+function updateModuleActiveCourse(courseId) {
+  setAIActiveCourseId(courseId);
+  setQuizActiveCourseId(courseId);
+  setFileActiveCourseId(courseId);
+  setModalsActiveCourseId(courseId);
+}
+
+/**
+ * Update module state when student view mode changes
+ */
+function updateModuleStudentViewMode(mode) {
+  setFileStudentViewMode(mode);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SUPABASE CLIENT INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2603,6 +2926,7 @@ function populateCourseSelector() {
 
 function switchCourse(courseId) {
   activeCourseId = courseId;
+  updateModuleActiveCourse(courseId); // Notify modules of course change
   populateCourseSelector();
   renderAll();
   navigateTo('home');
@@ -11772,6 +12096,7 @@ function viewQuizDetails(quizId) {
 
 function toggleStudentView() {
   studentViewMode = !studentViewMode;
+  updateModuleStudentViewMode(studentViewMode); // Notify modules of view mode change
   // Clear AI thread when switching views
   aiThread = [];
   renderAiThread();
@@ -11945,6 +12270,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     showLoginScreen();
     return;
   }
+
+  // Initialize all imported modules
+  initModules();
 
   // Listen for auth state changes (handles INITIAL_SESSION on page refresh and SIGNED_IN after OAuth)
   supabaseClient.auth.onAuthStateChange(handleAuthStateChange);
