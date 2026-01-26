@@ -7335,6 +7335,217 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// WINDOW ASSIGNMENTS FOR ONCLICK HANDLERS
+// Since this is loaded as a module, functions must be explicitly assigned to window
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Navigation and modals
+window.navigateTo = navigateTo;
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.openImportContentModal = openImportContentModal;
+window.executeImportContent = executeImportContent;
+
+// Course management
+window.createCourse = createCourse;
+window.joinCourse = joinCourse;
+window.updateCourse = updateCourse;
+window.switchCourse = switchCourse;
+
+// Start Here section
+window.addStartHereLink = addStartHereLink;
+window.saveStartHere = saveStartHere;
+window.openStartHereModal = openStartHereModal;
+window.toggleStartHereLinkType = toggleStartHereLinkType;
+window.updateStartHereLink = updateStartHereLink;
+window.removeStartHereLink = removeStartHereLink;
+
+// Announcements
+window.createAnnouncement = createAnnouncement;
+window.editAnnouncement = editAnnouncement;
+window.deleteAnnouncement = deleteAnnouncement;
+window.saveAnnouncementChanges = saveAnnouncementChanges;
+window.viewAnnouncement = viewAnnouncement;
+window.toggleAnnouncementVisibility = toggleAnnouncementVisibility;
+
+// Assignments
+window.createAssignment = createAssignment;
+window.editAssignment = editAssignment;
+window.deleteAssignment = deleteAssignment;
+window.saveAssignmentChanges = saveAssignmentChanges;
+window.saveNewAssignment = saveNewAssignment;
+window.openNewAssignmentModal = openNewAssignmentModal;
+window.handleNewAssignmentTypeChange = handleNewAssignmentTypeChange;
+window.openAssignmentModal = openAssignmentModal;
+window.toggleAssignmentVisibility = toggleAssignmentVisibility;
+window.openCreateAssignmentTypeModal = openCreateAssignmentTypeModal;
+window.handleCreateTypeChange = handleCreateTypeChange;
+window.confirmCreateType = confirmCreateType;
+
+// Submissions and grading
+window.submitAssignment = submitAssignment;
+window.saveSubmission = saveSubmission;
+window.viewSubmissions = viewSubmissions;
+window.gradeSubmission = gradeSubmission;
+window.saveGrade = saveGrade;
+window.openManualGradeModal = openManualGradeModal;
+window.saveManualGrade = saveManualGrade;
+window.exportGradebook = exportGradebook;
+
+// Speed Grader
+window.openSpeedGrader = openSpeedGrader;
+window.speedGraderSelectStudent = speedGraderSelectStudent;
+window.speedGraderPrev = speedGraderPrev;
+window.speedGraderNext = speedGraderNext;
+window.speedGraderDraftWithAI = speedGraderDraftWithAI;
+window.saveSpeedGraderGrade = saveSpeedGraderGrade;
+window.calculateSpeedGraderRubricTotal = calculateSpeedGraderRubricTotal;
+
+// Question Banks
+window.openQuestionBankModal = openQuestionBankModal;
+window.openCreateQuestionBankForm = openCreateQuestionBankForm;
+window.editQuestionBank = editQuestionBank;
+window.deleteQuestionBank = deleteQuestionBank;
+window.addQuestionToBankForm = addQuestionToBankForm;
+window.editQuestionInBank = editQuestionInBank;
+window.removeQuestionFromBank = removeQuestionFromBank;
+window.openQuestionEditor = openQuestionEditor;
+window.changeQuestionType = changeQuestionType;
+window.addQuestionOption = addQuestionOption;
+window.removeQuestionOption = removeQuestionOption;
+window.cancelQuestionEdit = cancelQuestionEdit;
+window.saveQuestionEdit = saveQuestionEdit;
+window.saveQuestionBank = saveQuestionBank;
+
+// Quizzes
+window.toggleQuizPoolFields = toggleQuizPoolFields;
+window.updateQuizQuestion = updateQuizQuestion;
+window.updateQuizOption = updateQuizOption;
+window.addQuizQuestion = addQuizQuestion;
+window.removeQuizQuestion = removeQuizQuestion;
+window.deleteQuiz = deleteQuiz;
+window.toggleQuizVisibility = toggleQuizVisibility;
+window.viewQuizDetails = viewQuizDetails;
+window.viewQuizSubmission = viewQuizSubmission;
+
+// Modules
+window.openModuleModal = openModuleModal;
+window.saveModule = saveModule;
+window.editModule = editModule;
+window.deleteModule = deleteModule;
+window.toggleModuleVisibility = toggleModuleVisibility;
+window.openAddModuleItemModal = openAddModuleItemModal;
+window.updateAddItemOptions = updateAddItemOptions;
+window.addModuleItem = addModuleItem;
+window.removeModuleItem = removeModuleItem;
+
+// Module drag and drop
+window.handleModuleDragStart = handleModuleDragStart;
+window.handleModuleDragOver = handleModuleDragOver;
+window.handleModuleDrop = handleModuleDrop;
+window.handleModuleDragEnd = handleModuleDragEnd;
+window.handleModuleItemDragStart = handleModuleItemDragStart;
+window.handleModuleItemDragOver = handleModuleItemDragOver;
+window.handleModuleItemDrop = handleModuleItemDrop;
+window.handleModuleItemDragEnd = handleModuleItemDragEnd;
+
+// Rubrics
+window.openRubricModal = openRubricModal;
+window.addRubricCriterion = addRubricCriterion;
+window.removeRubricCriterion = removeRubricCriterion;
+window.updateRubricCriterion = updateRubricCriterion;
+window.saveRubric = saveRubric;
+window.calculateRubricScore = calculateRubricScore;
+
+// Category Weights
+window.openCategoryWeightsModal = openCategoryWeightsModal;
+window.updateTotalWeight = updateTotalWeight;
+window.saveCategoryWeights = saveCategoryWeights;
+
+// Bulk operations
+window.openBulkStudentImportModal = openBulkStudentImportModal;
+window.processBulkStudentImport = processBulkStudentImport;
+window.openBulkGradeModal = openBulkGradeModal;
+window.processBulkGrades = processBulkGrades;
+window.bulkReleaseGrades = bulkReleaseGrades;
+
+// People management
+window.openAddPersonModal = openAddPersonModal;
+window.addPersonToCourse = addPersonToCourse;
+window.removePersonFromCourse = removePersonFromCourse;
+window.revokeInvite = revokeInvite;
+
+// Settings
+window.saveSettings = saveSettings;
+window.openEditCourseModal = openEditCourseModal;
+
+// Editor toolbar and insert
+window.insertLink = insertLink;
+window.insertVideo = insertVideo;
+window.insertFileLink = insertFileLink;
+window.openInsertLinkModal = openInsertLinkModal;
+window.confirmInsertLink = confirmInsertLink;
+window.openInsertVideoModal = openInsertVideoModal;
+window.previewInsertVideo = previewInsertVideo;
+window.confirmInsertVideo = confirmInsertVideo;
+window.openInsertFileModal = openInsertFileModal;
+window.selectFileForInsert = selectFileForInsert;
+window.confirmInsertExternalFile = confirmInsertExternalFile;
+
+// External links
+window.openExternalLinkModal = openExternalLinkModal;
+window.saveExternalLink = saveExternalLink;
+
+// AI features
+window.toggleAiRecording = toggleAiRecording;
+window.startAiRecording = startAiRecording;
+window.stopAiRecording = stopAiRecording;
+window.updateAiCreateType = updateAiCreateType;
+window.openAiCreateModal = openAiCreateModal;
+window.applyAiDraft = applyAiDraft;
+
+// Audio recording
+window.openAudioInputModal = openAudioInputModal;
+window.startAudioRecording = startAudioRecording;
+window.stopAudioRecording = stopAudioRecording;
+window.transcribeAudio = transcribeAudio;
+window.applyAudioParsedResult = applyAudioParsedResult;
+
+// Unified content creation
+window.openUnifiedContentModal = openUnifiedContentModal;
+window.createFromUnified = createFromUnified;
+window.toggleNewAssignmentDropdown = toggleNewAssignmentDropdown;
+window.closeNewAssignmentDropdown = closeNewAssignmentDropdown;
+
+// Student view
+window.toggleStudentView = toggleStudentView;
+
+// Search and sort
+window.updateModulesSearch = updateModulesSearch;
+window.updateFilesSearch = updateFilesSearch;
+window.updateFilesSort = updateFilesSort;
+window.updateGradebookSearch = updateGradebookSearch;
+window.updatePeopleSearch = updatePeopleSearch;
+
+// File handling
+window.handleFilesDrop = handleFilesDrop;
+window.updateFileUploadPreview = updateFileUploadPreview;
+
+// Syllabus parsing
+window.onSyllabusFileSelected = onSyllabusFileSelected;
+window.clearSyllabusUpload = clearSyllabusUpload;
+window.handleSyllabusParserDrop = handleSyllabusParserDrop;
+window.onSyllabusParserFileSelected = onSyllabusParserFileSelected;
+window.clearSyllabusParserUpload = clearSyllabusParserUpload;
+
+// Utility functions
+window.debugAuthState = debugAuthState;
+window.viewSubmissionHistory = viewSubmissionHistory;
+window.scrollAiThreadToBottom = scrollAiThreadToBottom;
+window.updateAiActionField = updateAiActionField;
+window.rejectAiAction = rejectAiAction;
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // EVENT LISTENERS
 // ═══════════════════════════════════════════════════════════════════════════════
 

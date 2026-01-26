@@ -359,3 +359,12 @@ export async function checkAuth() {
     return { authenticated: false, reason: 'exception', error: err.message };
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WINDOW ASSIGNMENTS FOR ONCLICK HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Assign functions to window for HTML onclick handlers
+window.signInWithGoogle = signInWithGoogle;
+window.logout = logout;
+window.checkAuth = checkAuth;
