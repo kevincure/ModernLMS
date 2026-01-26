@@ -13,13 +13,9 @@ import {
   ROLES,
   ROLE_LABELS,
   AI_PROMPTS,
-  DEFAULT_DATA,
   ERROR_MESSAGES,
   SUCCESS_MESSAGES,
-  ASSIGNMENT_CATEGORIES,
-  VALID_STATUSES,
-  DEFAULT_QUIZ_SETTINGS,
-  DATE_FORMATS
+  ASSIGNMENT_CATEGORIES
 } from './constants.js';
 
 // Database interactions - all Supabase CRUD operations
