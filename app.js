@@ -263,8 +263,7 @@ function initModules() {
     isStaff,
     supabaseCreateQuiz,
     supabaseUpdateQuiz,
-    supabaseCreateQuizSubmission,
-    supabaseUpdateQuizSubmission,
+    supabaseUpsertQuizSubmission,
     renderAssignments,
     renderModules
   });
