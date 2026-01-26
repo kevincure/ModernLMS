@@ -94,14 +94,14 @@ import {
 
 // AI Features - Gemini API integration, chat, content generation
 import {
-  initAIModule,
+  initAiModule,
   sendAiMessage,
   confirmAiAction,
   buildAiContext,
   renderAiThread,
   draftGradeWithAI,
   generateAiDraft,
-  setAIActiveCourseId
+  setActiveCourse as setAIActiveCourseId
 } from './ai_features.js';
 
 // Quiz Logic - quiz creation, taking, grading
@@ -114,8 +114,8 @@ import {
   calculateQuizAutoScore,
   viewQuizSubmissions,
   saveQuizGrade,
-  reviewQuizSubmission,
-  setQuizActiveCourseId
+  viewQuizSubmission,
+  setActiveCourseForQuiz as setQuizActiveCourseId
 } from './quiz_logic.js';
 
 // File Handling - uploads, downloads, syllabus parsing
@@ -228,7 +228,7 @@ function initModules() {
   });
 
   // Initialize AI module
-  initAIModule({
+  initAiModule({
     appData,
     showToast,
     escapeHtml,
@@ -956,11 +956,6 @@ function formatDueDate(dateString) {
   return `Due ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 }
 
-function formatFileSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / 1048576).toFixed(1) + ' MB';
-}
 
 // Helper functions for 12-hour time selector
 function getDateTimeFromSelectors(dateId, hourId, minuteId, ampmId) {
@@ -1053,15 +1048,6 @@ function getUserCourses(userId) {
     .filter(e => e.userId === userId)
     .map(e => ({ ...getCourseById(e.courseId), role: e.role }))
     .filter(c => c.id);
-}
-function getQuizPoints(quiz) {
-  if (!quiz || !quiz.questions) return 0;
-  const total = quiz.questions.reduce((sum, q) => sum + (parseFloat(q.points) || 0), 0);
-  if (quiz.questionPoolEnabled && quiz.questionSelectCount && quiz.questions.length > 0) {
-    const avg = total / quiz.questions.length;
-    return Math.round(avg * quiz.questionSelectCount * 10) / 10;
-  }
-  return total;
 }
 // ═══════════════════════════════════════════════════════════════════════════════
 // APP INITIALIZATION
@@ -1282,52 +1268,6 @@ function renderCourses() {
 // DRAG AND DROP HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function handleDragOver(e, dropZoneId) {
-  e.preventDefault();
-  e.stopPropagation();
-  const dropZone = document.getElementById(dropZoneId);
-  if (dropZone) {
-    dropZone.style.borderColor = 'var(--primary)';
-    dropZone.style.background = 'var(--primary-light)';
-  }
-}
-
-function handleDragLeave(e, dropZoneId) {
-  e.preventDefault();
-  e.stopPropagation();
-  const dropZone = document.getElementById(dropZoneId);
-  if (dropZone) {
-    dropZone.style.borderColor = 'var(--border-color)';
-    dropZone.style.background = '';
-  }
-}
-
-function handleSyllabusDrop(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  const dropZone = document.getElementById('syllabusDropZone');
-  if (dropZone) {
-    dropZone.style.borderColor = 'var(--border-color)';
-    dropZone.style.background = '';
-  }
-
-  const files = e.dataTransfer.files;
-  if (files.length > 0) {
-    const file = files[0];
-    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
-    const ext = '.' + file.name.split('.').pop().toLowerCase();
-    if (!validTypes.includes(ext)) {
-      showToast('Please upload a PDF, DOC, or TXT file', 'error');
-      return;
-    }
-    // Transfer dropped file to the hidden input
-    const input = document.getElementById('courseCreationSyllabus');
-    const dataTransfer = new DataTransfer();
-    dataTransfer.items.add(file);
-    input.files = dataTransfer.files;
-    onSyllabusFileSelected();
-  }
-}
 
 function onSyllabusFileSelected() {
   const input = document.getElementById('courseCreationSyllabus');
@@ -1431,94 +1371,6 @@ function clearSyllabusParserUpload() {
 // Store parsed syllabus data for course creation
 let courseCreationSyllabusData = null;
 
-async function parseCourseSyllabus() {
-  const fileInput = document.getElementById('courseCreationSyllabus');
-  if (!fileInput.files.length) {
-    showToast('Please select a syllabus file', 'error');
-    return;
-  }
-
-  const statusEl = document.getElementById('courseCreationSyllabusStatus');
-  statusEl.innerHTML = '<div class="ai-spinner" style="display:inline-block; width:16px; height:16px; margin-right:8px;"></div> Parsing syllabus...';
-
-  const file = fileInput.files[0];
-  try {
-    const base64Data = await fileToBase64(file);
-    const mimeType = file.type || 'application/octet-stream';
-
-    const systemPrompt = `You are analyzing a course syllabus. Extract course information and all assignments, modules/units, readings. Return ONLY valid JSON:
-{
-  "courseInfo": {
-    "name": "Course name",
-    "code": "Course code (e.g., ECON 101)",
-    "instructor": "Instructor name if found",
-    "description": "Course description if found"
-  },
-  "modules": [
-    {
-      "name": "Module/Week/Unit name",
-      "items": [
-        { "type": "assignment" | "quiz" | "reading", "title": "Item title", "description": "Brief description", "dueDate": "ISO date or null", "points": 100 }
-      ]
-    }
-  ]
-}
-Extract EACH reading/chapter as a SEPARATE item. For exams/quizzes use type "quiz". For homework/essays use "assignment".`;
-
-    const contents = [{
-      parts: [
-        { inlineData: { mimeType, data: base64Data } },
-        { text: systemPrompt }
-      ]
-    }];
-
-    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: "application/json", temperature: 0.2 });
-    if (data.error) throw new Error(data.error.message);
-
-    const text = data.candidates[0].content.parts[0].text;
-    const parsed = parseAiJsonResponse(text);
-    courseCreationSyllabusData = parsed;
-
-    // Auto-fill course info
-    if (parsed.courseInfo) {
-      if (parsed.courseInfo.name && !document.getElementById('courseName').value) {
-        document.getElementById('courseName').value = parsed.courseInfo.name;
-      }
-      if (parsed.courseInfo.code && !document.getElementById('courseCode').value) {
-        document.getElementById('courseCode').value = parsed.courseInfo.code;
-      }
-      if (parsed.courseInfo.description && !document.getElementById('courseDescription').value) {
-        document.getElementById('courseDescription').value = parsed.courseInfo.description;
-      }
-    }
-
-    // Show modules preview
-    if (parsed.modules && parsed.modules.length > 0) {
-      let totalItems = 0;
-      parsed.modules.forEach(m => totalItems += (m.items || []).length);
-
-      const previewEl = document.getElementById('courseCreationModulesPreview');
-      const listEl = document.getElementById('courseCreationModulesList');
-      previewEl.style.display = 'block';
-
-      listEl.innerHTML = parsed.modules.map((mod, idx) => `
-        <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
-          <input type="checkbox" checked class="course-creation-module-check" data-index="${idx}">
-          <span>${escapeHtml(mod.name)} <span class="muted">(${(mod.items || []).length} items)</span></span>
-        </label>
-      `).join('');
-
-      statusEl.innerHTML = `<span style="color:var(--success);">✓ Found ${parsed.modules.length} modules, ${totalItems} items</span>`;
-    } else {
-      statusEl.innerHTML = '<span style="color:var(--warning);">No modules found in syllabus</span>';
-    }
-
-  } catch (err) {
-    console.error('Syllabus parsing error:', err);
-    statusEl.innerHTML = `<span style="color:var(--error);">Error: ${err.message}</span>`;
-    courseCreationSyllabusData = null;
-  }
-}
 
 async function createCourse() {
   const name = document.getElementById('courseName').value.trim();
@@ -1819,9 +1671,6 @@ async function joinCourse() {
   showToast('Successfully joined course!', 'success');
 }
 
-function generateInviteCode() {
-  return Math.random().toString(36).substr(2, 6).toUpperCase();
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HOME PAGE
@@ -3666,62 +3515,6 @@ async function saveGrade(submissionId) {
   showToast('Grade saved!', 'success');
 }
 
-async function draftGradeWithAI(submissionId, assignmentId) {
-  const submission = appData.submissions.find(s => s.id === submissionId);
-  const assignment = appData.assignments.find(a => a.id === assignmentId);
-
-  const prompt = `You are grading a student submission for an assignment.
-
-Assignment: ${assignment.title}
-Description: ${assignment.description}
-Points possible: ${assignment.points}
-
-Student submission:
-${submission.text || 'No text submission provided'}
-
-Please provide a grade and feedback. Respond ONLY with valid JSON in this format:
-{"score": <number>, "feedback": "<string>"}
-
-The score should be between 0 and ${assignment.points}. The feedback should be constructive and specific.`;
-
-  try {
-    showToast('Drafting grade with AI...', 'info');
-
-    const contents = [{ parts: [{ text: prompt }] }];
-    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.2 });
-
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const text = data.candidates[0].content.parts[0].text;
-    
-    // Try to parse JSON from response
-    let result;
-    try {
-      // Extract JSON from markdown code blocks if present
-      const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
-      result = JSON.parse(jsonMatch ? jsonMatch[1] || jsonMatch[0] : text);
-    } catch (parseErr) {
-      // Fallback: extract score and feedback manually
-      const scoreMatch = text.match(/score["']?\s*:\s*(\d+)/i);
-      const feedbackMatch = text.match(/feedback["']?\s*:\s*["'](.*?)["']/is);
-      
-      result = {
-        score: scoreMatch ? parseInt(scoreMatch[1]) : Math.floor(assignment.points * 0.85),
-        feedback: feedbackMatch ? feedbackMatch[1] : text
-      };
-    }
-    
-    document.getElementById('gradeScore').value = result.score;
-    document.getElementById('gradeFeedback').value = result.feedback;
-    showToast('AI draft ready! Review and edit as needed.', 'success');
-    
-  } catch (err) {
-    console.error('AI grading error:', err);
-    showToast('AI drafting failed: ' + err.message, 'error');
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZZES
@@ -3763,41 +3556,6 @@ function createDefaultQuestion(type = 'multiple_choice') {
   };
 }
 
-function openQuizModal(quizId = null) {
-  ensureModalsRendered();
-  currentEditQuizId = quizId;
-  const quiz = quizId ? appData.quizzes.find(q => q.id === quizId) : null;
-  
-  const draft = !quiz && aiQuizDraft ? aiQuizDraft : null;
-  
-  document.getElementById('quizModalTitle').textContent = quiz ? 'Edit Quiz' : 'New Quiz';
-  document.getElementById('quizTitle').value = quiz ? quiz.title : (draft?.title || '');
-  document.getElementById('quizDescription').value = quiz ? quiz.description || '' : (draft?.description || '');
-  setDateTimeSelectors('quizDueDate', 'quizDueHour', 'quizDueMinute', 'quizDueAmPm', quiz ? quiz.dueDate : null);
-  document.getElementById('quizStatus').value = quiz ? quiz.status : 'draft';
-  document.getElementById('quizTimeLimit').value = quiz ? quiz.timeLimit || '' : '';
-  document.getElementById('quizAttempts').value = quiz ? quiz.attempts || '' : '';
-  document.getElementById('quizRandomize').checked = quiz ? quiz.randomizeQuestions === true : true;
-  document.getElementById('quizPoolEnabled').checked = quiz ? quiz.questionPoolEnabled === true : false;
-  document.getElementById('quizPoolCount').value = quiz ? quiz.questionSelectCount || '' : '';
-  
-  quizDraftQuestions = quiz
-    ? JSON.parse(JSON.stringify(quiz.questions || []))
-    : (draft?.questions?.map(q => ({
-      id: q.id || generateId(),
-      type: q.type || 'multiple_choice',
-      prompt: q.prompt || '',
-      options: q.options || (q.type === 'multiple_choice' ? ['Option 1', 'Option 2'] : []),
-      correctAnswer: q.correctAnswer ?? (q.type === 'true_false' ? 'True' : 0),
-      points: parseFloat(q.points) || 1,
-      sampleAnswer: ''
-    })) || [createDefaultQuestion()]);
-  
-  aiQuizDraft = null;
-  toggleQuizPoolFields();
-  renderQuizQuestions();
-  openModal('quizModal');
-}
 
 function toggleQuizPoolFields() {
   const enabled = document.getElementById('quizPoolEnabled').checked;
@@ -3928,94 +3686,6 @@ function updateQuizPointsTotal() {
   if (el) el.textContent = total.toFixed(1);
 }
 
-async function saveQuiz() {
-  const title = document.getElementById('quizTitle').value.trim();
-  const description = document.getElementById('quizDescription').value.trim();
-  const dueDate = getDateTimeFromSelectors('quizDueDate', 'quizDueHour', 'quizDueMinute', 'quizDueAmPm');
-  const status = document.getElementById('quizStatus').value;
-  const timeLimit = parseInt(document.getElementById('quizTimeLimit').value, 10) || 0;
-  const attempts = parseInt(document.getElementById('quizAttempts').value, 10) || 0;
-  const randomizeQuestions = document.getElementById('quizRandomize').checked;
-  const questionPoolEnabled = document.getElementById('quizPoolEnabled').checked;
-  const questionSelectCount = parseInt(document.getElementById('quizPoolCount').value, 10) || 0;
-
-  if (!title || !dueDate) {
-    showToast('Please fill in title and due date', 'error');
-    return;
-  }
-
-  if (quizDraftQuestions.length === 0) {
-    showToast('Add at least one question', 'error');
-    return;
-  }
-
-  if (questionPoolEnabled && (!questionSelectCount || questionSelectCount > quizDraftQuestions.length)) {
-    showToast('Question pool count must be between 1 and total questions', 'error');
-    return;
-  }
-
-  for (const question of quizDraftQuestions) {
-    if (!question.prompt.trim() || !question.points) {
-      showToast('Each question needs text and points', 'error');
-      return;
-    }
-
-    if (question.type === 'multiple_choice') {
-      if (question.options.some(opt => !opt.trim())) {
-        showToast('Fill in all multiple choice options', 'error');
-        return;
-      }
-      if (question.correctAnswer === null || question.correctAnswer === undefined) {
-        showToast('Select a correct answer for each multiple choice question', 'error');
-        return;
-      }
-    }
-  }
-
-  const isNewQuiz = !currentEditQuizId;
-  const quizData = {
-    id: currentEditQuizId || generateId(),
-    courseId: activeCourseId,
-    title,
-    description,
-    status,
-    dueDate: new Date(dueDate).toISOString(),
-    createdAt: currentEditQuizId ? appData.quizzes.find(q => q.id === currentEditQuizId)?.createdAt : new Date().toISOString(),
-    timeLimit: timeLimit || null,
-    attempts: attempts || null,
-    randomizeQuestions,
-    questionPoolEnabled,
-    questionSelectCount: questionPoolEnabled ? questionSelectCount : null,
-    questions: JSON.parse(JSON.stringify(quizDraftQuestions))
-  };
-
-  // Save to Supabase
-  let result;
-  if (isNewQuiz) {
-    result = await supabaseCreateQuiz(quizData);
-  } else {
-    result = await supabaseUpdateQuiz(quizData);
-  }
-  if (!result) {
-    return; // Error already shown
-  }
-
-  const existingIndex = appData.quizzes.findIndex(q => q.id === quizData.id);
-  const previousStatus = existingIndex >= 0 ? appData.quizzes[existingIndex].status : null;
-
-  if (existingIndex >= 0) {
-    appData.quizzes[existingIndex] = quizData;
-  } else {
-    appData.quizzes.push(quizData);
-  }
-  
-
-  
-  closeModal('quizModal');
-  renderAssignments();
-  renderHome();
-  showToast('Quiz saved!', 'success');
-}
 
 function deleteQuiz(quizId) {
   const quiz = appData.quizzes.find(q => q.id === quizId);
@@ -4036,31 +3706,6 @@ function deleteQuiz(quizId) {
   });
 }
 
-function takeQuiz(quizId) {
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (!quiz) return;
-  
-  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-  if (!isStaffUser && quiz.status !== 'published') {
-    showToast('This quiz is not published yet', 'error');
-    return;
-  }
-  
-  const attemptsUsed = appData.quizSubmissions.filter(s => s.quizId === quizId && s.userId === appData.currentUser.id).length;
-  if (quiz.attempts && attemptsUsed >= quiz.attempts) {
-    showToast('No attempts left for this quiz', 'error');
-    return;
-  }
-  
-  if (new Date(quiz.dueDate) < new Date()) {
-    showToast('This quiz is past due', 'error');
-    return;
-  }
-  
-  currentQuizTakingId = quizId;
-  renderQuizTakeModal(quiz);
-  openModal('quizTakeModal');
-}
 
 function renderQuizTakeModal(quiz) {
   const container = document.getElementById('quizTakeQuestions');
@@ -4147,190 +3792,7 @@ function startQuizTimer(timeLimit) {
   }, 1000);
 }
 
-async function submitQuiz() {
-  const quiz = appData.quizzes.find(q => q.id === currentQuizTakingId);
-  const container = document.getElementById('quizTakeQuestions');
-  if (!quiz || !container) return;
 
-  const questions = JSON.parse(container.dataset.questions || '[]');
-  const answers = {};
-
-  questions.forEach((q, index) => {
-    if (q.type === 'short_answer') {
-      answers[q.id] = document.getElementById(`quizAnswer${index}`).value.trim();
-    } else {
-      const selected = document.querySelector(`input[name="quizQuestion${index}"]:checked`);
-      answers[q.id] = selected ? selected.value : null;
-    }
-  });
-
-  const { autoScore, needsManual } = calculateQuizAutoScore(questions, answers);
-  const totalPoints = getQuizPoints({ questions });
-
-  const submission = {
-    id: generateId(),
-    quizId: quiz.id,
-    userId: appData.currentUser.id,
-    answers,
-    questions,
-    autoScore,
-    score: autoScore,
-    needsManual,
-    graded: !needsManual,
-    released: !needsManual,
-    feedback: '',
-    submittedAt: new Date().toISOString(),
-    gradedAt: needsManual ? null : new Date().toISOString(),
-    gradedBy: needsManual ? null : 'auto'
-  };
-
-  // Save to Supabase
-  await supabaseUpsertQuizSubmission(submission);
-
-  appData.quizSubmissions.push(submission);
-
-  
-  if (quizTimerInterval) {
-    clearInterval(quizTimerInterval);
-    quizTimerInterval = null;
-  }
-  
-  if (!needsManual) {
-    showToast(`Quiz submitted! Score: ${autoScore}/${totalPoints}`, 'success');
-  } else {
-    showToast('Quiz submitted! Awaiting review.', 'success');
-  }
-  
-  closeModal('quizTakeModal');
-  renderAssignments();
-}
-
-function calculateQuizAutoScore(questions, answers) {
-  let autoScore = 0;
-  let needsManual = false;
-  
-  questions.forEach(q => {
-    const points = parseFloat(q.points) || 0;
-    if (q.type === 'multiple_choice') {
-      const selectedIndex = parseInt(answers[q.id], 10);
-      if (selectedIndex === parseInt(q.correctAnswer, 10)) {
-        autoScore += points;
-      }
-    } else if (q.type === 'true_false') {
-      if (answers[q.id] === q.correctAnswer) {
-        autoScore += points;
-      }
-    } else {
-      needsManual = true;
-    }
-  });
-  
-  return { autoScore, needsManual };
-}
-
-function viewQuizSubmissions(quizId) {
-  ensureModalsRendered();
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (!quiz) return;
-  
-  const submissions = appData.quizSubmissions
-    .filter(s => s.quizId === quizId)
-    .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
-  
-  const list = document.getElementById('quizSubmissionsList');
-  if (!list) return;
-  
-  if (submissions.length === 0) {
-    list.innerHTML = '<div class="empty-state-text">No submissions yet</div>';
-  } else {
-    list.innerHTML = submissions.map(submission => {
-      const student = getUserById(submission.userId);
-      const status = submission.released ? `Score: ${submission.score}` : 'Needs review';
-      return `
-        <div class="submission-row">
-          <div>
-            <div style="font-weight:600;">${student ? student.name : 'Unknown'}</div>
-            <div class="muted">${formatDate(submission.submittedAt)} · ${status}</div>
-          </div>
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-secondary btn-sm" onclick="openQuizGradeModal('${quizId}', '${submission.id}')">Grade</button>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-  
-  document.getElementById('quizSubmissionsTitle').textContent = `Quiz Submissions: ${quiz.title}`;
-  openModal('quizSubmissionsModal');
-}
-
-function openQuizGradeModal(quizId, submissionId) {
-  ensureModalsRendered();
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  const submission = appData.quizSubmissions.find(s => s.id === submissionId);
-  if (!quiz || !submission) return;
-  
-  const student = getUserById(submission.userId);
-  const answersList = document.getElementById('quizGradeAnswers');
-  const scoreInput = document.getElementById('quizGradeScore');
-  const feedbackInput = document.getElementById('quizGradeFeedback');
-  
-  document.getElementById('quizGradeTitle').textContent = `Grade Quiz: ${student ? student.name : 'Student'}`;
-  const totalPoints = getQuizPoints({ questions: submission.questions });
-  document.getElementById('quizGradePoints').textContent = `${totalPoints} pts total`;
-  
-  answersList.innerHTML = submission.questions.map((q, index) => {
-    const answer = submission.answers[q.id];
-    let answerText = '';
-    if (q.type === 'multiple_choice') {
-      const selectedIndex = parseInt(answer, 10);
-      answerText = answer !== null && !Number.isNaN(selectedIndex) ? q.options[selectedIndex] : 'No answer';
-    } else if (q.type === 'true_false') {
-      answerText = answer || 'No answer';
-    } else {
-      answerText = answer || 'No answer';
-    }
-    
-    return `
-      <div class="quiz-answer-review">
-        <div class="quiz-answer-question">${index + 1}. ${q.prompt}</div>
-        <div class="quiz-answer-response">Answer: ${answerText}</div>
-      </div>
-    `;
-  }).join('');
-  
-  scoreInput.value = submission.score || submission.autoScore || 0;
-  feedbackInput.value = submission.feedback || '';
-  document.getElementById('quizGradeSubmissionId').value = submission.id;
-  document.getElementById('quizGradeQuizId').value = quizId;
-  
-  openModal('quizGradeModal');
-}
-
-async function saveQuizGrade() {
-  const submissionId = document.getElementById('quizGradeSubmissionId').value;
-  const quizId = document.getElementById('quizGradeQuizId').value;
-  const score = parseFloat(document.getElementById('quizGradeScore').value) || 0;
-  const feedback = document.getElementById('quizGradeFeedback').value.trim();
-
-  const submission = appData.quizSubmissions.find(s => s.id === submissionId);
-  if (!submission) return;
-
-  submission.score = score;
-  submission.feedback = feedback;
-  submission.released = true;
-  submission.needsManual = false;
-  submission.gradedAt = new Date().toISOString();
-  submission.gradedBy = appData.currentUser.id;
-
-  // Save to Supabase
-  await supabaseUpsertQuizSubmission(submission);
-
-  closeModal('quizGradeModal');
-  renderAssignments();
-  viewQuizSubmissions(quizId);
-  showToast('Quiz graded!', 'success');
-}
 
 function viewQuizSubmission(quizId) {
   ensureModalsRendered();
@@ -4776,27 +4238,6 @@ async function toggleModuleVisibility(moduleId) {
   showToast(module.hidden ? 'Module hidden from students' : 'Module visible to students', 'info');
 }
 
-async function toggleFileVisibility(fileId) {
-  const file = appData.files.find(f => f.id === fileId);
-  if (!file) return;
-
-  const originalHidden = file.hidden;
-  file.hidden = !file.hidden;
-
-  // Persist to Supabase
-  const result = await supabaseUpdateFile(file);
-  if (!result) {
-    // Rollback on failure
-    file.hidden = originalHidden;
-    showToast('Failed to update file visibility', 'error');
-    return;
-  }
-
-
-  renderModules();
-  renderFiles();
-  showToast(file.hidden ? 'File hidden from students' : 'File visible to students', 'info');
-}
 
 function openAddModuleItemModal(moduleId) {
   generateModals();
@@ -4886,113 +4327,6 @@ async function removeModuleItem(moduleId, itemId) {
 // AI SYLLABUS PARSER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function openSyllabusParserModal() {
-  generateModals();
-  document.getElementById('syllabusFile').value = '';
-  document.getElementById('syllabusText').value = '';
-  document.getElementById('syllabusParsedPreview').innerHTML = '<div class="muted">Upload a syllabus or paste text to extract modules and assignments</div>';
-  openModal('syllabusParserModal');
-}
-
-async function parseSyllabus() {
-  const fileInput = document.getElementById('syllabusFile');
-  const textInput = document.getElementById('syllabusText').value.trim();
-
-  const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, readings, and due dates. Return ONLY valid JSON with the following structure:
-{
-  "courseInfo": {
-    "name": "Course name if found",
-    "code": "Course code if found (e.g., ECON 101)",
-    "instructor": "Instructor name if found",
-    "description": "Course description if found"
-  },
-  "modules": [
-    {
-      "name": "Module/Week/Unit name",
-      "items": [
-        {
-          "type": "assignment" | "quiz" | "reading",
-          "title": "Item title",
-          "description": "Brief description if available",
-          "dueDate": "ISO date string if available, or null",
-          "points": "number if available, or 100"
-        }
-      ]
-    }
-  ]
-}
-
-IMPORTANT RULES:
-1. Extract EACH reading/textbook chapter/article as a SEPARATE item with type "reading"
-   - If syllabus says "Read chapters 1-3", create THREE separate reading items: "Chapter 1", "Chapter 2", "Chapter 3"
-   - If syllabus lists "Smith (2020), Jones (2019)", create TWO separate reading items
-2. For exams, quizzes, midterms, finals, or tests: set type to "quiz"
-3. For homework, problem sets, essays, papers, projects: set type to "assignment"
-4. Group items by week/module/unit as presented in the syllabus
-5. Extract course metadata (name, code, instructor) if available at the top of the syllabus`;
-
-  let contents;
-
-  // If file uploaded, send as base64 inline data to Gemini
-  if (fileInput.files.length > 0) {
-    const file = fileInput.files[0];
-    try {
-      const base64Data = await fileToBase64(file);
-      const mimeType = file.type || 'application/octet-stream';
-
-      contents = [{
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: base64Data
-            }
-          },
-          { text: systemPrompt }
-        ]
-      }];
-    } catch (err) {
-      showToast('Could not read file: ' + err.message, 'error');
-      return;
-    }
-  } else if (textInput) {
-    // Use pasted text
-    contents = [{ parts: [{ text: systemPrompt + '\n\nSYLLABUS:\n' + textInput }] }];
-  } else {
-    showToast('Please upload a syllabus file or paste syllabus text', 'error');
-    return;
-  }
-
-  try {
-    // Show processing notification with warning
-    const preview = document.getElementById('syllabusParsedPreview');
-    preview.innerHTML = `
-      <div style="text-align:center; padding:40px;">
-        <div class="ai-spinner" style="margin:0 auto 16px;"></div>
-        <div style="font-weight:600; margin-bottom:8px;">🔄 Parsing syllabus with AI...</div>
-        <div class="muted">This may take up to a minute. Please do not close this window.</div>
-      </div>
-    `;
-    showToast('Parsing syllabus... please wait', 'info');
-
-    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: "application/json", temperature: 0.2 });
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const text = data.candidates[0].content.parts[0].text;
-    const parsed = parseAiJsonResponse(text);
-
-    renderSyllabusParsedPreview(parsed);
-    showToast('Syllabus parsed! Review and import.', 'success');
-
-  } catch (err) {
-    console.error('Syllabus parsing error:', err);
-    showToast('Syllabus parsing failed: ' + err.message, 'error');
-    const preview = document.getElementById('syllabusParsedPreview');
-    preview.innerHTML = `<div class="muted">Parsing failed. Please try again.</div>`;
-  }
-}
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -5103,157 +4437,6 @@ function renderSyllabusParsedPreview(parsed) {
   `;
 }
 
-async function importParsedSyllabus() {
-  if (!parsedSyllabusData || !parsedSyllabusData.modules) {
-    showToast('No parsed data to import', 'error');
-    return;
-  }
-
-  if (!appData.modules) appData.modules = [];
-
-  let modulesCreated = 0;
-  let itemsCreated = 0;
-  let placeholdersCreated = 0;
-
-  const checkedModules = document.querySelectorAll('.syllabus-module-check:checked');
-  const checkedModuleIndices = new Set(Array.from(checkedModules).map(el => parseInt(el.dataset.moduleIndex)));
-
-  const checkedItems = document.querySelectorAll('.syllabus-item-check:checked');
-  const checkedItemsMap = {};
-  checkedItems.forEach(el => {
-    const modIdx = parseInt(el.dataset.moduleIndex);
-    const itemIdx = parseInt(el.dataset.itemIndex);
-    if (!checkedItemsMap[modIdx]) checkedItemsMap[modIdx] = new Set();
-    checkedItemsMap[modIdx].add(itemIdx);
-  });
-
-  showToast('Importing syllabus content...', 'info');
-
-  for (const [modIndex, mod] of parsedSyllabusData.modules.entries()) {
-    if (!checkedModuleIndices.has(modIndex)) continue;
-
-    const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
-    const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
-
-    const newModule = {
-      id: generateId(),
-      courseId: activeCourseId,
-      name: mod.name,
-      position: maxPosition + modulesCreated,
-      items: []
-    };
-
-    for (const [itemIndex, item] of (mod.items || []).entries()) {
-      if (!checkedItemsMap[modIndex] || !checkedItemsMap[modIndex].has(itemIndex)) continue;
-
-      let refId = null;
-
-      if (item.type === 'quiz') {
-        // Create quiz placeholder
-        const newQuiz = {
-          id: generateId(),
-          courseId: activeCourseId,
-          title: item.title,
-          description: item.description || '📌 Placeholder - use AI or edit manually to add questions',
-          status: 'draft',
-          dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
-          createdAt: new Date().toISOString(),
-          timeLimit: 30,
-          attempts: 1,
-          randomizeQuestions: false,
-          questionPoolEnabled: false,
-          questionSelectCount: 0,
-          questions: [],
-          isPlaceholder: true
-        };
-        await supabaseCreateQuiz(newQuiz);
-        appData.quizzes.push(newQuiz);
-        refId = newQuiz.id;
-        placeholdersCreated++;
-
-        newModule.items.push({
-          id: generateId(),
-          type: 'quiz',
-          refId: refId,
-          position: newModule.items.length
-        });
-      } else if (item.type === 'reading' || item.type === 'file') {
-        // Create file placeholder
-        const newFile = {
-          id: generateId(),
-          courseId: activeCourseId,
-          name: item.title,
-          type: 'placeholder',
-          size: 0,
-          hidden: true,
-          isPlaceholder: true,
-          description: item.description || '',
-          uploadedBy: appData.currentUser.id,
-          uploadedAt: new Date().toISOString()
-        };
-        await supabaseCreateFile(newFile);
-        appData.files.push(newFile);
-        refId = newFile.id;
-        placeholdersCreated++;
-
-        newModule.items.push({
-          id: generateId(),
-          type: 'file',
-          refId: refId,
-          position: newModule.items.length
-        });
-      } else {
-        // Create assignment placeholder
-        const newAssignment = {
-          id: generateId(),
-          courseId: activeCourseId,
-          title: item.title,
-          description: item.description || '📌 Placeholder - edit to add full assignment details',
-          points: item.points || 100,
-          status: 'draft',
-          dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
-          createdAt: new Date().toISOString(),
-          allowLateSubmissions: true,
-          lateDeduction: 10,
-          allowResubmission: false,
-          category: 'homework',
-          rubric: null,
-          isPlaceholder: true
-        };
-        await supabaseCreateAssignment(newAssignment);
-        appData.assignments.push(newAssignment);
-        refId = newAssignment.id;
-        placeholdersCreated++;
-
-        newModule.items.push({
-          id: generateId(),
-          type: 'assignment',
-          refId: refId,
-          position: newModule.items.length
-        });
-      }
-
-      itemsCreated++;
-    }
-
-    // Save module to Supabase (without items - items saved separately)
-    await supabaseCreateModule(newModule);
-
-    // Save module items to Supabase
-    for (const moduleItem of newModule.items) {
-      await supabaseCreateModuleItem(newModule.id, moduleItem);
-    }
-
-    appData.modules.push(newModule);
-    modulesCreated++;
-  }
-
-  closeModal('syllabusParserModal');
-  renderModules();
-  renderAssignments();
-  renderFiles();
-  showToast(`Imported ${modulesCreated} modules with ${placeholdersCreated} placeholders! Click visibility badges to publish.`, 'success');
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AI AUDIO INPUT
@@ -5417,17 +4600,6 @@ Return ONLY valid JSON:
   }
 }
 
-async function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result.split(',')[1];
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
 
 let parsedAudioData = null;
 
@@ -5856,165 +5028,6 @@ function updateFilesSort(value) {
   renderFiles();
 }
 
-function renderFiles() {
-  if (!activeCourseId) {
-    setText('filesSubtitle', 'Select a course');
-    setHTML('filesActions', '');
-    setHTML('filesList', '<div class="empty-state-text">No active course</div>');
-    return;
-  }
-
-  const course = getCourseById(activeCourseId);
-  setText('filesSubtitle', course.name);
-
-  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-
-  // Actions with search and sort
-  setHTML('filesActions', `
-    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search files..." value="${escapeHtml(filesSearch)}" onkeyup="updateFilesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      <select class="form-select" onchange="updateFilesSort(this.value)" style="width:150px;">
-        <option value="date-desc" ${filesSort === 'date-desc' ? 'selected' : ''}>Newest first</option>
-        <option value="date-asc" ${filesSort === 'date-asc' ? 'selected' : ''}>Oldest first</option>
-        <option value="name-asc" ${filesSort === 'name-asc' ? 'selected' : ''}>Name A-Z</option>
-        <option value="name-desc" ${filesSort === 'name-desc' ? 'selected' : ''}>Name Z-A</option>
-        <option value="size-desc" ${filesSort === 'size-desc' ? 'selected' : ''}>Largest first</option>
-        <option value="size-asc" ${filesSort === 'size-asc' ? 'selected' : ''}>Smallest first</option>
-      </select>
-      ${isStaffUser ? `<button class="btn btn-primary" onclick="openModal('fileUploadModal')">Upload File</button>` : ''}
-    </div>
-  `);
-
-  const effectiveStaff = isStaffUser && !studentViewMode;
-
-  let files = appData.files.filter(f => f.courseId === activeCourseId);
-
-  // Hide hidden files from students
-  if (!effectiveStaff) {
-    files = files.filter(f => !f.hidden);
-  }
-
-  // Filter by search
-  if (filesSearch) {
-    files = files.filter(f => f.name.toLowerCase().includes(filesSearch));
-  }
-
-  // Sort
-  files.sort((a, b) => {
-    switch (filesSort) {
-      case 'date-asc': return new Date(a.uploadedAt) - new Date(b.uploadedAt);
-      case 'date-desc': return new Date(b.uploadedAt) - new Date(a.uploadedAt);
-      case 'name-asc': return a.name.localeCompare(b.name);
-      case 'name-desc': return b.name.localeCompare(a.name);
-      case 'size-asc': return a.size - b.size;
-      case 'size-desc': return b.size - a.size;
-      default: return 0;
-    }
-  });
-
-  if (files.length === 0) {
-    setHTML('filesList', filesSearch
-      ? '<div class="empty-state"><div class="empty-state-text">No files match your search</div></div>'
-      : '<div class="empty-state"><div class="empty-state-title">No files yet</div></div>');
-    return;
-  }
-
-  const html = files.map(f => {
-    const uploader = getUserById(f.uploadedBy);
-    const isExternal = f.externalUrl;
-    const isPlaceholder = f.isPlaceholder;
-    const isHidden = f.hidden;
-
-    // Visibility badge for staff
-    const visibilityText = isHidden ? 'Hidden' : 'Hide from Students';
-    const visibilityBadge = effectiveStaff
-      ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${f.id}')" style="padding:2px 8px; margin-left:8px;">${visibilityText}</button>`
-      : '';
-
-    const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
-
-    return `
-      <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}">
-        <div class="card-header">
-          <div style="flex:1;">
-            <div class="card-title">${icon} ${escapeHtml(f.name)} ${visibilityBadge}</div>
-            <div class="muted">
-              ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
-              · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
-            </div>
-          </div>
-          <div style="display:flex; gap:8px;">
-            ${isExternal && f.externalUrl ? `
-              <a href="${escapeHtml(f.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
-                ${f.isYouTube ? '▶ Watch' : '🔗 Open'}
-              </a>
-            ` : ''}
-            ${effectiveStaff && isPlaceholder ? `
-              <button class="btn btn-secondary btn-sm" onclick="convertPlaceholderToFile('${f.id}')">📎 Upload File</button>
-              <button class="btn btn-secondary btn-sm" onclick="convertPlaceholderToLink('${f.id}')">🔗 Add Link</button>
-            ` : ''}
-            ${effectiveStaff ? `<button class="btn btn-secondary btn-sm" onclick="deleteFile('${f.id}')">Delete</button>` : ''}
-          </div>
-        </div>
-        ${isExternal && f.isYouTube ? `
-          <div style="margin-top:12px;">
-            <iframe width="100%" height="315" src="${escapeHtml(f.externalUrl)}" frameborder="0" allowfullscreen style="border-radius:var(--radius);"></iframe>
-          </div>
-        ` : ''}
-      </div>
-    `;
-  }).join('');
-
-  setHTML('filesList', html);
-}
-
-function convertPlaceholderToFile(fileId) {
-  const file = appData.files.find(f => f.id === fileId);
-  if (!file) return;
-
-  // Open file upload and associate with this placeholder
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.onchange = async (e) => {
-    const uploadedFile = e.target.files[0];
-    if (uploadedFile) {
-      file.name = uploadedFile.name;
-      file.type = uploadedFile.name.split('.').pop();
-      file.size = uploadedFile.size;
-      file.isPlaceholder = false;
-      file.hidden = false;
-      // Persist to Supabase
-      await supabaseUpdateFile(file);
-    
-      renderFiles();
-      renderModules();
-      showToast('File uploaded!', 'success');
-    }
-  };
-  input.click();
-}
-
-async function convertPlaceholderToLink(fileId) {
-  const file = appData.files.find(f => f.id === fileId);
-  if (!file) return;
-
-  // Open prompt for URL
-  const url = prompt('Enter external URL (YouTube links will auto-convert to embed):');
-  if (url) {
-    const convertedUrl = convertYouTubeUrl(url);
-    file.externalUrl = convertedUrl;
-    file.isYouTube = convertedUrl !== url;
-    file.isPlaceholder = false;
-    file.type = 'external';
-    file.hidden = false;
-    // Persist to Supabase
-    await supabaseUpdateFile(file);
-  
-    renderFiles();
-    renderModules();
-    showToast('External link added!', 'success');
-  }
-}
 
 // Store files selected for upload
 let pendingUploadFiles = [];
@@ -6067,118 +5080,6 @@ function updateFileUploadPreview() {
   `;
 }
 
-function formatFileSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
-
-async function uploadFiles() {
-  if (pendingUploadFiles.length === 0) {
-    showToast('Please select files to upload', 'error');
-    return;
-  }
-
-  if (!supabaseClient) {
-    showToast('Database not connected', 'error');
-    return;
-  }
-
-  // Verify auth state before attempting upload
-  const authUser = await debugAuthState('uploadFiles');
-  if (!authUser) {
-    console.error('[uploadFiles] Cannot upload: not authenticated');
-    showToast('Not authenticated - please sign in again', 'error');
-    return;
-  }
-
-  const totalFiles = pendingUploadFiles.length;
-  showToast(`Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''}...`, 'info');
-
-  let successCount = 0;
-  let errorCount = 0;
-
-  for (const file of pendingUploadFiles) {
-    try {
-      const fileId = generateId();
-      const storagePath = `courses/${activeCourseId}/${fileId}_${file.name}`;
-
-      // Upload file to Supabase Storage
-      const { data: uploadData, error: uploadError } = await supabaseClient.storage
-        .from('course-files')
-        .upload(storagePath, file, {
-          cacheControl: '3600',
-          upsert: false
-        });
-
-      if (uploadError) {
-        console.error('[uploadFiles] Storage upload error:', uploadError);
-        // If storage bucket doesn't exist, just save metadata
-        if (!uploadError.message.includes('Bucket not found') && uploadError.statusCode !== '404') {
-          errorCount++;
-          continue;
-        }
-      }
-
-      const fileData = {
-        id: fileId,
-        courseId: activeCourseId,
-        name: file.name,
-        type: file.name.split('.').pop(),
-        size: file.size,
-        storagePath: uploadData?.path || storagePath,
-        uploadedBy: appData.currentUser.id,
-        uploadedAt: new Date().toISOString()
-      };
-
-      // Save metadata to Supabase
-      const result = await supabaseCreateFile(fileData);
-      if (result) {
-        appData.files.push(fileData);
-        successCount++;
-      } else {
-        errorCount++;
-      }
-    } catch (err) {
-      console.error('[uploadFiles] Error uploading file:', file.name, err);
-      errorCount++;
-    }
-  }
-
-
-  closeModal('fileUploadModal');
-  renderFiles();
-
-  // Reset state
-  pendingUploadFiles = [];
-  const fileInput = document.getElementById('fileUpload');
-  if (fileInput) fileInput.value = '';
-  const preview = document.getElementById('fileUploadPreview');
-  if (preview) preview.innerHTML = '';
-
-  if (errorCount === 0) {
-    showToast(`${successCount} file${successCount > 1 ? 's' : ''} uploaded!`, 'success');
-  } else {
-    showToast(`Uploaded ${successCount}, failed ${errorCount}`, errorCount > successCount ? 'error' : 'warning');
-  }
-}
-
-// Legacy single file upload function (kept for compatibility)
-async function uploadFile() {
-  await uploadFiles();
-}
-
-function deleteFile(id) {
-  confirm('Delete this file?', async () => {
-    // Delete from Supabase
-    await supabaseDeleteFile(id);
-
-    appData.files = appData.files.filter(f => f.id !== id);
-  
-    renderFiles();
-    showToast('File deleted', 'success');
-  });
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GRADEBOOK PAGE
@@ -6845,207 +5746,6 @@ let aiMediaRecorder = null;
 let aiAudioChunks = [];
 let pendingAiAction = null;
 
-function renderAiThread() {
-  const html = aiThread.map((msg, idx) => {
-    if (msg.role === 'user') {
-      return `
-        <div style="margin-bottom:16px; display:flex; justify-content:flex-end;">
-          <div style="background:var(--primary); color:white; padding:12px 16px; border-radius:16px 16px 4px 16px; max-width:80%;">
-            ${escapeHtml(msg.content)}
-          </div>
-        </div>
-      `;
-    } else if (msg.role === 'assistant') {
-      return `
-        <div style="margin-bottom:16px;">
-          <div style="background:var(--bg-color); padding:12px 16px; border-radius:16px 16px 16px 4px; max-width:80%; border:1px solid var(--border-color);">
-            <div class="markdown-content">${renderMarkdown(msg.content)}</div>
-          </div>
-        </div>
-      `;
-    } else if (msg.role === 'action') {
-      // Pending action with HITL confirmation - editable before acceptance
-      const isLatest = idx === aiThread.length - 1 && !msg.confirmed && !msg.rejected;
-      const actionIcon = msg.actionType === 'announcement' ? '' : msg.actionType === 'quiz' ? '' : msg.actionType === 'quiz_from_bank' ? '' : msg.actionType === 'assignment' ? '' : msg.actionType === 'module' ? '' : '';
-      const actionLabel = msg.actionType === 'announcement' ? 'Create Announcement' : msg.actionType === 'quiz' ? 'Create Quiz' : msg.actionType === 'quiz_from_bank' ? `Create ${msg.data.category === 'exam' ? 'Exam' : 'Quiz'}` : msg.actionType === 'assignment' ? 'Create Assignment' : msg.actionType === 'module' ? 'Create Module' : 'Action';
-
-      return `
-        <div style="margin-bottom:16px;">
-          <div style="background:var(--primary-light); padding:16px; border-radius:var(--radius); border:2px solid var(--primary);">
-            <div style="font-weight:600; margin-bottom:8px; color:var(--primary);">
-              ${actionLabel}
-            </div>
-            <div style="background:white; padding:12px; border-radius:var(--radius); margin-bottom:12px;">
-              ${msg.confirmed || msg.rejected ? `
-                ${msg.actionType === 'announcement' ? `
-                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
-                  <div class="markdown-content">${renderMarkdown(msg.data.content)}</div>
-                ` : msg.actionType === 'quiz' ? `
-                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
-                  <div class="muted">${(msg.data.questions || []).length} questions</div>
-                  <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="viewQuizDetails('${msg.createdId || ''}')">View Quiz Details</button>
-                ` : msg.actionType === 'quiz_from_bank' ? `
-                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
-                  <div class="muted">${msg.data.category === 'exam' ? 'Exam' : 'Quiz'} · ${msg.data.points} points · Using "${escapeHtml(msg.data.questionBankName)}"</div>
-                ` : msg.actionType === 'assignment' ? `
-                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.title)}</div>
-                  <div class="muted">${msg.data.points} points · ${msg.data.category}</div>
-                ` : msg.actionType === 'module' ? `
-                  <div style="font-weight:600; margin-bottom:4px;">${escapeHtml(msg.data.name)}</div>
-                  ${msg.data.description ? `<div class="muted">${escapeHtml(msg.data.description)}</div>` : ''}
-                ` : ''}
-              ` : `
-                ${msg.actionType === 'announcement' ? `
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Title</label>
-                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
-                  </div>
-                  <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label" style="font-size:0.85rem;">Content (supports Markdown)</label>
-                    <textarea class="form-textarea" id="aiAction${idx}Content" rows="6" onchange="updateAiActionField(${idx}, 'content', this.value)">${escapeHtml(msg.data.content)}</textarea>
-                  </div>
-                ` : msg.actionType === 'quiz' ? `
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Title</label>
-                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
-                  </div>
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Description</label>
-                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
-                  </div>
-                  <div style="margin-top:12px; border-top:1px solid var(--border-light); padding-top:12px;">
-                    <div class="form-label" style="font-size:0.85rem; margin-bottom:8px;">Questions (${(msg.data.questions || []).length})</div>
-                    <div style="max-height:300px; overflow-y:auto;">
-                    ${(msg.data.questions || []).map((q, qIdx) => `
-                      <div style="background:var(--bg-color); padding:10px; border-radius:var(--radius); margin-bottom:8px;">
-                        <div style="font-weight:500; margin-bottom:4px;">Q${qIdx + 1}. ${escapeHtml(q.prompt)}</div>
-                        <div class="muted" style="font-size:0.8rem;">${q.type.replace('_', ' ')} - ${q.points} pts</div>
-                        ${q.type === 'multiple_choice' ? `
-                          <div style="margin-top:6px; font-size:0.85rem;">
-                            ${q.options.map((opt, i) => `<div style="${i === q.correctAnswer ? 'color:var(--success); font-weight:500;' : ''}">${i === q.correctAnswer ? '✓' : '○'} ${escapeHtml(opt)}</div>`).join('')}
-                          </div>
-                        ` : q.type === 'true_false' ? `
-                          <div style="margin-top:6px; font-size:0.85rem;">
-                            <div style="${q.correctAnswer === 'True' ? 'color:var(--success); font-weight:500;' : ''}">○ True</div>
-                            <div style="${q.correctAnswer === 'False' ? 'color:var(--success); font-weight:500;' : ''}">○ False</div>
-                          </div>
-                        ` : `<div class="muted" style="font-size:0.85rem; margin-top:4px; font-style:italic;">Short answer question</div>`}
-                      </div>
-                    `).join('')}
-                    </div>
-                  </div>
-                ` : msg.actionType === 'quiz_from_bank' ? `
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Title</label>
-                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
-                  </div>
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Description</label>
-                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
-                  </div>
-                  <div style="background:var(--bg-color); padding:10px; border-radius:var(--radius); margin-bottom:12px;">
-                    <div style="font-weight:500; margin-bottom:8px;">Question Bank: ${escapeHtml(msg.data.questionBankName)}</div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.85rem;">
-                      <div>Questions: ${msg.data.numQuestions || 'All'}</div>
-                      <div>Points: ${msg.data.points}</div>
-                      <div>Randomize order: ${msg.data.randomizeQuestions ? 'Yes' : 'No'}</div>
-                      <div>Shuffle answers: ${msg.data.randomizeAnswers ? 'Yes' : 'No'}</div>
-                    </div>
-                  </div>
-                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
-                    <div class="form-group" style="margin-bottom:0;">
-                      <label class="form-label" style="font-size:0.85rem;">Points</label>
-                      <input type="number" class="form-input" value="${msg.data.points || 100}" onchange="updateAiActionField(${idx}, 'points', parseInt(this.value))">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0;">
-                      <label class="form-label" style="font-size:0.85rem;">Type</label>
-                      <select class="form-select" onchange="updateAiActionField(${idx}, 'category', this.value)">
-                        <option value="quiz" ${msg.data.category === 'quiz' ? 'selected' : ''}>Quiz</option>
-                        <option value="exam" ${msg.data.category === 'exam' ? 'selected' : ''}>Exam</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                    <div class="form-group" style="margin-bottom:0;">
-                      <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
-                        <input type="checkbox" ${msg.data.randomizeQuestions ? 'checked' : ''} onchange="updateAiActionField(${idx}, 'randomizeQuestions', this.checked)">
-                        Randomize question order
-                      </label>
-                    </div>
-                    <div class="form-group" style="margin-bottom:0;">
-                      <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem;">
-                        <input type="checkbox" ${msg.data.randomizeAnswers ? 'checked' : ''} onchange="updateAiActionField(${idx}, 'randomizeAnswers', this.checked)">
-                        Shuffle answer choices
-                      </label>
-                    </div>
-                  </div>
-                  ${msg.data.gradingNotes ? `
-                    <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border-light);">
-                      <label class="form-label" style="font-size:0.85rem;">Grading Notes (instructors only)</label>
-                      <textarea class="form-textarea" rows="2" onchange="updateAiActionField(${idx}, 'gradingNotes', this.value)">${escapeHtml(msg.data.gradingNotes)}</textarea>
-                    </div>
-                  ` : ''}
-                ` : msg.actionType === 'assignment' ? `
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Title</label>
-                    <input type="text" class="form-input" id="aiAction${idx}Title" value="${escapeHtml(msg.data.title)}" onchange="updateAiActionField(${idx}, 'title', this.value)">
-                  </div>
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Description</label>
-                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="3" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
-                  </div>
-                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                    <div class="form-group" style="margin-bottom:0;">
-                      <label class="form-label" style="font-size:0.85rem;">Points</label>
-                      <input type="number" class="form-input" value="${msg.data.points || 100}" onchange="updateAiActionField(${idx}, 'points', parseInt(this.value))">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0;">
-                      <label class="form-label" style="font-size:0.85rem;">Category</label>
-                      <select class="form-select" onchange="updateAiActionField(${idx}, 'category', this.value)">
-                        <option value="homework" ${msg.data.category === 'homework' ? 'selected' : ''}>Homework</option>
-                        <option value="project" ${msg.data.category === 'project' ? 'selected' : ''}>Project</option>
-                        <option value="essay" ${msg.data.category === 'essay' ? 'selected' : ''}>Essay</option>
-                        <option value="exam" ${msg.data.category === 'exam' ? 'selected' : ''}>Exam</option>
-                      </select>
-                    </div>
-                  </div>
-                ` : msg.actionType === 'module' ? `
-                  <div class="form-group" style="margin-bottom:12px;">
-                    <label class="form-label" style="font-size:0.85rem;">Module Name</label>
-                    <input type="text" class="form-input" id="aiAction${idx}Name" value="${escapeHtml(msg.data.name)}" onchange="updateAiActionField(${idx}, 'name', this.value)">
-                  </div>
-                  <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label" style="font-size:0.85rem;">Description (optional)</label>
-                    <textarea class="form-textarea" id="aiAction${idx}Description" rows="2" onchange="updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
-                  </div>
-                ` : ''}
-              `}
-            </div>
-            ${msg.confirmed ? `
-              <div style="color:var(--success); font-weight:500;">✓ Created successfully${msg.wasPublished ? '' : ' as draft'}</div>
-            ` : msg.rejected ? `
-              <div style="color:var(--text-muted);">✗ Cancelled</div>
-            ` : isLatest ? `
-              <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx}, false)">Create this</button>
-                ${msg.actionType === 'announcement' ? `
-                  <button class="btn btn-primary btn-sm" onclick="confirmAiAction(${idx}, true)">Create and Publish</button>
-                ` : ''}
-                <button class="btn btn-secondary btn-sm" onclick="rejectAiAction(${idx})">Cancel</button>
-              </div>
-            ` : ''}
-          </div>
-        </div>
-      `;
-    }
-    return '';
-  }).join('');
-
-  setHTML('aiThread', html || '<div class="muted" style="padding:20px; text-align:center;">Ask me anything about your course, or say "create an announcement about..." or "create a quiz on..."</div>');
-
-  // Scroll to bottom after render
-  scrollAiThreadToBottom();
-}
 
 function scrollAiThreadToBottom() {
   // Use setTimeout to ensure DOM has updated
@@ -7067,158 +5767,6 @@ function updateAiActionField(idx, field, value) {
   msg.data[field] = value;
 }
 
-async function confirmAiAction(idx, publish = false) {
-  const msg = aiThread[idx];
-  if (!msg || msg.role !== 'action') return;
-
-  if (msg.actionType === 'announcement') {
-    const announcement = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: msg.data.title,
-      content: msg.data.content,
-      pinned: false,
-      hidden: !publish,
-      authorId: appData.currentUser.id,
-      createdAt: new Date().toISOString()
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateAnnouncement(announcement);
-    if (!result) {
-      showToast('Failed to save announcement to database', 'error');
-      return;
-    }
-
-    appData.announcements.push(announcement);
-    msg.wasPublished = publish;
-  
-    renderUpdates();
-    renderHome();
-    showToast(publish ? 'Announcement published!' : 'Announcement created as draft!', 'success');
-  } else if (msg.actionType === 'quiz') {
-    const newQuiz = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: msg.data.title,
-      description: msg.data.description || '',
-      status: 'draft',
-      dueDate: msg.data.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-      createdAt: new Date().toISOString(),
-      timeLimit: msg.data.timeLimit || 30,
-      attempts: msg.data.attempts || 1,
-      randomizeQuestions: false,
-      questionPoolEnabled: false,
-      questionSelectCount: 0,
-      questions: msg.data.questions || []
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateQuiz(newQuiz);
-    if (!result) {
-      showToast('Failed to save quiz to database', 'error');
-      return;
-    }
-
-    appData.quizzes.push(newQuiz);
-  
-    renderAssignments();
-    showToast('Quiz created as draft! Click Preview to see full details.', 'success');
-  } else if (msg.actionType === 'quiz_from_bank') {
-    // Create assignment with question bank reference
-    const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
-    const newAssignment = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: msg.data.title,
-      description: msg.data.description || '',
-      category: msg.data.category || 'quiz',
-      introNotes: '',
-      points: msg.data.points || 100,
-      availableFrom: msg.data.availableFrom || null,
-      availableUntil: msg.data.availableUntil || msg.data.dueDate || defaultDueDate,
-      dueDate: msg.data.dueDate || defaultDueDate,
-      status: 'draft',
-      allowLateSubmissions: msg.data.allowLateSubmissions !== false,
-      latePenaltyType: msg.data.latePenaltyType || 'per_day',
-      lateDeduction: msg.data.lateDeduction !== undefined ? msg.data.lateDeduction : 10,
-      gradingNotes: msg.data.gradingNotes || '',
-      allowResubmission: false,
-      questionBankId: msg.data.questionBankId,
-      numQuestions: msg.data.numQuestions || 0,
-      randomizeQuestions: msg.data.randomizeQuestions !== undefined ? msg.data.randomizeQuestions : false,
-      randomizeAnswers: msg.data.randomizeAnswers !== undefined ? msg.data.randomizeAnswers : true,
-      createdAt: new Date().toISOString(),
-      createdBy: appData.currentUser?.id
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateAssignment(newAssignment);
-    if (!result) {
-      showToast('Failed to save quiz/exam to database', 'error');
-      return;
-    }
-
-    appData.assignments.push(newAssignment);
-  
-    renderAssignments();
-    showToast(`${msg.data.category === 'exam' ? 'Exam' : 'Quiz'} created as draft!`, 'success');
-  } else if (msg.actionType === 'assignment') {
-    const newAssignment = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: msg.data.title,
-      description: msg.data.description || '',
-      points: msg.data.points || 100,
-      status: 'draft',
-      dueDate: msg.data.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-      createdAt: new Date().toISOString(),
-      category: msg.data.category || 'homework',
-      allowLateSubmissions: false,
-      lateDeduction: 0,
-      allowResubmission: false
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateAssignment(newAssignment);
-    if (!result) {
-      showToast('Failed to save assignment to database', 'error');
-      return;
-    }
-
-    appData.assignments.push(newAssignment);
-  
-    renderAssignments();
-    showToast('Assignment created as draft!', 'success');
-  } else if (msg.actionType === 'module') {
-    if (!appData.modules) appData.modules = [];
-    const courseModules = appData.modules.filter(m => m.courseId === activeCourseId);
-    const maxPosition = courseModules.length > 0 ? Math.max(...courseModules.map(m => m.position)) + 1 : 0;
-
-    const newModule = {
-      id: generateId(),
-      courseId: activeCourseId,
-      name: msg.data.name,
-      position: maxPosition,
-      items: []
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateModule(newModule);
-    if (!result) {
-      showToast('Failed to save module to database', 'error');
-      return;
-    }
-
-    appData.modules.push(newModule);
-  
-    renderModules();
-    showToast('Module created!', 'success');
-  }
-
-  msg.confirmed = true;
-  renderAiThread();
-}
 
 function rejectAiAction(idx) {
   const msg = aiThread[idx];
@@ -7228,226 +5776,6 @@ function rejectAiAction(idx) {
   renderAiThread();
 }
 
-async function sendAiMessage(audioBase64 = null) {
-  const input = document.getElementById('aiInput');
-  const message = audioBase64 ? '[Voice message]' : input.value.trim();
-
-  if (!message && !audioBase64) return;
-
-  // Prevent double-sends while processing
-  if (aiProcessing) return;
-  aiProcessing = true;
-  updateAiProcessingState();
-
-  const isStaffUser = activeCourseId && isStaff(appData.currentUser.id, activeCourseId);
-
-  // Use enhanced context builder
-  const context = buildAiContext();
-
-  // Build conversation context from last 3 exchanges
-  const conversationContext = aiThread.slice(-6).map(msg => {
-    if (msg.role === 'user') return `User: ${msg.content}`;
-    if (msg.role === 'assistant') return `Assistant: ${msg.content}`;
-    if (msg.role === 'action') return `Assistant: [Created ${msg.actionType}]`;
-    return '';
-  }).filter(Boolean).join('\n');
-
-  const systemPrompt = `You are an AI assistant for a Learning Management System (LMS). You help instructors and students with course-related tasks.
-
-${isStaffUser ? `The user is an INSTRUCTOR/TA. You can help them create content.
-
-IMPORTANT: If the user asks you to CREATE an announcement, quiz, exam, assignment, or module, you MUST respond with a JSON object in this EXACT format:
-- For announcements: {"action":"create_announcement","title":"...","content":"..."}
-- For quizzes/exams FROM QUESTION BANK: {"action":"create_quiz_from_bank","title":"...","description":"...","category":"quiz|exam","questionBankId":"BANK_ID","questionBankName":"Bank Name","numQuestions":10,"randomizeQuestions":false,"randomizeAnswers":true,"dueDate":"ISO date","availableFrom":"ISO date or null","availableUntil":"ISO date (same as dueDate if not specified)","points":100,"allowLateSubmissions":true,"latePenaltyType":"per_day|flat","lateDeduction":10,"gradingNotes":"Brief grading notes for instructors"}
-- For assignments: {"action":"create_assignment","title":"...","description":"...","points":100,"dueDate":"ISO date string","category":"essay|project|homework|participation","introNotes":"...","gradingNotes":"...","allowLateSubmissions":true,"latePenaltyType":"per_day","lateDeduction":10}
-- For modules: {"action":"create_module","name":"...","description":"..."}
-
-CRITICAL - QUIZ/EXAM CREATION RULES:
-1. Quizzes and exams MUST use a question bank. Do NOT create inline questions.
-2. If the user asks to create a quiz or exam but does NOT specify which question bank to use (by name or topic matching an existing bank), you MUST respond with a plain text message (NOT JSON):
-   "To create a quiz, I'll need to know which question bank you want the questions to come from. Your available question banks are: [list bank names]. Which one would you like to use?"
-   OR if no banks exist: "To create a quiz, you'll first need to create a question bank. Would you like me to help you set that up?"
-3. If the user DOES specify a topic or name that matches an existing question bank (even partially), create the quiz using that bank.
-4. DEFAULT QUIZ/EXAM SETTINGS (use these unless user specifies otherwise):
-   - randomizeQuestions: false (keep question order)
-   - randomizeAnswers: true (shuffle MC answer options)
-   - availableFrom: null (available immediately)
-   - availableUntil: same as dueDate
-   - allowLateSubmissions: true
-   - latePenaltyType: "per_day"
-   - lateDeduction: 10
-   - numQuestions: 0 (use all questions from the bank)
-   - gradingNotes: Include brief helpful grading notes
-   - points: calculated from question bank or 100 if unknown
-
-FORMATTING for announcement/assignment content (supports markdown):
-- Use **bold** for emphasis, *italic* for terms
-- Use bullet lists with "- item" format
-- Use headers with ## or ###
-- Link to course files: [📄 filename](#file-FILE_ID) where FILE_ID is from the COURSE FILES list
-- Link to external URLs: [link text](https://url)
-- Embed YouTube videos: just paste the full YouTube URL on its own line, it will auto-embed
-- Use \`code\` for inline code or \`\`\` for code blocks
-
-Question types: multiple_choice, true_false, short_answer
-For true_false, correctAnswer should be "True" or "False"
-For multiple_choice, correctAnswer should be the index (0-based)
-
-IMPORTANT: If you cannot fully complete the request (e.g., missing information, ambiguous requirements, or limitations), include a "notes" field in your JSON response explaining what was done and what might need adjustment. Example: {"action":"create_quiz_from_bank",...,"notes":"Created quiz using Chapter 1 bank. Please review the point total."}
-
-Only output the JSON when the user clearly wants to CREATE something AND you have all required information. For questions about content or help drafting, respond normally.
-When creating content, make sure titles and content are professional and appropriate for an academic setting.
-Use the current date/time from context to set appropriate due dates (default to 1 week from now if not specified).
-Reference relevant course files when helpful (see COURSE FILES in context).` : `The user is a STUDENT. Help them with course questions, explain concepts, and provide guidance.
-
-You can help students with:
-- Understanding assignments and their requirements
-- Explaining course material and concepts
-- Answering questions about due dates and course structure
-- Providing study tips and guidance
-
-Do NOT create content for students. Redirect content creation requests to instructors.`}
-
-${context}
-
-${conversationContext ? `Current_conversation_context:\n${conversationContext}\n` : ''}
-
-Respond helpfully and concisely. If asked to create content (and you're an instructor), output ONLY the JSON object with no additional text.`;
-
-  aiThread.push({ role: 'user', content: audioBase64 ? '🎤 Voice message' : message });
-  if (!audioBase64) input.value = '';
-  renderAiThread();
-
-  try {
-    let contents;
-
-    if (audioBase64) {
-      // Voice message - send audio to Gemini
-      contents = [{
-        parts: [
-          { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
-          { text: systemPrompt + '\n\nTranscribe and respond to this voice message:' }
-        ]
-      }];
-    } else {
-      contents = [{ parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }];
-    }
-
-    const data = await callGeminiAPIWithRetry(contents, { temperature: 0.4 });
-
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const reply = data.candidates[0].content.parts[0].text.trim();
-
-    // Check if it's a JSON action
-    if (reply.startsWith('{') && reply.includes('"action"')) {
-      try {
-        const action = JSON.parse(reply);
-        if (action.action === 'create_announcement') {
-          aiThread.push({
-            role: 'action',
-            actionType: 'announcement',
-            data: { title: action.title, content: action.content },
-            confirmed: false,
-            rejected: false
-          });
-        } else if (action.action === 'create_quiz_from_bank') {
-          // New quiz/exam creation from question bank
-          const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
-          aiThread.push({
-            role: 'action',
-            actionType: 'quiz_from_bank',
-            data: {
-              title: action.title,
-              description: action.description || '',
-              category: action.category || 'quiz',
-              questionBankId: action.questionBankId,
-              questionBankName: action.questionBankName || '',
-              numQuestions: action.numQuestions || 0,
-              randomizeQuestions: action.randomizeQuestions !== undefined ? action.randomizeQuestions : false,
-              randomizeAnswers: action.randomizeAnswers !== undefined ? action.randomizeAnswers : true,
-              dueDate: action.dueDate || defaultDueDate,
-              availableFrom: action.availableFrom || null,
-              availableUntil: action.availableUntil || action.dueDate || defaultDueDate,
-              points: action.points || 100,
-              allowLateSubmissions: action.allowLateSubmissions !== undefined ? action.allowLateSubmissions : true,
-              latePenaltyType: action.latePenaltyType || 'per_day',
-              lateDeduction: action.lateDeduction !== undefined ? action.lateDeduction : 10,
-              gradingNotes: action.gradingNotes || '',
-              notes: action.notes || ''
-            },
-            confirmed: false,
-            rejected: false
-          });
-        } else if (action.action === 'create_quiz') {
-          // Legacy quiz creation (with inline questions)
-          aiThread.push({
-            role: 'action',
-            actionType: 'quiz',
-            data: {
-              title: action.title,
-              description: action.description || '',
-              dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-              questions: action.questions || []
-            },
-            confirmed: false,
-            rejected: false
-          });
-        } else if (action.action === 'create_assignment') {
-          aiThread.push({
-            role: 'action',
-            actionType: 'assignment',
-            data: {
-              title: action.title,
-              description: action.description || '',
-              points: action.points || 100,
-              dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-              category: action.category || 'homework',
-              notes: action.notes || ''
-            },
-            confirmed: false,
-            rejected: false
-          });
-        } else if (action.action === 'create_module') {
-          aiThread.push({
-            role: 'action',
-            actionType: 'module',
-            data: {
-              name: action.name,
-              description: action.description || '',
-              notes: action.notes || ''
-            },
-            confirmed: false,
-            rejected: false
-          });
-        } else {
-          aiThread.push({ role: 'assistant', content: reply });
-        }
-        // Show notes if present
-        if (action.notes) {
-          aiThread.push({ role: 'assistant', content: `**Note:** ${action.notes}` });
-        }
-      } catch (e) {
-        aiThread.push({ role: 'assistant', content: reply });
-      }
-    } else {
-      aiThread.push({ role: 'assistant', content: reply });
-    }
-
-    renderAiThread();
-
-  } catch (err) {
-    console.error('AI error:', err);
-    showToast('AI request failed: ' + err.message, 'error');
-    aiThread.push({ role: 'assistant', content: `Sorry, I encountered an error: ${err.message}` });
-    renderAiThread();
-  } finally {
-    aiProcessing = false;
-    updateAiProcessingState();
-  }
-}
 
 function updateAiProcessingState() {
   const sendBtn = document.getElementById('aiSendBtn');
@@ -7583,64 +5911,6 @@ function updateAiCreateType() {
   if (quizGroup) quizGroup.style.display = aiDraftType === 'quiz' ? 'block' : 'none';
 }
 
-async function generateAiDraft() {
-  const prompt = document.getElementById('aiCreatePrompt').value.trim();
-  if (!prompt) {
-    showToast('Add a prompt to guide the AI', 'error');
-    return;
-  }
-
-  const course = activeCourseId ? getCourseById(activeCourseId) : null;
-  let systemPrompt = '';
-
-  if (aiDraftType === 'announcement') {
-    systemPrompt = `Create a course announcement. Return ONLY valid JSON with keys: title, content.
-
-FORMATTING for content (supports markdown):
-- Use **bold** for emphasis, *italic* for terms
-- Use bullet lists with "- item" format
-- Use headers with ## or ###
-- Embed YouTube videos by placing the full URL on its own line (it will auto-embed)
-- Use \`code\` for inline code
-
-Example: {"title":"...","content":"..."} - do not wrap in code fences or extra text.`;
-  } else if (aiDraftType === 'quiz') {
-    const count = parseInt(document.getElementById('aiQuestionCount').value, 10) || 5;
-    systemPrompt = `Create a quiz as JSON with keys: title, description, questions (array). Each question must include type ("multiple_choice"|"true_false"|"short_answer"), prompt, options (array, for multiple_choice only), correctAnswer (index for multiple_choice, "True"/"False" for true_false, empty string for short_answer), points (number). Provide ${count} questions. Return only JSON (no markdown). Example: {"title":"...","description":"...","questions":[{"type":"multiple_choice","prompt":"...","options":["A","B"],"correctAnswer":0,"points":2}]}.`;
-  } else {
-    const assignmentId = document.getElementById('aiRubricAssignment').value;
-    if (!assignmentId) {
-      showToast('Select an assignment for the rubric', 'error');
-      return;
-    }
-    const assignment = appData.assignments.find(a => a.id === assignmentId);
-    systemPrompt = `Create a grading rubric for this assignment. Return ONLY JSON with key criteria (array). Each criterion must include name, points, description. Total points should sum to ${assignment ? assignment.points : 100}. Example: {"criteria":[{"name":"...","points":10,"description":"..."}]}.`;
-  }
-
-  const contextualPrompt = `
-Course: ${course ? course.name : 'Unknown'}
-Prompt: ${prompt}
-${systemPrompt}
-`;
-
-  try {
-    showToast('Generating draft with AI...', 'info');
-    const contents = [{ parts: [{ text: contextualPrompt }] }];
-    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.4 });
-
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const text = data.candidates[0].content.parts[0].text;
-    aiDraft = normalizeAiDraft(parseAiJsonResponse(text), aiDraftType);
-    renderAiDraftPreview();
-    showToast('Draft ready! Review before applying.', 'success');
-  } catch (err) {
-    console.error('AI draft error:', err);
-    showToast('AI draft failed: ' + err.message, 'error');
-  }
-}
 
 function parseAiJsonResponse(text) {
   if (!text) {
@@ -9063,95 +7333,217 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
   throw lastError || new Error('Max retries exceeded');
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// ENHANCED AI CONTEXT
+// WINDOW ASSIGNMENTS FOR ONCLICK HANDLERS
+// Since this is loaded as a module, functions must be explicitly assigned to window
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function buildAiContext() {
-  if (!activeCourseId) return '';
+// Navigation and modals
+window.navigateTo = navigateTo;
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.openImportContentModal = openImportContentModal;
+window.executeImportContent = executeImportContent;
 
-  const course = getCourseById(activeCourseId);
-  const role = getUserRole(appData.currentUser.id, activeCourseId);
-  const students = appData.enrollments.filter(e => e.courseId === activeCourseId && e.role === 'student');
-  const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
-  const quizzes = appData.quizzes.filter(q => q.courseId === activeCourseId);
-  const modules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
-  const files = appData.files.filter(f => f.courseId === activeCourseId);
-  const instructor = appData.enrollments.find(e => e.courseId === activeCourseId && e.role === 'instructor');
-  const instructorUser = instructor ? getUserById(instructor.userId) : null;
+// Course management
+window.createCourse = createCourse;
+window.joinCourse = joinCourse;
+window.updateCourse = updateCourse;
+window.switchCourse = switchCourse;
 
-  // Get course timezone (default to user's local)
-  const now = new Date();
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const formattedDate = now.toLocaleString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short'
-  });
+// Start Here section
+window.addStartHereLink = addStartHereLink;
+window.saveStartHere = saveStartHere;
+window.openStartHereModal = openStartHereModal;
+window.toggleStartHereLinkType = toggleStartHereLinkType;
+window.updateStartHereLink = updateStartHereLink;
+window.removeStartHereLink = removeStartHereLink;
 
-  // Build assignment list with due dates
-  const assignmentList = assignments.map(a => {
-    const dueDate = new Date(a.dueDate);
-    const isPast = dueDate < now;
-    return `- "${a.title}" (${a.points} pts, due ${dueDate.toLocaleDateString()}${isPast ? ' - PAST DUE' : ''}, status: ${a.status})`;
-  }).join('\n');
+// Announcements
+window.createAnnouncement = createAnnouncement;
+window.editAnnouncement = editAnnouncement;
+window.deleteAnnouncement = deleteAnnouncement;
+window.saveAnnouncementChanges = saveAnnouncementChanges;
+window.viewAnnouncement = viewAnnouncement;
+window.toggleAnnouncementVisibility = toggleAnnouncementVisibility;
 
-  // Build quiz list with due dates
-  const quizList = quizzes.map(q => {
-    const dueDate = new Date(q.dueDate);
-    const isPast = dueDate < now;
-    return `- "${q.title}" (${getQuizPoints(q)} pts, due ${dueDate.toLocaleDateString()}${isPast ? ' - PAST DUE' : ''}, status: ${q.status})`;
-  }).join('\n');
+// Assignments
+window.createAssignment = createAssignment;
+window.editAssignment = editAssignment;
+window.deleteAssignment = deleteAssignment;
+window.saveAssignmentChanges = saveAssignmentChanges;
+window.saveNewAssignment = saveNewAssignment;
+window.openNewAssignmentModal = openNewAssignmentModal;
+window.handleNewAssignmentTypeChange = handleNewAssignmentTypeChange;
+window.openAssignmentModal = openAssignmentModal;
+window.toggleAssignmentVisibility = toggleAssignmentVisibility;
+window.openCreateAssignmentTypeModal = openCreateAssignmentTypeModal;
+window.handleCreateTypeChange = handleCreateTypeChange;
+window.confirmCreateType = confirmCreateType;
 
-  // Build module list
-  const moduleList = modules.map(m => `- "${m.name}" (${m.items?.length || 0} items)`).join('\n');
+// Submissions and grading
+window.submitAssignment = submitAssignment;
+window.saveSubmission = saveSubmission;
+window.viewSubmissions = viewSubmissions;
+window.gradeSubmission = gradeSubmission;
+window.saveGrade = saveGrade;
+window.openManualGradeModal = openManualGradeModal;
+window.saveManualGrade = saveManualGrade;
+window.exportGradebook = exportGradebook;
 
-  // Build file list with IDs for reference
-  const fileList = files.map(f => {
-    const desc = f.description ? ` - ${f.description}` : '';
-    return `- "${f.name}" (id: ${f.id}, type: ${f.type}${f.externalUrl ? ', external' : ''}${desc})`;
-  }).join('\n');
+// Speed Grader
+window.openSpeedGrader = openSpeedGrader;
+window.speedGraderSelectStudent = speedGraderSelectStudent;
+window.speedGraderPrev = speedGraderPrev;
+window.speedGraderNext = speedGraderNext;
+window.speedGraderDraftWithAI = speedGraderDraftWithAI;
+window.saveSpeedGraderGrade = saveSpeedGraderGrade;
+window.calculateSpeedGraderRubricTotal = calculateSpeedGraderRubricTotal;
 
-  // Build question bank list
-  const questionBanks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
-  const questionBankList = questionBanks.map(b => {
-    const questionCount = (b.questions || []).length;
-    return `- "${b.name}" (id: ${b.id}, ${questionCount} questions)${b.description ? ' - ' + b.description : ''}`;
-  }).join('\n');
+// Question Banks
+window.openQuestionBankModal = openQuestionBankModal;
+window.openCreateQuestionBankForm = openCreateQuestionBankForm;
+window.editQuestionBank = editQuestionBank;
+window.deleteQuestionBank = deleteQuestionBank;
+window.addQuestionToBankForm = addQuestionToBankForm;
+window.editQuestionInBank = editQuestionInBank;
+window.removeQuestionFromBank = removeQuestionFromBank;
+window.openQuestionEditor = openQuestionEditor;
+window.changeQuestionType = changeQuestionType;
+window.addQuestionOption = addQuestionOption;
+window.removeQuestionOption = removeQuestionOption;
+window.cancelQuestionEdit = cancelQuestionEdit;
+window.saveQuestionEdit = saveQuestionEdit;
+window.saveQuestionBank = saveQuestionBank;
 
-  return `
-COURSE CONTEXT (use this for accurate information):
-- Course Name: ${course.name}
-- Course Code: ${course.code}
-- Course Description: ${course.description || 'No description'}
-- Instructor: ${instructorUser ? instructorUser.name : 'Unknown'}
-- Your Role: ${role}
-- Number of Students: ${students.length}
+// Quizzes
+window.toggleQuizPoolFields = toggleQuizPoolFields;
+window.updateQuizQuestion = updateQuizQuestion;
+window.updateQuizOption = updateQuizOption;
+window.addQuizQuestion = addQuizQuestion;
+window.removeQuizQuestion = removeQuizQuestion;
+window.deleteQuiz = deleteQuiz;
+window.toggleQuizVisibility = toggleQuizVisibility;
+window.viewQuizDetails = viewQuizDetails;
+window.viewQuizSubmission = viewQuizSubmission;
 
-CURRENT DATE/TIME: ${formattedDate}
-TIME ZONE: ${timeZone}
+// Modules
+window.openModuleModal = openModuleModal;
+window.saveModule = saveModule;
+window.editModule = editModule;
+window.deleteModule = deleteModule;
+window.toggleModuleVisibility = toggleModuleVisibility;
+window.openAddModuleItemModal = openAddModuleItemModal;
+window.updateAddItemOptions = updateAddItemOptions;
+window.addModuleItem = addModuleItem;
+window.removeModuleItem = removeModuleItem;
 
-MODULES (${modules.length}):
-${moduleList || 'No modules yet'}
+// Module drag and drop
+window.handleModuleDragStart = handleModuleDragStart;
+window.handleModuleDragOver = handleModuleDragOver;
+window.handleModuleDrop = handleModuleDrop;
+window.handleModuleDragEnd = handleModuleDragEnd;
+window.handleModuleItemDragStart = handleModuleItemDragStart;
+window.handleModuleItemDragOver = handleModuleItemDragOver;
+window.handleModuleItemDrop = handleModuleItemDrop;
+window.handleModuleItemDragEnd = handleModuleItemDragEnd;
 
-ASSIGNMENTS (${assignments.length}):
-${assignmentList || 'No assignments yet'}
+// Rubrics
+window.openRubricModal = openRubricModal;
+window.addRubricCriterion = addRubricCriterion;
+window.removeRubricCriterion = removeRubricCriterion;
+window.updateRubricCriterion = updateRubricCriterion;
+window.saveRubric = saveRubric;
+window.calculateRubricScore = calculateRubricScore;
 
-QUIZZES (${quizzes.length}):
-${quizList || 'No quizzes yet'}
+// Category Weights
+window.openCategoryWeightsModal = openCategoryWeightsModal;
+window.updateTotalWeight = updateTotalWeight;
+window.saveCategoryWeights = saveCategoryWeights;
 
-QUESTION BANKS (${questionBanks.length}) - REQUIRED for creating quizzes/exams:
-${questionBankList || 'No question banks yet'}
+// Bulk operations
+window.openBulkStudentImportModal = openBulkStudentImportModal;
+window.processBulkStudentImport = processBulkStudentImport;
+window.openBulkGradeModal = openBulkGradeModal;
+window.processBulkGrades = processBulkGrades;
+window.bulkReleaseGrades = bulkReleaseGrades;
 
-COURSE FILES (${files.length}) - Use these file IDs to link to files in announcements/content:
-${fileList || 'No files yet'}
+// People management
+window.openAddPersonModal = openAddPersonModal;
+window.addPersonToCourse = addPersonToCourse;
+window.removePersonFromCourse = removePersonFromCourse;
+window.revokeInvite = revokeInvite;
 
-`;
-}
+// Settings
+window.saveSettings = saveSettings;
+window.openEditCourseModal = openEditCourseModal;
+
+// Editor toolbar and insert
+window.insertLink = insertLink;
+window.insertVideo = insertVideo;
+window.insertFileLink = insertFileLink;
+window.openInsertLinkModal = openInsertLinkModal;
+window.confirmInsertLink = confirmInsertLink;
+window.openInsertVideoModal = openInsertVideoModal;
+window.previewInsertVideo = previewInsertVideo;
+window.confirmInsertVideo = confirmInsertVideo;
+window.openInsertFileModal = openInsertFileModal;
+window.selectFileForInsert = selectFileForInsert;
+window.confirmInsertExternalFile = confirmInsertExternalFile;
+
+// External links
+window.openExternalLinkModal = openExternalLinkModal;
+window.saveExternalLink = saveExternalLink;
+
+// AI features
+window.toggleAiRecording = toggleAiRecording;
+window.startAiRecording = startAiRecording;
+window.stopAiRecording = stopAiRecording;
+window.updateAiCreateType = updateAiCreateType;
+window.openAiCreateModal = openAiCreateModal;
+window.applyAiDraft = applyAiDraft;
+
+// Audio recording
+window.openAudioInputModal = openAudioInputModal;
+window.startAudioRecording = startAudioRecording;
+window.stopAudioRecording = stopAudioRecording;
+window.transcribeAudio = transcribeAudio;
+window.applyAudioParsedResult = applyAudioParsedResult;
+
+// Unified content creation
+window.openUnifiedContentModal = openUnifiedContentModal;
+window.createFromUnified = createFromUnified;
+window.toggleNewAssignmentDropdown = toggleNewAssignmentDropdown;
+window.closeNewAssignmentDropdown = closeNewAssignmentDropdown;
+
+// Student view
+window.toggleStudentView = toggleStudentView;
+
+// Search and sort
+window.updateModulesSearch = updateModulesSearch;
+window.updateFilesSearch = updateFilesSearch;
+window.updateFilesSort = updateFilesSort;
+window.updateGradebookSearch = updateGradebookSearch;
+window.updatePeopleSearch = updatePeopleSearch;
+
+// File handling
+window.handleFilesDrop = handleFilesDrop;
+window.updateFileUploadPreview = updateFileUploadPreview;
+
+// Syllabus parsing
+window.onSyllabusFileSelected = onSyllabusFileSelected;
+window.clearSyllabusUpload = clearSyllabusUpload;
+window.handleSyllabusParserDrop = handleSyllabusParserDrop;
+window.onSyllabusParserFileSelected = onSyllabusParserFileSelected;
+window.clearSyllabusParserUpload = clearSyllabusParserUpload;
+
+// Utility functions
+window.debugAuthState = debugAuthState;
+window.viewSubmissionHistory = viewSubmissionHistory;
+window.scrollAiThreadToBottom = scrollAiThreadToBottom;
+window.updateAiActionField = updateAiActionField;
+window.rejectAiAction = rejectAiAction;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EVENT LISTENERS

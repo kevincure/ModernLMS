@@ -97,6 +97,37 @@ export function formatFileSize(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
+export function formatDateShort(dateString) {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+export function formatDateTime(dateString) {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+/**
+ * Initialize UI helpers module
+ * Sets up any global state or event listeners needed
+ */
+export function initUIHelpers() {
+  // Initialize style theme
+  initStyleTheme();
+  console.log('[UIHelpers] Module initialized');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATE/TIME SELECTORS
 // ═══════════════════════════════════════════════════════════════════════════════
