@@ -3792,47 +3792,6 @@ function startQuizTimer(timeLimit) {
   }, 1000);
 }
 
-
-
-function viewQuizSubmission(quizId) {
-  ensureModalsRendered();
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  const submissions = appData.quizSubmissions
-    .filter(s => s.quizId === quizId && s.userId === appData.currentUser.id)
-    .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
-  
-  const latest = submissions[0];
-  if (!quiz || !latest) return;
-  
-  const list = document.getElementById('quizReviewList');
-  if (!list) return;
-  
-  const totalPoints = getQuizPoints({ questions: latest.questions });
-  document.getElementById('quizReviewTitle').textContent = `${quiz.title} · ${latest.released ? `Score ${latest.score}/${totalPoints}` : 'Awaiting review'}`;
-  
-  list.innerHTML = latest.questions.map((q, index) => {
-    const answer = latest.answers[q.id];
-    let answerText = '';
-    if (q.type === 'multiple_choice') {
-      const selectedIndex = parseInt(answer, 10);
-      answerText = answer !== null && !Number.isNaN(selectedIndex) ? q.options[selectedIndex] : 'No answer';
-    } else if (q.type === 'true_false') {
-      answerText = answer || 'No answer';
-    } else {
-      answerText = answer || 'No answer';
-    }
-    
-    return `
-      <div class="quiz-answer-review">
-        <div class="quiz-answer-question">${index + 1}. ${q.prompt}</div>
-        <div class="quiz-answer-response">Your answer: ${answerText}</div>
-      </div>
-    `;
-  }).join('');
-  
-  openModal('quizReviewModal');
-}
-
 function formatTimer(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
