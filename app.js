@@ -192,8 +192,7 @@ function initModules() {
     supabaseUpdateAssignment,
     supabaseCreateModule,
     supabaseUpdateModule,
-    supabaseCreateQuizSubmission,
-    supabaseUpdateQuizSubmission,
+    supabaseUpsertQuizSubmission,
     callGeminiAPI,
     callGeminiAPIWithRetry,
     parseAiJsonResponse,
@@ -1028,6 +1027,14 @@ function getUserById(id) {
 
 function getCourseById(id) {
   return appData.courses.find(c => c.id === id);
+}
+
+function getQuizById(id) {
+  return appData.quizzes.find(q => q.id === id);
+}
+
+function getAssignmentById(id) {
+  return appData.assignments.find(a => a.id === id);
 }
 
 function getUserRole(userId, courseId) {
