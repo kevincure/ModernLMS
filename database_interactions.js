@@ -1496,14 +1496,20 @@ export async function supabaseDeleteRubric(rubricId) {
  * @returns {Promise<Object>} The API response
  */
 export async function callGeminiAPI(contents, generationConfig = null) {
+  console.log('[Gemini] callGeminiAPI called, supabaseClient:', !!supabaseClient);
+
   if (!supabaseClient) {
     throw new Error('Database not connected');
   }
 
-  const { data: { session } } = await supabaseClient.auth.getSession();
+  const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+  console.log('[Gemini] Session retrieved:', !!session, 'Error:', sessionError);
+
   if (!session) {
     throw new Error('Not authenticated - please sign in again');
   }
+
+  console.log('[Gemini] Access token (first 20 chars):', session.access_token?.substring(0, 20));
 
   const supabaseUrl = window.SUPABASE_URL;
   const response = await fetch(`${supabaseUrl}/functions/v1/gemini`, {
