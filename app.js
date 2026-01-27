@@ -206,8 +206,10 @@ function initModules() {
 
   // Initialize database module
   initDatabaseModule({
-    getSupabaseClient: () => supabaseClient,
-    getAppData: () => appData
+    supabaseClient,
+    appData,
+    showToast,
+    getInitials
   });
 
   // Initialize UI helpers
