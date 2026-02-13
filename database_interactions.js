@@ -1511,22 +1511,52 @@ export async function callGeminiAPI(contents, generationConfig = null) {
 
   console.log('[Gemini] Access token (first 20 chars):', session.access_token?.substring(0, 20));
 
-  const supabaseUrl = window.SUPABASE_URL;
-  const response = await fetch(`${supabaseUrl}/functions/v1/gemini`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`
-    },
-    body: JSON.stringify({ contents, generationConfig })
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `Gemini API error: ${response.status}`);
+  // Extra diagnostics for project/token mismatch (common source of 401 on Edge Functions)
+  let tokenIssuer = null;
+  try {
+    const payload = JSON.parse(atob(session.access_token.split('.')[1] || ''));
+    tokenIssuer = payload.iss || null;
+  } catch {
+    // Ignore decode issues; token format can vary.
   }
 
-  return response.json();
+  if (tokenIssuer && window.SUPABASE_URL && !tokenIssuer.startsWith(window.SUPABASE_URL)) {
+    console.warn('[Gemini] Token issuer does not match configured SUPABASE_URL', {
+      tokenIssuer,
+      configuredUrl: window.SUPABASE_URL
+    });
+  }
+
+  const { data, error } = await supabaseClient.functions.invoke('gemini', {
+    body: { contents, generationConfig }
+  });
+
+  if (error) {
+    const status = error.context?.status;
+    let details = '';
+    try {
+      details = await error.context?.text?.() || '';
+    } catch {
+      // Ignore detail parsing issues
+    }
+
+    let errorMessage = error.message || `Gemini API error: ${status || 'unknown'}`;
+
+    if (status === 401) {
+      errorMessage += '. Unauthorized calling Edge Function. Check: (1) function is deployed to this same project, (2) function JWT verification config matches your expected auth mode, and (3) SUPABASE_URL/ANON_KEY belong to the same project as the logged-in session.';
+      if (tokenIssuer) {
+        errorMessage += ` Token issuer: ${tokenIssuer}`;
+      }
+    }
+
+    if (details) {
+      console.warn('[Gemini] Edge Function error details:', details);
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  return data;
 }
 
 /**
