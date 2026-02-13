@@ -1199,12 +1199,14 @@ export async function supabaseCreateFile(file) {
     return null;
   }
 
-  const { data, error } = await supabaseClient.from('files').insert({
+  // Prefer canonical schema fields (mime_type/size_bytes/storage_path), then fall back to legacy
+  const modernPayload = {
     id: file.id,
     course_id: file.courseId,
     name: file.name,
-    type: file.type,
-    size: file.size,
+    mime_type: file.mimeType || file.type || null,
+    size_bytes: file.sizeBytes ?? file.size ?? null,
+    storage_path: file.storagePath || null,
     uploaded_by: file.uploadedBy,
     uploaded_at: file.uploadedAt,
     external_url: file.externalUrl,
@@ -1212,7 +1214,28 @@ export async function supabaseCreateFile(file) {
     is_placeholder: file.isPlaceholder,
     is_youtube: file.isYouTube,
     hidden: file.hidden || false
-  }).select().single();
+  };
+
+  let { data, error } = await supabaseClient.from('files').insert(modernPayload).select().single();
+
+  if (error?.code === 'PGRST204' && /mime_type|size_bytes|storage_path/.test(error.message || '')) {
+    console.warn('[Supabase] Canonical file columns missing, retrying with legacy file schema');
+    const legacyPayload = {
+      id: file.id,
+      course_id: file.courseId,
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      uploaded_by: file.uploadedBy,
+      uploaded_at: file.uploadedAt,
+      external_url: file.externalUrl,
+      description: file.description,
+      is_placeholder: file.isPlaceholder,
+      is_youtube: file.isYouTube,
+      hidden: file.hidden || false
+    };
+    ({ data, error } = await supabaseClient.from('files').insert(legacyPayload).select().single());
+  }
 
   if (error) {
     console.error('[Supabase] Error creating file:', error);
@@ -1261,16 +1284,34 @@ export async function supabaseUpdateFile(file) {
     return null;
   }
 
-  const { data, error } = await supabaseClient.from('files').update({
+  const modernPayload = {
     name: file.name,
-    type: file.type,
-    size: file.size,
+    mime_type: file.mimeType || file.type || null,
+    size_bytes: file.sizeBytes ?? file.size ?? null,
+    storage_path: file.storagePath || null,
     external_url: file.externalUrl,
     description: file.description,
     is_placeholder: file.isPlaceholder,
     is_youtube: file.isYouTube,
     hidden: file.hidden || false
-  }).eq('id', file.id).select().single();
+  };
+
+  let { data, error } = await supabaseClient.from('files').update(modernPayload).eq('id', file.id).select().single();
+
+  if (error?.code === 'PGRST204' && /mime_type|size_bytes|storage_path/.test(error.message || '')) {
+    console.warn('[Supabase] Canonical file columns missing, retrying update with legacy file schema');
+    const legacyPayload = {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      external_url: file.externalUrl,
+      description: file.description,
+      is_placeholder: file.isPlaceholder,
+      is_youtube: file.isYouTube,
+      hidden: file.hidden || false
+    };
+    ({ data, error } = await supabaseClient.from('files').update(legacyPayload).eq('id', file.id).select().single());
+  }
 
   if (error) {
     console.error('[Supabase] Error updating file:', error);

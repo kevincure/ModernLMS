@@ -697,6 +697,18 @@ Private bucket for course materials.
 | enrolled_users_read_course_files | SELECT | Joins files table with enrollments |
 | Staff upload/delete | INSERT, DELETE | Checks instructor/ta enrollment via course_id folder |
 
+**Important path convention used by app upload code:**
+- Storage object key format is `courses/{course_id}/{file_id}_{file_name}`.
+- Therefore, policies that parse `storage.foldername(name)` must treat:
+  - `[1]` as literal `'courses'`
+  - `[2]` as `course_id` (UUID)
+- Casting `[1]::uuid` will fail with PostgreSQL `22P02`.
+
+**Important schema note for `public.files` table:**
+- Canonical columns are `mime_type`, `size_bytes`, and `storage_path`.
+- Some historical environments used `type` and `size` instead.
+- If you see `PGRST204` like "Could not find the 'size' column", the API payload/schema is mismatched.
+
 ---
 
 ## Database Functions & Triggers
