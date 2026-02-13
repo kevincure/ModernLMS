@@ -7528,7 +7528,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   initModules();
 
   // Listen for auth state changes (handles INITIAL_SESSION on page refresh and SIGNED_IN after OAuth)
-  supabaseClient.auth.onAuthStateChange(handleAuthStateChange);
+  // IMPORTANT: Defer async work outside Supabase's auth callback to avoid lock contention.
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    setTimeout(() => {
+      handleAuthStateChange(event, session);
+    }, 0);
+  });
 
   // NOTE: We rely on onAuthStateChange with INITIAL_SESSION instead of checkExistingSession()
   // to avoid double-bootstrap race conditions
