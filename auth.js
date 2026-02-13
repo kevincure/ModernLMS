@@ -103,8 +103,14 @@ export async function handleAuthStateChange(event, session) {
       showLoginScreen();
     }
   } else if (event === 'SIGNED_IN' && session?.user) {
-    // This fires after OAuth redirect or token refresh
-    // The idempotent guard in handleSignedIn will prevent duplicate bootstraps
+    // This fires after OAuth redirect and can also fire on token refresh.
+    // If we already have this user in app state, skip an expensive full bootstrap.
+    if (appData.currentUser?.id === session.user.id) {
+      console.log('[Auth] SIGNED_IN for current user (likely token refresh), skipping full bootstrap');
+      return;
+    }
+
+    // For true sign-ins (new user in app state), bootstrap normally.
     await handleSignedIn(session.user);
   } else if (event === 'SIGNED_OUT') {
     handleSignedOut();
