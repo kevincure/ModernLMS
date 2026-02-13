@@ -93,6 +93,13 @@ export function buildAiContext() {
       context += `CURRENT COURSE: ${course.name}\n`;
       context += course.description ? `Description: ${course.description}\n` : '';
 
+      const currentEnrollment = appData.enrollments?.find(
+        e => e.userId === appData.currentUser?.id && e.courseId === activeCourseId
+      );
+      if (currentEnrollment?.role) {
+        context += `Your role in this course: ${currentEnrollment.role}\n`;
+      }
+
       // Add assignments
       const assignments = appData.assignments?.filter(a => a.courseId === activeCourseId) || [];
       if (assignments.length > 0) {
@@ -132,6 +139,30 @@ export function buildAiContext() {
         });
       }
 
+      // Add announcements
+      const announcements = appData.announcements?.filter(a => a.courseId === activeCourseId) || [];
+      if (announcements.length > 0) {
+        context += `\nCOURSE ANNOUNCEMENTS (${announcements.length}):\n`;
+        announcements
+          .slice()
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+          .slice(0, 10)
+          .forEach(a => {
+            context += `- ${a.title} (posted: ${new Date(a.createdAt).toLocaleDateString()})\n`;
+          });
+      }
+
+      // Add course roster summary
+      const courseEnrollments = appData.enrollments?.filter(e => e.courseId === activeCourseId) || [];
+      if (courseEnrollments.length > 0) {
+        context += `\nCOURSE ROSTER (${courseEnrollments.length}):\n`;
+        courseEnrollments.forEach(e => {
+          const user = getUserByIdCallback ? getUserByIdCallback(e.userId) : null;
+          const label = user?.name || user?.email || e.userId;
+          context += `- ${label} (${e.role})\n`;
+        });
+      }
+
       // Add modules
       const modules = appData.modules?.filter(m => m.courseId === activeCourseId) || [];
       if (modules.length > 0) {
@@ -141,6 +172,8 @@ export function buildAiContext() {
         });
       }
     }
+  } else {
+    context += 'No active course selected. Ask the user to open a course for course-specific actions.\n';
   }
 
   return context;
@@ -205,11 +238,12 @@ export async function sendAiMessage(audioBase64 = null) {
     }
 
     const reply = data.candidates[0].content.parts[0].text.trim();
+    const cleanedReply = reply.replace(/^```json\s*/i, '').replace(/^```/, '').replace(/```$/, '').trim();
 
     // Check if it's a JSON action
-    if (reply.startsWith('{') && reply.includes('"action"')) {
+    if (cleanedReply.startsWith('{') && cleanedReply.includes('"action"')) {
       try {
-        const action = JSON.parse(reply);
+        const action = JSON.parse(cleanedReply);
         handleAiAction(action);
       } catch (e) {
         aiThread.push({ role: 'assistant', content: reply });

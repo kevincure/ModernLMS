@@ -1083,6 +1083,11 @@ function initApp() {
     activeCourseId = courses[0].id;
   }
 
+  // Keep extracted modules (AI/quiz/files/modals) in sync on initial bootstrap.
+  if (activeCourseId) {
+    updateModuleActiveCourse(activeCourseId);
+  }
+
   populateCourseSelector();
   renderAll();
   navigateTo('courses');
@@ -1599,6 +1604,7 @@ async function createCourse() {
 
 
   activeCourseId = courseId;
+  updateModuleActiveCourse(courseId);
 
   closeModal('createCourseModal');
   renderAll();
@@ -1669,6 +1675,7 @@ async function joinCourse() {
   // Update local state
   appData.enrollments.push(enrollment);
   activeCourseId = course.id;
+  updateModuleActiveCourse(course.id);
 
   closeModal('joinCourseModal');
   renderAll();
