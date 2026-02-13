@@ -63,7 +63,6 @@ import {
 } from './database_interactions.js';
 
 // UI Helpers - DOM manipulation, formatting, markdown
-// Note: openModal, closeModal, confirm are defined locally with accessibility features
 import {
   initUIHelpers,
   setText,
@@ -76,7 +75,8 @@ import {
   renderMarkdown,
   generateId,
   generateInviteCode,
-  getQuizPoints
+  getQuizPoints,
+  confirm as showConfirmDialog
 } from './ui_helpers.js';
 
 // Auth - Google OAuth via Supabase
@@ -2088,9 +2088,11 @@ async function createAnnouncement() {
 }
 
 function deleteAnnouncement(id) {
-  confirm('Delete this update?', async () => {
+  ensureModalsRendered();
+  showConfirmDialog('Delete this update?', async () => {
     // Delete from Supabase
-    await supabaseDeleteAnnouncement(id);
+    const success = await supabaseDeleteAnnouncement(id);
+    if (!success) return;
 
     // Update local state
     appData.announcements = appData.announcements.filter(a => a.id !== id);
@@ -2617,7 +2619,8 @@ function deleteAssignment(assignmentId) {
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
 
-  confirm(`Delete "${assignment.title}"? This will also delete all submissions.`, async () => {
+  ensureModalsRendered();
+  showConfirmDialog(`Delete "${assignment.title}"? This will also delete all submissions.`, async () => {
     // Delete from Supabase
     const success = await supabaseDeleteAssignment(assignmentId);
     if (!success) return;
@@ -2709,7 +2712,8 @@ function deleteQuestionBank(bankId) {
   const bank = appData.questionBanks.find(b => b.id === bankId);
   if (!bank) return;
 
-  confirm(`Delete "${bank.name}"? This cannot be undone.`, async () => {
+  ensureModalsRendered();
+  showConfirmDialog(`Delete "${bank.name}"? This cannot be undone.`, async () => {
     await supabaseDeleteQuestionBank(bankId);
     appData.questionBanks = appData.questionBanks.filter(b => b.id !== bankId);
   
@@ -3696,7 +3700,8 @@ function deleteQuiz(quizId) {
   const quiz = appData.quizzes.find(q => q.id === quizId);
   if (!quiz) return;
 
-  confirm(`Delete "${quiz.title}"? This will also delete all submissions.`, async () => {
+  ensureModalsRendered();
+  showConfirmDialog(`Delete "${quiz.title}"? This will also delete all submissions.`, async () => {
     // Delete from Supabase
     const success = await supabaseDeleteQuiz(quizId);
     if (!success) return;
@@ -4169,9 +4174,11 @@ function editModule(moduleId) {
 }
 
 function deleteModule(moduleId) {
-  confirm('Delete this module and all its items?', async () => {
+  ensureModalsRendered();
+  showConfirmDialog('Delete this module and all its items?', async () => {
     // Delete from Supabase
-    await supabaseDeleteModule(moduleId);
+    const success = await supabaseDeleteModule(moduleId);
+    if (!success) return;
 
     // Update local state
     appData.modules = appData.modules.filter(m => m.id !== moduleId);
@@ -6458,7 +6465,7 @@ function removePersonFromCourse(userId, courseId) {
     generateModals();
   }
 
-  confirm(`Remove ${user.name} from this course?`, async () => {
+  showConfirmDialog(`Remove ${user.name} from this course?`, async () => {
     // Delete from Supabase
     const result = await supabaseDeleteEnrollment(userId, courseId);
     if (!result) {
@@ -6481,7 +6488,7 @@ function revokeInvite(inviteId) {
     generateModals();
   }
 
-  confirm(`Revoke invitation for ${invite.email}?`, async () => {
+  showConfirmDialog(`Revoke invitation for ${invite.email}?`, async () => {
     // Delete from Supabase
     const success = await supabaseDeleteInvite(inviteId);
     if (!success) return;
@@ -6861,7 +6868,8 @@ async function processBulkGrades() {
 }
 
 function bulkReleaseGrades(assignmentId) {
-  confirm('Release all grades for this assignment to students?', () => {
+  ensureModalsRendered();
+  showConfirmDialog('Release all grades for this assignment to students?', () => {
     const submissions = appData.submissions.filter(s => s.assignmentId === assignmentId);
     let released = 0;
     
@@ -7528,7 +7536,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   initModules();
 
   // Listen for auth state changes (handles INITIAL_SESSION on page refresh and SIGNED_IN after OAuth)
-  supabaseClient.auth.onAuthStateChange(handleAuthStateChange);
+  // IMPORTANT: Defer async work outside Supabase's auth callback to avoid lock contention.
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    setTimeout(() => {
+      handleAuthStateChange(event, session);
+    }, 0);
+  });
 
   // NOTE: We rely on onAuthStateChange with INITIAL_SESSION instead of checkExistingSession()
   // to avoid double-bootstrap race conditions

@@ -1512,18 +1512,35 @@ export async function callGeminiAPI(contents, generationConfig = null) {
   console.log('[Gemini] Access token (first 20 chars):', session.access_token?.substring(0, 20));
 
   const supabaseUrl = window.SUPABASE_URL;
+  const anonKey = window.SUPABASE_ANON_KEY;
+
   const response = await fetch(`${supabaseUrl}/functions/v1/gemini`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      // Supabase Edge gateway may require the anon key even when a user JWT is provided.
+      ...(anonKey ? { 'apikey': anonKey } : {}),
       'Authorization': `Bearer ${session.access_token}`
     },
     body: JSON.stringify({ contents, generationConfig })
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `Gemini API error: ${response.status}`);
+    const errorText = await response.text();
+    let errorMessage = `Gemini API error: ${response.status}`;
+
+    try {
+      const errorData = JSON.parse(errorText);
+      errorMessage = errorData.error || errorMessage;
+    } catch {
+      // Keep fallback message when body is not JSON
+    }
+
+    if (response.status === 401) {
+      errorMessage += '. Unauthorized calling Edge Function. Verify function JWT settings and ensure request includes Authorization bearer token + anon apikey.';
+    }
+
+    throw new Error(errorMessage);
   }
 
   return response.json();
