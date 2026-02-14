@@ -502,6 +502,44 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'update_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_update',
+      data: {
+        id: action.id,
+        title: action.title,
+        content: action.content,
+        pinned: action.pinned,
+        hidden: action.hidden
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_delete',
+      data: { id: action.id },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'publish_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_publish',
+      data: { id: action.id },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'pin_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_pin',
+      data: { id: action.id, pinned: action.pinned !== false },
+      confirmed: false,
+      rejected: false
+    });
   } else if (action.action === 'create_quiz_from_bank') {
     const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
     aiThread.push({
