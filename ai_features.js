@@ -280,6 +280,12 @@ function resolveOperationReferences(operation) {
     if (found) op.id = found.id;
   }
 
+  if (!op.id && op.assignmentId) op.id = op.assignmentId;
+  if (!op.id && op.assignmentTitle && Array.isArray(appData.assignments)) {
+    const found = appData.assignments.find(a => a.courseId === activeCourseId && a.title?.toLowerCase() === String(op.assignmentTitle).toLowerCase());
+    if (found) op.id = found.id;
+  }
+
   if ((!op.fileIds || op.fileIds.length === 0) && Array.isArray(op.fileNames) && Array.isArray(appData.files)) {
     const names = op.fileNames.map(n => String(n).toLowerCase());
     op.fileIds = appData.files
@@ -302,6 +308,55 @@ function appendFileLinksToContent(content, fileIds) {
   const base = (content || '').trim();
   const docsBlock = `\n\n### Related Documents\n${lines.join('\n')}`;
   return base + docsBlock;
+}
+
+function appendAvailabilityToDescription(description, availableFrom, availableUntil) {
+  if (!availableFrom && !availableUntil) return description || '';
+  const availabilityLines = [];
+  if (availableFrom) availabilityLines.push(`- Available from: ${availableFrom}`);
+  if (availableUntil) availabilityLines.push(`- Available until: ${availableUntil}`);
+  const base = (description || '').trim();
+  const availabilityBlock = `\n\n### Availability Window\n${availabilityLines.join('\n')}`;
+  return `${base}${availabilityBlock}`.trim();
+}
+
+function getMissingPublishRequirements(operation, publish = false) {
+  const action = normalizeAiOperationAction(operation?.action);
+  const wantsPublish = publish || operation?.status === 'published' || action === 'announcement_publish';
+  if (!wantsPublish) return [];
+
+  const missing = [];
+  if (action === 'announcement' || action === 'announcement_update' || action === 'announcement_publish') {
+    if (action === 'announcement_publish') {
+      const existing = (appData.announcements || []).find(a => a.id === operation.id && a.courseId === activeCourseId);
+      if (!existing) missing.push('announcement id');
+      if (existing && !existing.title) missing.push('title');
+      if (existing && !existing.content) missing.push('content');
+      return missing;
+    }
+    if (!operation.title) missing.push('title');
+    if (!operation.content) missing.push('content');
+    return missing;
+  }
+
+  if (action === 'quiz' || action === 'quiz_update') {
+    if (!operation.title && action === 'quiz') missing.push('title');
+    if (!operation.dueDate) missing.push('dueDate');
+    const questions = operation.questions;
+    if (Array.isArray(questions) && questions.length === 0) missing.push('at least one question');
+    if (action === 'quiz' && !Array.isArray(questions)) missing.push('questions');
+    return missing;
+  }
+
+  if (action === 'assignment') {
+    if (!operation.title) missing.push('title');
+    if (!operation.description) missing.push('description');
+    if (operation.points === undefined || operation.points === null) missing.push('points');
+    if (!operation.dueDate) missing.push('dueDate');
+    return missing;
+  }
+
+  return [];
 }
 export async function sendAiMessage(audioBase64 = null) {
   const input = document.getElementById('aiInput');
@@ -403,7 +458,47 @@ function handleAiAction(action) {
     aiThread.push({
       role: 'action',
       actionType: 'announcement',
-      data: { title: action.title, content: action.content },
+      data: { title: action.title, content: action.content, fileIds: action.fileIds || [], fileNames: action.fileNames || [] },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'update_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_update',
+      data: {
+        id: action.id,
+        title: action.title,
+        content: action.content,
+        pinned: action.pinned,
+        hidden: action.hidden,
+        fileIds: action.fileIds || [],
+        fileNames: action.fileNames || []
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_delete',
+      data: { id: action.id },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'publish_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_publish',
+      data: { id: action.id },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'pin_announcement') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'announcement_pin',
+      data: { id: action.id, pinned: action.pinned !== false },
       confirmed: false,
       rejected: false
     });
@@ -480,7 +575,15 @@ function handleAiAction(action) {
         title: action.title,
         description: action.description || '',
         dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-        questions: action.questions || []
+        status: action.status || 'draft',
+        timeLimit: action.timeLimit ?? 30,
+        attempts: action.attempts ?? 1,
+        randomizeQuestions: !!action.randomizeQuestions,
+        availableFrom: action.availableFrom || null,
+        availableUntil: action.availableUntil || null,
+        questions: action.questions || [],
+        fileIds: action.fileIds || [],
+        fileNames: action.fileNames || []
       },
       confirmed: false,
       rejected: false
@@ -495,7 +598,14 @@ function handleAiAction(action) {
         description: action.description,
         dueDate: action.dueDate,
         status: action.status,
-        questions: action.questions
+        timeLimit: action.timeLimit,
+        attempts: action.attempts,
+        randomizeQuestions: action.randomizeQuestions,
+        availableFrom: action.availableFrom,
+        availableUntil: action.availableUntil,
+        questions: action.questions,
+        fileIds: action.fileIds || [],
+        fileNames: action.fileNames || []
       },
       confirmed: false,
       rejected: false
@@ -517,7 +627,13 @@ function handleAiAction(action) {
         description: action.description || '',
         points: action.points || 100,
         dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
+        status: action.status || 'draft',
         category: action.category || 'homework',
+        allowLateSubmissions: action.allowLateSubmissions,
+        lateDeduction: action.lateDeduction,
+        allowResubmission: action.allowResubmission,
+        fileIds: action.fileIds || [],
+        fileNames: action.fileNames || [],
         notes: action.notes || ''
       },
       confirmed: false,
@@ -563,6 +679,12 @@ export async function confirmAiAction(idx, publish = false) {
 
   if (msg.actionType === 'pipeline') {
     for (const step of (msg.data.steps || [])) {
+      const missing = getMissingPublishRequirements(step, false);
+      if (missing.length) {
+        aiThread.push({ role: 'assistant', content: `Before I can publish this pipeline step (${step.action || 'unknown'}), I still need: ${missing.join(', ')}.` });
+        renderAiThread();
+        return;
+      }
       const ok = await executeAiOperation(step, false);
       if (!ok) {
         showToast(`Pipeline stopped on step: ${step.action || 'unknown'}`, 'error');
@@ -571,7 +693,14 @@ export async function confirmAiAction(idx, publish = false) {
     }
     showToast('AI pipeline executed successfully', 'success');
   } else {
-    const ok = await executeAiOperation({ action: msg.actionType, ...msg.data }, publish);
+    const operation = { action: msg.actionType, ...msg.data };
+    const missing = getMissingPublishRequirements(operation, publish);
+    if (missing.length) {
+      aiThread.push({ role: 'assistant', content: `Before publishing, I still need: ${missing.join(', ')}.` });
+      renderAiThread();
+      return;
+    }
+    const ok = await executeAiOperation(operation, publish);
     if (!ok) return;
   }
 
@@ -646,16 +775,21 @@ async function executeAiOperation(operation, publish = false) {
   }
 
   if (action === 'quiz') {
+    const quizDescription = appendFileLinksToContent(
+      appendAvailabilityToDescription(resolved.description || '', resolved.availableFrom, resolved.availableUntil),
+      resolved.fileIds
+    );
+
     const newQuiz = {
       id: generateId(),
       courseId: activeCourseId,
       title: resolved.title,
-      description: resolved.description || '',
-      status: resolved.status || 'draft',
+      description: quizDescription,
+      status: publish ? 'published' : (resolved.status || 'draft'),
       dueDate: resolved.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
       createdAt: new Date().toISOString(),
-      timeLimit: resolved.timeLimit || 30,
-      attempts: resolved.attempts || 1,
+      timeLimit: resolved.timeLimit ?? 30,
+      attempts: resolved.attempts ?? 1,
       randomizeQuestions: !!resolved.randomizeQuestions,
       questionPoolEnabled: false,
       questionSelectCount: 0,
@@ -678,9 +812,19 @@ async function executeAiOperation(operation, publish = false) {
       return false;
     }
     if (resolved.title !== undefined) quiz.title = resolved.title;
-    if (resolved.description !== undefined) quiz.description = resolved.description;
+    if (resolved.description !== undefined || resolved.availableFrom || resolved.availableUntil || (resolved.fileIds && resolved.fileIds.length)) {
+      const baseDescription = resolved.description !== undefined ? resolved.description : quiz.description;
+      quiz.description = appendFileLinksToContent(
+        appendAvailabilityToDescription(baseDescription, resolved.availableFrom, resolved.availableUntil),
+        resolved.fileIds
+      );
+    }
     if (resolved.dueDate !== undefined) quiz.dueDate = resolved.dueDate;
     if (resolved.status !== undefined) quiz.status = resolved.status;
+    if (publish) quiz.status = 'published';
+    if (resolved.timeLimit !== undefined) quiz.timeLimit = resolved.timeLimit;
+    if (resolved.attempts !== undefined) quiz.attempts = resolved.attempts;
+    if (resolved.randomizeQuestions !== undefined) quiz.randomizeQuestions = !!resolved.randomizeQuestions;
     if (resolved.questions !== undefined) quiz.questions = resolved.questions;
     const result = await supabaseUpdateQuiz(quiz);
     if (!result) {
@@ -741,15 +885,15 @@ async function executeAiOperation(operation, publish = false) {
       id: generateId(),
       courseId: activeCourseId,
       title: resolved.title,
-      description: resolved.description || '',
+      description: appendFileLinksToContent(resolved.description || '', resolved.fileIds),
       points: resolved.points || 100,
-      status: 'draft',
+      status: publish ? 'published' : (resolved.status || 'draft'),
       dueDate: resolved.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
       createdAt: new Date().toISOString(),
       category: resolved.category || 'homework',
-      allowLateSubmissions: false,
-      lateDeduction: 0,
-      allowResubmission: false
+      allowLateSubmissions: resolved.allowLateSubmissions !== undefined ? !!resolved.allowLateSubmissions : false,
+      lateDeduction: resolved.lateDeduction !== undefined ? resolved.lateDeduction : 0,
+      allowResubmission: resolved.allowResubmission !== undefined ? !!resolved.allowResubmission : false
     };
     const result = await supabaseCreateAssignment(newAssignment);
     if (!result) {
@@ -970,10 +1114,17 @@ function renderActionPreview(msg, idx) {
         <label class="form-label" style="font-size:0.85rem;">Description</label>
         <textarea class="form-textarea" rows="2" onchange="window.updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
       </div>
-      <div class="muted" style="font-size:0.85rem;">${msg.data.questions?.length || 0} questions</div>
+      <div class="muted" style="font-size:0.85rem; line-height:1.5;">
+        Questions: ${msg.data.questions?.length || 0} · Status: ${escapeHtml(msg.data.status || 'draft')} · Due: ${escapeHtml(msg.data.dueDate || 'not set')}<br>
+        Time limit: ${escapeHtml(String(msg.data.timeLimit ?? 30))} min · Attempts: ${escapeHtml(String(msg.data.attempts ?? 1))} · Randomize Questions: ${msg.data.randomizeQuestions ? 'Yes' : 'No'}<br>
+        Available from: ${escapeHtml(msg.data.availableFrom || 'immediately')} · Available until: ${escapeHtml(msg.data.availableUntil || msg.data.dueDate || 'not set')}
+      </div>
     `;
   }
-  if (msg.actionType === 'quiz_update' || msg.actionType === 'quiz_delete') {
+  if (msg.actionType === 'quiz_update') {
+    return `<div class="muted" style="font-size:0.9rem; line-height:1.5;">Quiz ID: <code>${escapeHtml(msg.data.id || '')}</code><br>Status: ${escapeHtml(msg.data.status || 'unchanged')} · Due: ${escapeHtml(msg.data.dueDate || 'unchanged')} · Time limit: ${escapeHtml(String(msg.data.timeLimit ?? 'unchanged'))} · Attempts: ${escapeHtml(String(msg.data.attempts ?? 'unchanged'))}</div>`;
+  }
+  if (msg.actionType === 'quiz_delete') {
     return `<div class="muted" style="font-size:0.9rem;">Quiz ID: <code>${escapeHtml(msg.data.id || '')}</code></div>`;
   }
   if (msg.actionType === 'quiz_from_bank') {
@@ -995,6 +1146,10 @@ function renderActionPreview(msg, idx) {
         <label class="form-label" style="font-size:0.85rem;">Description</label>
         <textarea class="form-textarea" rows="3" onchange="window.updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
       </div>
+      <div class="muted" style="font-size:0.85rem; line-height:1.5; margin-top:8px;">
+        Category: ${escapeHtml(msg.data.category || 'homework')} · Status: ${escapeHtml(msg.data.status || 'draft')} · Points: ${escapeHtml(String(msg.data.points || 100))}<br>
+        Due: ${escapeHtml(msg.data.dueDate || 'not set')} · Late submissions: ${msg.data.allowLateSubmissions ? 'Allowed' : 'Not allowed'} · Resubmission: ${msg.data.allowResubmission ? 'Allowed' : 'Not allowed'}
+      </div>
     `;
   }
   if (msg.actionType === 'module') {
@@ -1007,7 +1162,10 @@ function renderActionPreview(msg, idx) {
   }
   if (msg.actionType === 'pipeline') {
     const steps = Array.isArray(msg.data.steps) ? msg.data.steps : [];
-    const stepsHtml = steps.map((step, i) => `<li><code>${escapeHtml(step.action || 'unknown')}</code></li>`).join('');
+    const stepsHtml = steps.map((step, i) => {
+      const idText = step.id || step.quizId || step.announcementId || step.assignmentId || '';
+      return `<li><code>${escapeHtml(step.action || 'unknown')}</code>${idText ? ` · <span class="muted">${escapeHtml(idText)}</span>` : ''}</li>`;
+    }).join('');
     return `
       <div class="muted" style="font-size:0.9rem; margin-bottom:8px;">${steps.length} steps</div>
       <ol style="margin:0; padding-left:20px;">${stepsHtml}</ol>

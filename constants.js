@@ -328,10 +328,10 @@ IMPORTANT: If the user asks you to CREATE an announcement, quiz, exam, assignmen
 - To pin/unpin an announcement: {"action":"pin_announcement","id":"ANNOUNCEMENT_ID","pinned":true}
 - To delete an announcement: {"action":"delete_announcement","id":"ANNOUNCEMENT_ID"}
 - For quizzes/exams FROM QUESTION BANK: {"action":"create_quiz_from_bank","title":"...","description":"...","category":"quiz|exam","questionBankId":"BANK_ID","questionBankName":"Bank Name","numQuestions":10,"randomizeQuestions":false,"randomizeAnswers":true,"dueDate":"ISO date","availableFrom":"ISO date or null","availableUntil":"ISO date (same as dueDate if not specified)","points":100,"allowLateSubmissions":true,"latePenaltyType":"per_day|flat","lateDeduction":10,"gradingNotes":"Brief grading notes for instructors"}
-- For quizzes/exams WITH INLINE QUESTIONS (no bank): {"action":"create_quiz_inline","title":"...","description":"...","dueDate":"ISO date","questions":[{"prompt":"...","type":"multiple_choice|true_false|short_answer","options":["A","B"],"correctAnswer":0,"points":10}]}
-- To edit a quiz: {"action":"update_quiz","id":"QUIZ_ID","title":"...","description":"...","status":"draft|published","dueDate":"ISO date","questions":[...]}
+- For quizzes/exams WITH INLINE QUESTIONS (no bank): {"action":"create_quiz_inline","title":"...","description":"...","status":"draft|published","dueDate":"ISO date","availableFrom":"ISO date or null","availableUntil":"ISO date or null","timeLimit":30,"attempts":1,"randomizeQuestions":false,"fileIds":["FILE_ID"],"questions":[{"prompt":"...","type":"multiple_choice|true_false|short_answer","options":["A","B"],"correctAnswer":0,"points":10}]}
+- To edit a quiz: {"action":"update_quiz","id":"QUIZ_ID","title":"...","description":"...","status":"draft|published","dueDate":"ISO date","availableFrom":"ISO date or null","availableUntil":"ISO date or null","timeLimit":45,"attempts":2,"randomizeQuestions":true,"fileIds":["FILE_ID"],"questions":[...]}
 - To delete a quiz: {"action":"delete_quiz","id":"QUIZ_ID"}
-- For assignments: {"action":"create_assignment","title":"...","description":"...","points":100,"dueDate":"ISO date string","category":"essay|project|homework|participation","introNotes":"...","gradingNotes":"...","allowLateSubmissions":true,"latePenaltyType":"per_day","lateDeduction":10}
+- For assignments: {"action":"create_assignment","title":"...","description":"...","status":"draft|published","points":100,"dueDate":"ISO date string","category":"essay|project|homework|participation|quiz|exam","allowLateSubmissions":true,"lateDeduction":10,"allowResubmission":false,"fileIds":["FILE_ID"],"introNotes":"...","gradingNotes":"..."}
 - For modules: {"action":"create_module","name":"...","description":"..."}
 - For multi-step automations: {"action":"pipeline","steps":[{"action":"create_announcement",...},{"action":"pin_announcement",...}]}
 - To edit the latest pending draft in chat before confirmation: {"action":"edit_pending_action","changes":{"title":"...","content":"..."}}
@@ -369,7 +369,7 @@ For multiple_choice, correctAnswer should be the index (0-based)
 
 IMPORTANT: If you cannot fully complete the request (e.g., missing information, ambiguous requirements, or limitations), include a "notes" field in your JSON response explaining what was done and what might need adjustment. Example: {"action":"create_quiz_from_bank",...,"notes":"Created quiz using Chapter 1 bank. Please review the point total."}
 
-Only output JSON when the user clearly wants to perform a concrete action (create/update/delete/publish/pin/pipeline) AND you have all required information. For questions about content or help drafting, respond normally.
+Only output JSON when the user clearly wants to perform a concrete action (create/update/delete/publish/pin/pipeline) AND you have all required information. If user intent is to publish and required fields are missing (e.g., dueDate, questions, points, description), ask a clarifying question instead of guessing. For questions about content or help drafting, respond normally.
 When taking action on existing items, ALWAYS use IDs from context when available.
 For pipeline steps, each step may reference prior or existing resources by ID or exact title.
 When creating content, make sure titles and content are professional and appropriate for an academic setting.
