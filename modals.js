@@ -314,6 +314,12 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               <span>Allow resubmission</span>
             </label>
           </div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="assignmentBlindGrading">
+              <span>Blind grading <span class="muted" style="font-size:0.85rem;">(hide student names while grading)</span></span>
+            </label>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('assignmentModal'); resetAssignmentModal();">Cancel</button>
@@ -1253,6 +1259,59 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">Cancel</button>
           <button class="btn btn-primary" id="newAssignmentSubmitBtn" onclick="saveNewAssignment()">Create Assignment</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Clone Course Modal -->
+    <div class="modal-overlay" id="cloneCourseModal">
+      <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Clone Course</h2>
+          <button class="modal-close" onclick="closeModal('cloneCourseModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="cloneCourseSourceInfo" class="muted" style="margin-bottom:16px; font-size:0.9rem;"></div>
+          <div class="form-group">
+            <label class="form-label">New Course Name *</label>
+            <input type="text" class="form-input" id="cloneCourseNameInput" placeholder="e.g. ECON 101 - Spring 2027">
+          </div>
+          <div class="form-group">
+            <label class="form-label">New Course Code *</label>
+            <input type="text" class="form-input" id="cloneCourseCodeInput" placeholder="e.g. ECON101-SP27">
+          </div>
+          <div class="form-group">
+            <label class="form-label">What to copy into the new course</label>
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:8px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="cloneAssignments" checked>
+                <span>Assignments <span class="muted" style="font-size:0.85rem;">(copied as drafts)</span></span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="cloneQuizzes" checked>
+                <span>Quizzes <span class="muted" style="font-size:0.85rem;">(copied as drafts)</span></span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="cloneQBanks" checked>
+                <span>Question Banks <span class="muted" style="font-size:0.85rem;">(all questions copied)</span></span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="cloneModules" checked>
+                <span>Modules &amp; structure <span class="muted" style="font-size:0.85rem;">(links remapped to cloned items)</span></span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="cloneAnnouncements">
+                <span>Announcements <span class="muted" style="font-size:0.85rem;">(copied as hidden drafts)</span></span>
+              </label>
+            </div>
+          </div>
+          <div class="hint" style="padding:12px; background:var(--primary-light); border-radius:var(--radius); font-size:0.85rem;">
+            💡 The cloned course starts hidden from students. Students, grades, and submissions are never copied.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('cloneCourseModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="cloneCourse()">Clone Course</button>
         </div>
       </div>
     </div>

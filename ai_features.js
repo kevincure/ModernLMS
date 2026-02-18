@@ -11,7 +11,10 @@ import {
   callGeminiAPI, callGeminiAPIWithRetry,
   supabaseCreateAnnouncement, supabaseUpdateAnnouncement, supabaseDeleteAnnouncement,
   supabaseCreateQuiz, supabaseUpdateQuiz, supabaseDeleteQuiz,
-  supabaseCreateAssignment, supabaseCreateModule
+  supabaseCreateAssignment, supabaseUpdateAssignment, supabaseDeleteAssignment,
+  supabaseCreateModule, supabaseCreateModuleItem, supabaseDeleteModuleItem,
+  supabaseCreateInvite, supabaseDeleteInvite,
+  supabaseUpdateCourse
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG } from './constants.js';
 
@@ -231,7 +234,15 @@ function normalizeAiOperationAction(action) {
     delete_quiz: 'quiz_delete',
     create_quiz_from_bank: 'quiz_from_bank',
     create_assignment: 'assignment',
-    create_module: 'module'
+    update_assignment: 'assignment_update',
+    delete_assignment: 'assignment_delete',
+    create_module: 'module',
+    add_to_module: 'module_add_item',
+    remove_from_module: 'module_remove_item',
+    move_to_module: 'module_move_item',
+    create_invite: 'invite_create',
+    revoke_invite: 'invite_revoke',
+    set_course_visibility: 'course_visibility'
   };
   return map[action] || action;
 }
@@ -458,7 +469,7 @@ function handleAiAction(action) {
     aiThread.push({
       role: 'action',
       actionType: 'announcement',
-      data: { title: action.title, content: action.content, fileIds: action.fileIds || [], fileNames: action.fileNames || [] },
+      data: { title: action.title, content: action.content, pinned: action.pinned === true, fileIds: action.fileIds || [], fileNames: action.fileNames || [] },
       confirmed: false,
       rejected: false
     });
@@ -646,6 +657,119 @@ function handleAiAction(action) {
       data: {
         name: action.name,
         description: action.description || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'update_assignment') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'assignment_update',
+      data: {
+        id: action.id,
+        title: action.title,
+        description: action.description,
+        points: action.points,
+        dueDate: action.dueDate,
+        status: action.status,
+        category: action.category,
+        allowLateSubmissions: action.allowLateSubmissions,
+        lateDeduction: action.lateDeduction,
+        allowResubmission: action.allowResubmission,
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete_assignment') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'assignment_delete',
+      data: { id: action.id },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'add_to_module') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'module_add_item',
+      data: {
+        moduleId: action.moduleId || null,
+        moduleName: action.moduleName || '',
+        itemType: action.itemType || 'assignment',
+        itemId: action.itemId || null,
+        itemTitle: action.itemTitle || '',
+        url: action.url || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'remove_from_module') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'module_remove_item',
+      data: {
+        moduleId: action.moduleId || null,
+        moduleName: action.moduleName || '',
+        itemId: action.itemId || null,
+        itemTitle: action.itemTitle || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'move_to_module') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'module_move_item',
+      data: {
+        itemId: action.itemId || null,
+        itemTitle: action.itemTitle || '',
+        fromModuleId: action.fromModuleId || null,
+        fromModuleName: action.fromModuleName || '',
+        toModuleId: action.toModuleId || null,
+        toModuleName: action.toModuleName || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'create_invite') {
+    const emails = Array.isArray(action.emails)
+      ? action.emails
+      : (action.email ? [action.email] : []);
+    aiThread.push({
+      role: 'action',
+      actionType: 'invite_create',
+      data: {
+        emails,
+        role: action.role || 'student',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'revoke_invite') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'invite_revoke',
+      data: {
+        inviteId: action.inviteId || null,
+        email: action.email || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'set_course_visibility') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'course_visibility',
+      data: {
+        courseId: action.courseId || activeCourseId,
+        visible: action.visible !== false,
         notes: action.notes || ''
       },
       confirmed: false,
@@ -926,6 +1050,153 @@ async function executeAiOperation(operation, publish = false) {
     return true;
   }
 
+  if (action === 'assignment_update') {
+    const assignment = (appData.assignments || []).find(a => a.id === resolved.id && a.courseId === activeCourseId);
+    if (!assignment) { showToast('Assignment not found', 'error'); return false; }
+    if (resolved.title !== undefined) assignment.title = resolved.title;
+    if (resolved.description !== undefined) assignment.description = appendFileLinksToContent(resolved.description, resolved.fileIds);
+    if (resolved.points !== undefined) assignment.points = resolved.points;
+    if (resolved.dueDate !== undefined) assignment.dueDate = resolved.dueDate;
+    if (resolved.status !== undefined) assignment.status = resolved.status;
+    if (publish) assignment.status = 'published';
+    if (resolved.category !== undefined) assignment.category = resolved.category;
+    if (resolved.allowLateSubmissions !== undefined) assignment.allowLateSubmissions = !!resolved.allowLateSubmissions;
+    if (resolved.lateDeduction !== undefined) assignment.lateDeduction = resolved.lateDeduction;
+    if (resolved.allowResubmission !== undefined) assignment.allowResubmission = !!resolved.allowResubmission;
+    const result = await supabaseUpdateAssignment(assignment);
+    if (!result) { showToast('Failed to update assignment', 'error'); return false; }
+    if (renderAssignmentsCallback) renderAssignmentsCallback();
+    if (renderGradebookCallback) renderGradebookCallback();
+    return true;
+  }
+
+  if (action === 'assignment_delete') {
+    const success = await supabaseDeleteAssignment(resolved.id);
+    if (!success) { showToast('Failed to delete assignment', 'error'); return false; }
+    appData.assignments = (appData.assignments || []).filter(a => a.id !== resolved.id);
+    if (renderAssignmentsCallback) renderAssignmentsCallback();
+    if (renderGradebookCallback) renderGradebookCallback();
+    return true;
+  }
+
+  if (action === 'module_add_item') {
+    if (!resolved.moduleId || !resolved.itemId) {
+      showToast('Missing module or item information', 'error');
+      return false;
+    }
+    const mod = (appData.modules || []).find(m => m.id === resolved.moduleId);
+    if (!mod) { showToast('Module not found', 'error'); return false; }
+    if (!mod.items) mod.items = [];
+    const newItem = {
+      id: generateId(),
+      type: resolved.itemType || 'assignment',
+      refId: resolved.itemType === 'external_link' ? null : resolved.itemId,
+      title: resolved.itemType === 'external_link' ? resolved.itemTitle : undefined,
+      url: resolved.itemType === 'external_link' ? resolved.url : undefined,
+      position: mod.items.length
+    };
+    await supabaseCreateModuleItem(newItem, resolved.moduleId);
+    mod.items.push(newItem);
+    if (renderModulesCallback) renderModulesCallback();
+    return true;
+  }
+
+  if (action === 'module_remove_item') {
+    if (!resolved.moduleId || !resolved.itemId) {
+      showToast('Missing module or item information', 'error');
+      return false;
+    }
+    const mod = (appData.modules || []).find(m => m.id === resolved.moduleId);
+    if (!mod) { showToast('Module not found', 'error'); return false; }
+    await supabaseDeleteModuleItem(resolved.itemId);
+    mod.items = (mod.items || []).filter(i => i.id !== resolved.itemId);
+    mod.items.forEach((item, i) => { item.position = i; });
+    if (renderModulesCallback) renderModulesCallback();
+    return true;
+  }
+
+  if (action === 'module_move_item') {
+    if (!resolved.fromModuleId || !resolved.toModuleId || !resolved.itemId) {
+      showToast('Missing move information', 'error');
+      return false;
+    }
+    const fromMod = (appData.modules || []).find(m => m.id === resolved.fromModuleId);
+    const toMod = (appData.modules || []).find(m => m.id === resolved.toModuleId);
+    if (!fromMod || !toMod) { showToast('Module not found', 'error'); return false; }
+    const itemIdx = (fromMod.items || []).findIndex(i => i.id === resolved.itemId);
+    if (itemIdx === -1) { showToast('Item not found in source module', 'error'); return false; }
+    const [movedItem] = fromMod.items.splice(itemIdx, 1);
+    movedItem.position = (toMod.items || []).length;
+    if (!toMod.items) toMod.items = [];
+    toMod.items.push(movedItem);
+    fromMod.items.forEach((item, i) => { item.position = i; });
+    // Persist move via direct DB call
+    await supabaseCreateModuleItem({ ...movedItem, position: movedItem.position }, resolved.toModuleId);
+    await supabaseDeleteModuleItem(resolved.itemId);
+    if (renderModulesCallback) renderModulesCallback();
+    return true;
+  }
+
+  if (action === 'invite_create') {
+    if (!activeCourseId) { showToast('No active course', 'error'); return false; }
+    const emails = Array.isArray(resolved.emails) ? resolved.emails : [];
+    if (emails.length === 0) { showToast('No emails provided', 'error'); return false; }
+    if (!appData.invites) appData.invites = [];
+    let successCount = 0;
+    for (const email of emails) {
+      const existingUser = (appData.users || []).find(u => u.email === email);
+      if (existingUser) {
+        const alreadyEnrolled = (appData.enrollments || []).find(
+          e => e.userId === existingUser.id && e.courseId === activeCourseId
+        );
+        if (!alreadyEnrolled) {
+          // Import supabaseCreateEnrollment via callback
+          showToast(`${email} is already a registered user — enroll them from the People tab`, 'info');
+          continue;
+        }
+      }
+      const invite = {
+        courseId: activeCourseId,
+        email: email.trim(),
+        role: resolved.role || 'student',
+        status: 'pending',
+        sentAt: new Date().toISOString()
+      };
+      const result = await supabaseCreateInvite(invite);
+      if (result) {
+        appData.invites.push({ ...invite, id: result.id || invite.id });
+        successCount++;
+      }
+    }
+    if (successCount > 0) showToast(`Invited ${successCount} person${successCount > 1 ? 's' : ''}`, 'success');
+    return successCount > 0;
+  }
+
+  if (action === 'invite_revoke') {
+    let inviteId = resolved.inviteId;
+    if (!inviteId && resolved.email) {
+      const inv = (appData.invites || []).find(
+        i => i.email === resolved.email && i.courseId === activeCourseId && i.status === 'pending'
+      );
+      if (inv) inviteId = inv.id;
+    }
+    if (!inviteId) { showToast('Invite not found', 'error'); return false; }
+    await supabaseDeleteInvite(inviteId);
+    appData.invites = (appData.invites || []).filter(i => i.id !== inviteId);
+    return true;
+  }
+
+  if (action === 'course_visibility') {
+    const courseId = resolved.courseId || activeCourseId;
+    const course = (appData.courses || []).find(c => c.id === courseId);
+    if (!course) { showToast('Course not found', 'error'); return false; }
+    course.active = resolved.visible !== false;
+    const result = await supabaseUpdateCourse(course);
+    if (!result) { showToast('Failed to update course visibility', 'error'); return false; }
+    showToast(course.active ? 'Course is now visible to students' : 'Course is now hidden from students', 'success');
+    return true;
+  }
+
   showToast(`Unsupported AI action: ${action}`, 'error');
   return false;
 }
@@ -1022,7 +1293,15 @@ export function renderAiThread() {
         'quiz_delete': 'Quiz',
         'quiz_from_bank': 'Quiz/Exam',
         'assignment': 'Assignment',
+        'assignment_update': 'Assignment',
+        'assignment_delete': 'Assignment',
         'module': 'Module',
+        'module_add_item': 'Module Item',
+        'module_remove_item': 'Module Item',
+        'module_move_item': 'Module Item',
+        'invite_create': 'Invitation',
+        'invite_revoke': 'Invitation',
+        'course_visibility': 'Course Visibility',
         'pipeline': 'Automation Pipeline'
       }[msg.actionType] || 'Content';
 
@@ -1037,7 +1316,15 @@ export function renderAiThread() {
         'quiz_delete': 'Delete',
         'quiz_from_bank': 'Create',
         'assignment': 'Create',
+        'assignment_update': 'Update',
+        'assignment_delete': 'Delete',
         'module': 'Create',
+        'module_add_item': 'Add to',
+        'module_remove_item': 'Remove from',
+        'module_move_item': 'Move to',
+        'invite_create': 'Send',
+        'invite_revoke': 'Revoke',
+        'course_visibility': msg.data?.visible === false ? 'Hide' : 'Show',
         'pipeline': 'Run'
       }[msg.actionType] || 'Run';
 
@@ -1054,9 +1341,9 @@ export function renderAiThread() {
               <div style="color:var(--text-muted);">✗ Cancelled</div>
             ` : isLatest ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
-                <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, false)">${actionVerb} this</button>
-                ${msg.actionType === 'announcement' ? `
-                  <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, true)">Create and Publish</button>
+                <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, false)">${actionVerb}${['Create','Update'].includes(actionVerb) ? ' (Draft)' : ''}</button>
+                ${['announcement', 'assignment', 'quiz', 'quiz_from_bank'].includes(msg.actionType) ? `
+                  <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, true)">${actionVerb === 'Create' ? 'Create and Publish' : 'Save and Publish'}</button>
                 ` : ''}
                 <button class="btn btn-secondary btn-sm" onclick="window.rejectAiAction(${idx})">Cancel</button>
               </div>
@@ -1073,104 +1360,330 @@ export function renderAiThread() {
 }
 
 /**
- * Render preview for an action
+ * Render preview for an action — all fields are editable
  */
 function renderActionPreview(msg, idx) {
+  const d = msg.data;
+
+  // Helper: convert ISO date string to datetime-local input value
+  function toDatetimeLocal(iso) {
+    if (!iso) return '';
+    try {
+      const dt = new Date(iso);
+      // Adjust for local timezone
+      const offset = dt.getTimezoneOffset() * 60000;
+      return new Date(dt.getTime() - offset).toISOString().slice(0, 16);
+    } catch { return ''; }
+  }
+
+  // Helper: row of two columns
+  function twoCol(a, b) {
+    return `<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">${a}${b}</div>`;
+  }
+
+  function field(label, inputHtml, mb = 12) {
+    return `<div class="form-group" style="margin-bottom:${mb}px;"><label class="form-label" style="font-size:0.85rem;">${label}</label>${inputHtml}</div>`;
+  }
+
+  function textInput(fieldName, val) {
+    return `<input type="text" class="form-input" value="${escapeHtml(val || '')}" onchange="window.updateAiActionField(${idx}, '${fieldName}', this.value)">`;
+  }
+
+  function textarea(fieldName, val, rows = 3) {
+    return `<textarea class="form-textarea" rows="${rows}" onchange="window.updateAiActionField(${idx}, '${fieldName}', this.value)">${escapeHtml(val || '')}</textarea>`;
+  }
+
+  function numberInput(fieldName, val, min = 0, max = 9999) {
+    return `<input type="number" class="form-input" value="${val !== null && val !== undefined ? val : ''}" min="${min}" max="${max}" onchange="window.updateAiActionField(${idx}, '${fieldName}', Number(this.value))">`;
+  }
+
+  function datetimeInput(fieldName, val) {
+    return `<input type="datetime-local" class="form-input" value="${toDatetimeLocal(val)}" onchange="window.updateAiActionField(${idx}, '${fieldName}', new Date(this.value).toISOString())">`;
+  }
+
+  function selectInput(fieldName, val, options) {
+    const opts = options.map(([v, l]) => `<option value="${v}" ${val === v ? 'selected' : ''}>${l}</option>`).join('');
+    return `<select class="form-input" onchange="window.updateAiActionField(${idx}, '${fieldName}', this.value)">${opts}</select>`;
+  }
+
+  function checkboxInput(fieldName, checked, label) {
+    return `<label style="display:flex; align-items:center; gap:8px; font-size:0.9rem; cursor:pointer;">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="window.updateAiActionField(${idx}, '${fieldName}', this.checked)"> ${label}
+    </label>`;
+  }
+
+  function lateSection(allowLate, lateDeduction) {
+    return `
+      <div style="margin-bottom:12px;">${checkboxInput('allowLateSubmissions', allowLate, 'Allow late submissions')}</div>
+      ${allowLate ? `<div style="margin-bottom:12px;">
+        ${field('Late penalty (% per day)', numberInput('lateDeduction', lateDeduction, 0, 100), 0)}
+      </div>` : ''}
+    `;
+  }
+
+  // ─── ANNOUNCEMENT (create) ───────────────────────────────────────────────
   if (msg.actionType === 'announcement') {
     return `
-      <div class="form-group" style="margin-bottom:12px;">
-        <label class="form-label" style="font-size:0.85rem;">Title</label>
-        <input type="text" class="form-input" value="${escapeHtml(msg.data.title)}" onchange="window.updateAiActionField(${idx}, 'title', this.value)">
-      </div>
-      <div class="form-group" style="margin-bottom:0;">
-        <label class="form-label" style="font-size:0.85rem;">Content</label>
-        <textarea class="form-textarea" rows="4" onchange="window.updateAiActionField(${idx}, 'content', this.value)">${escapeHtml(msg.data.content)}</textarea>
-      </div>
+      ${field('Title', textInput('title', d.title))}
+      ${field('Content', textarea('content', d.content, 5))}
+      <div style="margin-bottom:4px;">${checkboxInput('pinned', d.pinned, 'Pin to top of announcements')}</div>
     `;
   }
+
+  // ─── ANNOUNCEMENT (update) ───────────────────────────────────────────────
   if (msg.actionType === 'announcement_update') {
+    const ann = (appData.announcements || []).find(a => a.id === d.id);
+    const resolvedTitle = d.title !== undefined ? d.title : (ann?.title || '');
+    const resolvedContent = d.content !== undefined ? d.content : (ann?.content || '');
+    const resolvedPinned = d.pinned !== undefined ? d.pinned : (ann?.pinned || false);
     return `
-      <div class="muted" style="font-size:0.85rem; margin-bottom:8px;">Announcement ID: ${escapeHtml(msg.data.id || '')}</div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label class="form-label" style="font-size:0.85rem;">Title</label>
-        <input type="text" class="form-input" value="${escapeHtml(msg.data.title || '')}" onchange="window.updateAiActionField(${idx}, 'title', this.value)">
-      </div>
-      <div class="form-group" style="margin-bottom:0;">
-        <label class="form-label" style="font-size:0.85rem;">Content</label>
-        <textarea class="form-textarea" rows="4" onchange="window.updateAiActionField(${idx}, 'content', this.value)">${escapeHtml(msg.data.content || '')}</textarea>
-      </div>
+      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(ann?.title || d.id || '')}</div>
+      ${field('Title', textInput('title', resolvedTitle))}
+      ${field('Content', textarea('content', resolvedContent, 5))}
+      <div style="margin-bottom:4px;">${checkboxInput('pinned', resolvedPinned, 'Pinned')}</div>
+      <div style="margin-top:4px;">${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>
     `;
   }
-  if (msg.actionType === 'announcement_delete' || msg.actionType === 'announcement_publish' || msg.actionType === 'announcement_pin') {
-    return `<div class="muted" style="font-size:0.9rem;">Announcement ID: <code>${escapeHtml(msg.data.id || '')}</code></div>`;
+
+  // ─── ANNOUNCEMENT simple ops ─────────────────────────────────────────────
+  if (msg.actionType === 'announcement_delete') {
+    const ann = (appData.announcements || []).find(a => a.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">Delete announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
   }
+  if (msg.actionType === 'announcement_publish') {
+    const ann = (appData.announcements || []).find(a => a.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">Publish announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
+  }
+  if (msg.actionType === 'announcement_pin') {
+    const ann = (appData.announcements || []).find(a => a.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">${d.pinned === false ? 'Unpin' : 'Pin'} announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
+  }
+
+  // ─── QUIZ (inline) ───────────────────────────────────────────────────────
   if (msg.actionType === 'quiz') {
     return `
-      <div class="form-group" style="margin-bottom:12px;">
-        <label class="form-label" style="font-size:0.85rem;">Title</label>
-        <input type="text" class="form-input" value="${escapeHtml(msg.data.title)}" onchange="window.updateAiActionField(${idx}, 'title', this.value)">
+      ${field('Title', textInput('title', d.title))}
+      ${field('Description', textarea('description', d.description, 2))}
+      ${twoCol(
+        field('Due Date', datetimeInput('dueDate', d.dueDate), 0),
+        field('Points', numberInput('points', d.points ?? 100, 0, 9999), 0)
+      )}
+      ${twoCol(
+        field('Time Limit (minutes)', numberInput('timeLimit', d.timeLimit ?? 30, 0, 600), 0),
+        field('Attempts Allowed', numberInput('attempts', d.attempts ?? 1, 1, 99), 0)
+      )}
+      ${twoCol(
+        field('Status', selectInput('status', d.status || 'draft', [['draft','Draft'],['published','Published']]), 0),
+        field('Available From', datetimeInput('availableFrom', d.availableFrom), 0)
+      )}
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
+        <div>${checkboxInput('randomizeQuestions', d.randomizeQuestions, 'Randomize question order')}</div>
       </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label class="form-label" style="font-size:0.85rem;">Description</label>
-        <textarea class="form-textarea" rows="2" onchange="window.updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
-      </div>
-      <div class="muted" style="font-size:0.85rem; line-height:1.5;">
-        Questions: ${msg.data.questions?.length || 0} · Status: ${escapeHtml(msg.data.status || 'draft')} · Due: ${escapeHtml(msg.data.dueDate || 'not set')}<br>
-        Time limit: ${escapeHtml(String(msg.data.timeLimit ?? 30))} min · Attempts: ${escapeHtml(String(msg.data.attempts ?? 1))} · Randomize Questions: ${msg.data.randomizeQuestions ? 'Yes' : 'No'}<br>
-        Available from: ${escapeHtml(msg.data.availableFrom || 'immediately')} · Available until: ${escapeHtml(msg.data.availableUntil || msg.data.dueDate || 'not set')}
-      </div>
+      <div class="muted" style="font-size:0.85rem;">${d.questions?.length || 0} question${d.questions?.length !== 1 ? 's' : ''} included</div>
     `;
   }
+
+  // ─── QUIZ (update) ───────────────────────────────────────────────────────
   if (msg.actionType === 'quiz_update') {
-    return `<div class="muted" style="font-size:0.9rem; line-height:1.5;">Quiz ID: <code>${escapeHtml(msg.data.id || '')}</code><br>Status: ${escapeHtml(msg.data.status || 'unchanged')} · Due: ${escapeHtml(msg.data.dueDate || 'unchanged')} · Time limit: ${escapeHtml(String(msg.data.timeLimit ?? 'unchanged'))} · Attempts: ${escapeHtml(String(msg.data.attempts ?? 'unchanged'))}</div>`;
-  }
-  if (msg.actionType === 'quiz_delete') {
-    return `<div class="muted" style="font-size:0.9rem;">Quiz ID: <code>${escapeHtml(msg.data.id || '')}</code></div>`;
-  }
-  if (msg.actionType === 'quiz_from_bank') {
+    const quiz = (appData.quizzes || []).find(q => q.id === d.id);
     return `
-      <div class="form-group" style="margin-bottom:12px;">
-        <label class="form-label" style="font-size:0.85rem;">Title</label>
-        <input type="text" class="form-input" value="${escapeHtml(msg.data.title)}" onchange="window.updateAiActionField(${idx}, 'title', this.value)">
-      </div>
-      <div class="muted" style="font-size:0.85rem;">From: ${escapeHtml(msg.data.questionBankName)} · ${msg.data.numQuestions || 'All'} questions</div>
+      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(quiz?.title || d.id || '')}</div>
+      ${field('Title', textInput('title', d.title || quiz?.title || ''))}
+      ${field('Description', textarea('description', d.description !== undefined ? d.description : (quiz?.description || ''), 2))}
+      ${twoCol(
+        field('Due Date', datetimeInput('dueDate', d.dueDate || quiz?.dueDate), 0),
+        field('Status', selectInput('status', d.status || quiz?.status || 'draft', [['draft','Draft'],['published','Published'],['closed','Closed']]), 0)
+      )}
+      ${twoCol(
+        field('Time Limit (min)', numberInput('timeLimit', d.timeLimit !== undefined ? d.timeLimit : (quiz?.timeLimit ?? 30), 0, 600), 0),
+        field('Attempts', numberInput('attempts', d.attempts !== undefined ? d.attempts : (quiz?.attempts ?? 1), 1, 99), 0)
+      )}
+      <div>${checkboxInput('randomizeQuestions', d.randomizeQuestions !== undefined ? d.randomizeQuestions : !!quiz?.randomizeQuestions, 'Randomize question order')}</div>
     `;
   }
+
+  // ─── QUIZ (delete) ───────────────────────────────────────────────────────
+  if (msg.actionType === 'quiz_delete') {
+    const quiz = (appData.quizzes || []).find(q => q.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">Delete quiz: <strong>${escapeHtml(quiz?.title || d.id || '')}</strong></div>`;
+  }
+
+  // ─── QUIZ FROM BANK ───────────────────────────────────────────────────────
+  if (msg.actionType === 'quiz_from_bank') {
+    const banks = (appData.questionBanks || []).filter(qb => qb.courseId === activeCourseId);
+    const bankOptions = banks.map(b => [b.id, `${b.name} (${b.questions?.length || 0} questions)`]);
+    return `
+      ${field('Title', textInput('title', d.title))}
+      ${field('Description', textarea('description', d.description, 2))}
+      ${field('Question Bank', banks.length
+        ? selectInput('questionBankId', d.questionBankId || '', bankOptions)
+        : `<div class="muted">No question banks available — create one first.</div>`
+      )}
+      ${twoCol(
+        field('Number of Questions (0 = all)', numberInput('numQuestions', d.numQuestions ?? 0, 0, 999), 0),
+        field('Points', numberInput('points', d.points ?? 100, 0, 9999), 0)
+      )}
+      ${twoCol(
+        field('Due Date', datetimeInput('dueDate', d.dueDate), 0),
+        field('Time Limit (min)', numberInput('timeLimit', d.timeLimit ?? 30, 0, 600), 0)
+      )}
+      ${twoCol(
+        field('Attempts', numberInput('attempts', d.attempts ?? 1, 1, 99), 0),
+        field('Status', selectInput('status', d.status || 'draft', [['draft','Draft'],['published','Published']]), 0)
+      )}
+      ${twoCol(
+        field('Category', selectInput('category', d.category || 'quiz', [['quiz','Quiz'],['exam','Exam']]), 0),
+        field('Late Penalty (%/day)', numberInput('lateDeduction', d.lateDeduction ?? 10, 0, 100), 0)
+      )}
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:4px;">
+        <div>${checkboxInput('randomizeQuestions', d.randomizeQuestions, 'Randomize question order')}</div>
+        <div>${checkboxInput('randomizeAnswers', d.randomizeAnswers !== false, 'Randomize answer options')}</div>
+      </div>
+      <div>${checkboxInput('allowLateSubmissions', d.allowLateSubmissions !== false, 'Allow late submissions')}</div>
+    `;
+  }
+
+  // ─── ASSIGNMENT (create) ─────────────────────────────────────────────────
   if (msg.actionType === 'assignment') {
     return `
-      <div class="form-group" style="margin-bottom:12px;">
-        <label class="form-label" style="font-size:0.85rem;">Title</label>
-        <input type="text" class="form-input" value="${escapeHtml(msg.data.title)}" onchange="window.updateAiActionField(${idx}, 'title', this.value)">
-      </div>
-      <div class="form-group" style="margin-bottom:0;">
-        <label class="form-label" style="font-size:0.85rem;">Description</label>
-        <textarea class="form-textarea" rows="3" onchange="window.updateAiActionField(${idx}, 'description', this.value)">${escapeHtml(msg.data.description || '')}</textarea>
-      </div>
-      <div class="muted" style="font-size:0.85rem; line-height:1.5; margin-top:8px;">
-        Category: ${escapeHtml(msg.data.category || 'homework')} · Status: ${escapeHtml(msg.data.status || 'draft')} · Points: ${escapeHtml(String(msg.data.points || 100))}<br>
-        Due: ${escapeHtml(msg.data.dueDate || 'not set')} · Late submissions: ${msg.data.allowLateSubmissions ? 'Allowed' : 'Not allowed'} · Resubmission: ${msg.data.allowResubmission ? 'Allowed' : 'Not allowed'}
-      </div>
+      ${field('Title', textInput('title', d.title))}
+      ${field('Description', textarea('description', d.description, 4))}
+      ${twoCol(
+        field('Category', selectInput('category', d.category || 'homework', [
+          ['homework','Homework'],['essay','Essay'],['project','Project'],
+          ['participation','Participation'],['quiz','Quiz'],['exam','Exam']
+        ]), 0),
+        field('Points', numberInput('points', d.points ?? 100, 0, 9999), 0)
+      )}
+      ${twoCol(
+        field('Due Date', datetimeInput('dueDate', d.dueDate), 0),
+        field('Status', selectInput('status', d.status || 'draft', [['draft','Draft'],['published','Published']]), 0)
+      )}
+      ${lateSection(d.allowLateSubmissions, d.lateDeduction ?? 10)}
+      <div>${checkboxInput('allowResubmission', d.allowResubmission, 'Allow resubmission')}</div>
     `;
   }
-  if (msg.actionType === 'module') {
+
+  // ─── ASSIGNMENT (update) ─────────────────────────────────────────────────
+  if (msg.actionType === 'assignment_update') {
+    const a = (appData.assignments || []).find(a => a.id === d.id);
     return `
-      <div class="form-group" style="margin-bottom:0;">
-        <label class="form-label" style="font-size:0.85rem;">Module Name</label>
-        <input type="text" class="form-input" value="${escapeHtml(msg.data.name)}" onchange="window.updateAiActionField(${idx}, 'name', this.value)">
-      </div>
+      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(a?.title || d.id || '')}</div>
+      ${field('Title', textInput('title', d.title !== undefined ? d.title : (a?.title || '')))}
+      ${field('Description', textarea('description', d.description !== undefined ? d.description : (a?.description || ''), 3))}
+      ${twoCol(
+        field('Category', selectInput('category', d.category || a?.category || 'homework', [
+          ['homework','Homework'],['essay','Essay'],['project','Project'],
+          ['participation','Participation'],['quiz','Quiz'],['exam','Exam']
+        ]), 0),
+        field('Points', numberInput('points', d.points !== undefined ? d.points : (a?.points ?? 100), 0, 9999), 0)
+      )}
+      ${twoCol(
+        field('Due Date', datetimeInput('dueDate', d.dueDate || a?.dueDate), 0),
+        field('Status', selectInput('status', d.status || a?.status || 'draft', [['draft','Draft'],['published','Published'],['closed','Closed']]), 0)
+      )}
+      ${lateSection(
+        d.allowLateSubmissions !== undefined ? d.allowLateSubmissions : (a?.allowLateSubmissions || false),
+        d.lateDeduction !== undefined ? d.lateDeduction : (a?.lateDeduction ?? 10)
+      )}
+      <div>${checkboxInput('allowResubmission', d.allowResubmission !== undefined ? d.allowResubmission : (a?.allowResubmission || false), 'Allow resubmission')}</div>
     `;
   }
+
+  // ─── ASSIGNMENT (delete) ─────────────────────────────────────────────────
+  if (msg.actionType === 'assignment_delete') {
+    const a = (appData.assignments || []).find(a => a.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">Delete assignment: <strong>${escapeHtml(a?.title || d.id || '')}</strong></div>`;
+  }
+
+  // ─── MODULE (create) ─────────────────────────────────────────────────────
+  if (msg.actionType === 'module') {
+    return field('Module Name', textInput('name', d.name), 0);
+  }
+
+  // ─── MODULE ADD ITEM ─────────────────────────────────────────────────────
+  if (msg.actionType === 'module_add_item') {
+    const modules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
+    const moduleOptions = modules.map(m => [m.id, m.name]);
+    const typeOptions = [['assignment','Assignment'],['quiz','Quiz'],['file','File'],['external_link','External Link']];
+    const currentType = d.itemType || 'assignment';
+    let itemOptions = [];
+    if (currentType === 'assignment') {
+      itemOptions = (appData.assignments || []).filter(a => a.courseId === activeCourseId).map(a => [a.id, a.title]);
+    } else if (currentType === 'quiz') {
+      itemOptions = (appData.quizzes || []).filter(q => q.courseId === activeCourseId).map(q => [q.id, q.title]);
+    } else if (currentType === 'file') {
+      itemOptions = (appData.files || []).filter(f => f.courseId === activeCourseId).map(f => [f.id, f.name]);
+    }
+    return `
+      ${field('Module', modules.length ? selectInput('moduleId', d.moduleId || '', moduleOptions) : '<div class="muted">No modules available</div>')}
+      ${field('Item Type', `<select class="form-input" onchange="window.updateAiActionField(${idx}, 'itemType', this.value); window.renderAiThread();">${typeOptions.map(([v,l]) => `<option value="${v}" ${currentType===v?'selected':''}>${l}</option>`).join('')}</select>`)}
+      ${currentType === 'external_link'
+        ? field('URL', textInput('url', d.url)) + field('Link Title', textInput('itemTitle', d.itemTitle))
+        : field('Item', itemOptions.length ? selectInput('itemId', d.itemId || '', itemOptions) : `<div class="muted">No ${currentType}s available</div>`)
+      }
+    `;
+  }
+
+  // ─── MODULE REMOVE ITEM ──────────────────────────────────────────────────
+  if (msg.actionType === 'module_remove_item') {
+    const mod = (appData.modules || []).find(m => m.id === d.moduleId);
+    return `
+      <div class="muted" style="font-size:0.9rem;">Remove <strong>${escapeHtml(d.itemTitle || d.itemId || '')}</strong> from module <strong>${escapeHtml(d.moduleName || mod?.name || '')}</strong></div>
+    `;
+  }
+
+  // ─── MODULE MOVE ITEM ────────────────────────────────────────────────────
+  if (msg.actionType === 'module_move_item') {
+    const modules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
+    const destOptions = modules.filter(m => m.id !== d.fromModuleId).map(m => [m.id, m.name]);
+    return `
+      <div class="muted" style="font-size:0.9rem; margin-bottom:12px;">
+        Move <strong>${escapeHtml(d.itemTitle || '')}</strong> from <em>${escapeHtml(d.fromModuleName || '')}</em>
+      </div>
+      ${field('Destination Module', destOptions.length ? selectInput('toModuleId', d.toModuleId || '', destOptions) : '<div class="muted">No other modules available</div>')}
+    `;
+  }
+
+  // ─── INVITE CREATE ───────────────────────────────────────────────────────
+  if (msg.actionType === 'invite_create') {
+    const emailsVal = Array.isArray(d.emails) ? d.emails.join(', ') : '';
+    return `
+      ${field('Email address(es)', `<input type="text" class="form-input" value="${escapeHtml(emailsVal)}" placeholder="email1@example.com, email2@example.com" onchange="window.updateAiActionField(${idx}, 'emails', this.value.split(',').map(s=>s.trim()).filter(Boolean))">`)}
+      ${field('Role', selectInput('role', d.role || 'student', [['student','Student'],['ta','Teaching Assistant'],['instructor','Instructor']]), 0)}
+    `;
+  }
+
+  // ─── INVITE REVOKE ───────────────────────────────────────────────────────
+  if (msg.actionType === 'invite_revoke') {
+    return `
+      <div class="muted" style="font-size:0.9rem;">Revoke invitation for: <strong>${escapeHtml(d.email || d.inviteId || '')}</strong></div>
+    `;
+  }
+
+  // ─── COURSE VISIBILITY ───────────────────────────────────────────────────
+  if (msg.actionType === 'course_visibility') {
+    const course = (appData.courses || []).find(c => c.id === (d.courseId || activeCourseId));
+    return `
+      <div class="muted" style="font-size:0.9rem; margin-bottom:12px;">Course: <strong>${escapeHtml(course?.name || '')}</strong></div>
+      <div>${checkboxInput('visible', d.visible !== false, 'Visible to students')}</div>
+    `;
+  }
+
+  // ─── PIPELINE ────────────────────────────────────────────────────────────
   if (msg.actionType === 'pipeline') {
-    const steps = Array.isArray(msg.data.steps) ? msg.data.steps : [];
+    const steps = Array.isArray(d.steps) ? d.steps : [];
     const stepsHtml = steps.map((step, i) => {
-      const idText = step.id || step.quizId || step.announcementId || step.assignmentId || '';
-      return `<li><code>${escapeHtml(step.action || 'unknown')}</code>${idText ? ` · <span class="muted">${escapeHtml(idText)}</span>` : ''}</li>`;
+      const idText = step.id || step.quizId || step.announcementId || step.assignmentId || step.moduleId || '';
+      const title = step.title || step.name || '';
+      return `<li style="margin-bottom:6px;"><code>${escapeHtml(step.action || 'unknown')}</code>${title ? ` — <em>${escapeHtml(title)}</em>` : ''}${idText ? ` <span class="muted" style="font-size:0.8rem;">(${escapeHtml(idText)})</span>` : ''}</li>`;
     }).join('');
     return `
-      <div class="muted" style="font-size:0.9rem; margin-bottom:8px;">${steps.length} steps</div>
-      <ol style="margin:0; padding-left:20px;">${stepsHtml}</ol>
+      <div class="muted" style="font-size:0.9rem; margin-bottom:8px;">${steps.length} step${steps.length !== 1 ? 's' : ''}</div>
+      <ol style="margin:0; padding-left:20px; font-size:0.9rem;">${stepsHtml}</ol>
     `;
   }
+
   return '';
 }
 
@@ -1617,6 +2130,7 @@ if (typeof window !== 'undefined') {
   window.confirmAiAction = confirmAiAction;
   window.rejectAiAction = rejectAiAction;
   window.updateAiActionField = updateAiActionField;
+  window.renderAiThread = renderAiThread;
   window.toggleAiRecording = toggleAiRecording;
   window.generateAiDraft = generateAiDraft;
   window.applyAiDraft = applyAiDraft;
