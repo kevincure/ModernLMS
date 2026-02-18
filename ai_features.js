@@ -43,6 +43,8 @@ let renderHomeCallback = null;
 let renderAssignmentsCallback = null;
 let renderModulesCallback = null;
 let renderGradebookCallback = null;
+let renderPeopleCallback = null;
+let renderCalendarCallback = null;
 let isStaffCallback = null;
 let getCourseByIdCallback = null;
 let getUserByIdCallback = null;
@@ -57,6 +59,8 @@ export function initAiModule(deps) {
   renderAssignmentsCallback = deps.renderAssignments;
   renderModulesCallback = deps.renderModules;
   renderGradebookCallback = deps.renderGradebook;
+  renderPeopleCallback = deps.renderPeople;
+  renderCalendarCallback = deps.renderCalendar;
   isStaffCallback = deps.isStaff;
   getCourseByIdCallback = deps.getCourseById;
   getUserByIdCallback = deps.getUserById;
@@ -817,52 +821,62 @@ export function updateAiActionField(idx, field, value) {
 /**
  * Generate a natural-language confirmation message after an AI action succeeds.
  */
+function pageLink(page, label) {
+  return `<a href="#" onclick="event.preventDefault(); window.navigateAndClose && window.navigateAndClose('${escapeHtml(page)}')" style="color:var(--primary); text-decoration:underline; font-weight:500;">${escapeHtml(label)}</a>`;
+}
+
+function b(text) { return `<strong>${escapeHtml(String(text))}</strong>`; }
+
 function generateActionConfirmation(msg, publish = false) {
   const d = msg.data || {};
   const wasPublished = publish || d.status === 'published';
-  const pubNote = wasPublished ? ' It\'s now **published** and visible to students.' : ' It\'s saved as a **draft** — you can publish it anytime.';
+  const pubSpan = wasPublished
+    ? `It's now <strong>published</strong> and visible to students.`
+    : `It's saved as a <strong>draft</strong>.`;
 
   switch (msg.actionType) {
     case 'announcement':
-      return `Done! Created announcement **"${d.title || 'Untitled'}"**${d.pinned ? ' and pinned it to the top' : ''}.${pubNote}`;
+      return `Done! Created announcement ${b(d.title || 'Untitled')}${d.pinned ? ' and pinned it to the top' : ''}. ${pubSpan} View it in ${pageLink('updates', 'Announcements')}.`;
     case 'announcement_update':
-      return `Done! Updated the announcement **"${d.title || 'that announcement'}"**.`;
+      return `Done! Updated the announcement. View it in ${pageLink('updates', 'Announcements')}.`;
     case 'announcement_delete':
       return `Done! The announcement has been permanently deleted.`;
     case 'announcement_publish':
-      return `Done! The announcement is now **published** and visible to students.`;
+      return `Done! The announcement is now <strong>published</strong> and visible to students. See ${pageLink('updates', 'Announcements')}.`;
     case 'announcement_pin':
-      return `Done! The announcement has been **${d.pinned !== false ? 'pinned' : 'unpinned'}**.`;
-    case 'assignment':
-      return `Done! Created assignment **"${d.title || 'Untitled'}"** (${d.points || 100} pts, due ${d.dueDate ? new Date(d.dueDate).toLocaleDateString() : 'as set'}).${pubNote}`;
+      return `Done! The announcement has been <strong>${d.pinned !== false ? 'pinned' : 'unpinned'}</strong>. See ${pageLink('updates', 'Announcements')}.`;
+    case 'assignment': {
+      const due = d.dueDate ? new Date(d.dueDate).toLocaleDateString() : 'as set';
+      return `Done! Created assignment ${b(d.title || 'Untitled')} (${escapeHtml(String(d.points || 100))} pts, due ${escapeHtml(due)}). ${pubSpan} View it in ${pageLink('assignments', 'Assignments')}.`;
+    }
     case 'assignment_update':
-      return `Done! Updated assignment **"${d.title || 'that assignment'}"**.`;
+      return `Done! Updated the assignment. View it in ${pageLink('assignments', 'Assignments')}.`;
     case 'assignment_delete':
       return `Done! The assignment has been permanently deleted.`;
     case 'quiz':
     case 'quiz_from_bank':
-      return `Done! Created quiz/exam **"${d.title || 'Untitled'}"**.${pubNote}`;
+      return `Done! Created quiz/exam ${b(d.title || 'Untitled')}. ${pubSpan} View it in ${pageLink('assignments', 'Assignments')}.`;
     case 'quiz_update':
-      return `Done! Updated quiz **"${d.title || 'that quiz'}"**.`;
+      return `Done! Updated the quiz. View it in ${pageLink('assignments', 'Assignments')}.`;
     case 'quiz_delete':
       return `Done! The quiz has been permanently deleted.`;
     case 'module':
-      return `Done! Created module **"${d.name || 'Untitled'}"**. You can add content to it from the Modules page.`;
+      return `Done! Created module ${b(d.name || 'Untitled')}. Add content from ${pageLink('modules', 'Modules')}.`;
     case 'module_add_item':
-      return `Done! Added **"${d.itemTitle || 'the item'}"** to module **"${d.moduleName || d.moduleId}"**.`;
+      return `Done! Added ${b(d.itemTitle || 'the item')} to module ${b(d.moduleName || d.moduleId || 'module')}. See ${pageLink('modules', 'Modules')}.`;
     case 'module_remove_item':
-      return `Done! Removed **"${d.itemTitle || 'the item'}"** from the module.`;
+      return `Done! Removed the item from the module. See ${pageLink('modules', 'Modules')}.`;
     case 'module_move_item':
-      return `Done! Moved **"${d.itemTitle || 'the item'}"** to **"${d.toModuleName || 'the new module'}"**.`;
+      return `Done! Moved the item to ${b(d.toModuleName || 'the new module')}. See ${pageLink('modules', 'Modules')}.`;
     case 'invite_create': {
       const count = Array.isArray(d.emails) ? d.emails.length : 1;
       const emailList = Array.isArray(d.emails) ? d.emails.join(', ') : (d.emails || '');
-      return `Done! Sent ${count} invitation${count !== 1 ? 's' : ''} to **${emailList}** as ${d.role || 'student'}.`;
+      return `Done! Sent ${count} invitation${count !== 1 ? 's' : ''} to ${b(emailList)} as ${escapeHtml(d.role || 'student')}. Manage from ${pageLink('people', 'People')}.`;
     }
     case 'invite_revoke':
-      return `Done! The invitation for **${d.email || 'that person'}** has been revoked.`;
+      return `Done! The invitation has been revoked. Manage invites from ${pageLink('people', 'People')}.`;
     case 'course_visibility':
-      return `Done! The course is now **${d.visible !== false ? 'visible to students' : 'hidden from students'}**.`;
+      return `Done! The course is now <strong>${d.visible !== false ? 'visible to students' : 'hidden from students'}</strong>.`;
     default:
       return `Done! The action was completed successfully.`;
   }
@@ -906,7 +920,7 @@ export async function confirmAiAction(idx, publish = false) {
   }
 
   msg.confirmed = true;
-  aiThread.push({ role: 'assistant', content: generateActionConfirmation(msg, publish) });
+  aiThread.push({ role: 'assistant', content: generateActionConfirmation(msg, publish), isHtml: true });
   renderAiThread();
 }
 
@@ -1354,7 +1368,7 @@ export function renderAiThread() {
       return `
         <div style="margin-bottom:16px; display:flex;">
           <div style="background:var(--bg-color); padding:12px 16px; border-radius:16px 16px 16px 4px; max-width:85%; border:1px solid var(--border-color);">
-            <div class="markdown-content">${renderMarkdown(msg.content)}</div>
+            <div class="markdown-content">${msg.isHtml ? msg.content : renderMarkdown(msg.content)}</div>
           </div>
         </div>
       `;
@@ -1412,9 +1426,9 @@ export function renderAiThread() {
             <div style="font-weight:600; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
               <span style="font-size:1.1rem;">📝</span> ${actionVerb} ${actionLabel}
             </div>
-            ${renderActionPreview(msg, idx)}
+            ${!msg.confirmed && !msg.rejected ? renderActionPreview(msg, idx) : ''}
             ${msg.confirmed ? `
-              <div style="color:var(--success); font-weight:500;">✓ Completed successfully${msg.wasPublished ? '' : ''}</div>
+              <div style="color:var(--success); font-weight:500;">✓ Completed successfully</div>
             ` : msg.rejected ? `
               <div style="color:var(--text-muted);">✗ Cancelled</div>
             ` : isLatest ? `

@@ -774,6 +774,110 @@ export function convertYouTubeUrl(url) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FILE VIEWER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * View a file in a popup if it's a viewable format, or download it otherwise.
+ */
+export async function viewFile(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  // External/YouTube links open directly
+  if (file.externalUrl) {
+    window.open(file.externalUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  if (!file.storagePath) {
+    showToast('No file content available', 'error');
+    return;
+  }
+
+  // Get a signed URL from Supabase Storage (60 min)
+  let fileUrl;
+  try {
+    const { data, error } = await supabaseClient.storage
+      .from('course-files')
+      .createSignedUrl(file.storagePath, 3600);
+    if (error || !data?.signedUrl) {
+      showToast('Could not retrieve file link', 'error');
+      return;
+    }
+    fileUrl = data.signedUrl;
+  } catch (err) {
+    showToast('Error accessing file', 'error');
+    return;
+  }
+
+  const ext = (file.name || '').split('.').pop().toLowerCase();
+  const viewableExts = ['pdf', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+  const googleViewerExts = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'];
+
+  // Build viewer modal
+  let viewerContent = '';
+  if (viewableExts.includes(ext)) {
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
+      viewerContent = `<img src="${escapeHtml(fileUrl)}" alt="${escapeHtml(file.name)}" style="max-width:100%; max-height:75vh; object-fit:contain; display:block; margin:0 auto;">`;
+    } else if (ext === 'txt') {
+      // Load text inline
+      viewerContent = `<div id="fileViewerTextContent" style="padding:16px; font-family:monospace; white-space:pre-wrap; max-height:70vh; overflow-y:auto; background:var(--bg-color); border-radius:var(--radius);">Loading…</div>`;
+    } else {
+      // PDF via iframe
+      viewerContent = `<iframe src="${escapeHtml(fileUrl)}" style="width:100%; height:75vh; border:none; border-radius:var(--radius);"></iframe>`;
+    }
+  } else if (googleViewerExts.includes(ext)) {
+    const googleViewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
+    viewerContent = `<iframe src="${escapeHtml(googleViewerUrl)}" style="width:100%; height:75vh; border:none; border-radius:var(--radius);"></iframe>`;
+  } else {
+    // Trigger download for unsupported formats
+    const a = document.createElement('a');
+    a.href = fileUrl;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Downloading file…', 'info');
+    return;
+  }
+
+  // Remove any existing viewer modal
+  document.getElementById('fileViewerModal')?.remove();
+
+  const modalHtml = `
+    <div class="modal-overlay" id="fileViewerModal" style="display:flex; z-index:900;">
+      <div class="modal" style="max-width:90vw; width:900px; max-height:95vh; display:flex; flex-direction:column;">
+        <div class="modal-header" style="flex-shrink:0;">
+          <h2 class="modal-title" style="font-size:1rem;">${escapeHtml(file.name)}</h2>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <a href="${escapeHtml(fileUrl)}" download="${escapeHtml(file.name)}" class="btn btn-secondary btn-sm">Download</a>
+            <button class="modal-close" onclick="document.getElementById('fileViewerModal').remove()">&times;</button>
+          </div>
+        </div>
+        <div class="modal-body" style="flex:1; overflow:hidden; padding:0;">
+          ${viewerContent}
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', modalHtml);
+
+  // Load TXT content
+  if (ext === 'txt') {
+    try {
+      const resp = await fetch(fileUrl);
+      const text = await resp.text();
+      const el = document.getElementById('fileViewerTextContent');
+      if (el) el.textContent = text;
+    } catch (err) {
+      const el = document.getElementById('fileViewerTextContent');
+      if (el) el.textContent = 'Failed to load file content.';
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // FILES PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -879,6 +983,8 @@ export function renderFiles() {
               <a href="${escapeHtml(f.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
                 ${f.isYouTube ? '▶ Watch' : '🔗 Open'}
               </a>
+            ` : !isPlaceholder && f.storagePath ? `
+              <button class="btn btn-primary btn-sm" onclick="window.viewFile('${f.id}')">View / Download</button>
             ` : ''}
             ${effectiveStaff && isPlaceholder ? `
               <button class="btn btn-secondary btn-sm" onclick="convertPlaceholderToFile('${f.id}')">📎 Upload File</button>

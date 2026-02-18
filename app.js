@@ -58,6 +58,16 @@ import {
   supabaseDeleteQuestionBank,
   supabaseCreateInvite,
   supabaseDeleteInvite,
+  supabaseCreateDiscussionThread,
+  supabaseUpdateDiscussionThread,
+  supabaseDeleteDiscussionThread,
+  supabaseCreateDiscussionReply,
+  supabaseDeleteDiscussionReply,
+  supabaseUpsertAssignmentOverride,
+  supabaseDeleteAssignmentOverride,
+  supabaseUpsertQuizTimeOverride,
+  supabaseDeleteQuizTimeOverride,
+  supabaseUpsertGradeSettings,
   callGeminiAPI,
   callGeminiAPIWithRetry
 } from './database_interactions.js';
@@ -137,7 +147,8 @@ import {
   convertPlaceholderToFile,
   convertPlaceholderToLink,
   setActiveCourseId as setFileActiveCourseId,
-  setStudentViewMode as setFileStudentViewMode
+  setStudentViewMode as setFileStudentViewMode,
+  viewFile
 } from './file_handling.js';
 
 // Modals - all modal HTML generation
@@ -247,7 +258,12 @@ function initModules() {
     supabaseCreateAnnouncement,
     supabaseCreateQuiz,
     renderUpdates,
-    renderAssignments
+    renderHome,
+    renderAssignments,
+    renderModules,
+    renderGradebook,
+    renderPeople,
+    renderCalendar
   });
 
   // Initialize quiz module
@@ -1138,6 +1154,7 @@ function renderAll() {
   renderFiles();
   renderGradebook();
   renderPeople();
+  renderDiscussion();
 }
 
 function renderTopBarActions() {
@@ -1231,6 +1248,7 @@ function navigateTo(page) {
       files:       renderFiles,
       gradebook:   renderGradebook,
       people:      renderPeople,
+      discussion:  renderDiscussion,
     };
     if (pageRenders[page]) pageRenders[page]();
   }
@@ -1265,15 +1283,16 @@ function renderCourses() {
     };
     const roleLabel = roleLabels[c.role] || c.role;
 
+    const isActive = c.id === activeCourseId;
     return `
-      <div class="card">
+      <div class="card" style="${isActive ? 'border:1.5px solid var(--primary);' : ''}">
         <div class="card-header">
           <div>
-            <div class="card-title">${c.name}</div>
+            <div class="card-title">${c.name}${isActive ? ' <span style="font-size:0.7rem; font-weight:700; background:var(--primary); color:#fff; padding:2px 7px; border-radius:10px; vertical-align:middle; letter-spacing:0.05em;">ACTIVE</span>' : ''}</div>
             <div class="muted">${c.code} · ${roleLabel}</div>
           </div>
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>
+          <div style="display:flex; gap:8px; align-items:center;">
+            ${isActive ? '' : `<button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>`}
             ${c.role === 'instructor' ? `
               <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="openCloneCourseModal('${c.id}')">Clone</button>
@@ -2458,6 +2477,7 @@ function renderAssignments() {
           <div style="display:flex; gap:8px;">
             ${effectiveStaff ? `
               <button class="btn btn-secondary btn-sm" onclick="viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
+              <button class="btn btn-secondary btn-sm" onclick="openDeadlineOverridesModal('${a.id}')">Overrides</button>
               <button class="btn btn-secondary btn-sm" onclick="editAssignment('${a.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
             ` : mySubmission ? `
@@ -2491,7 +2511,11 @@ function renderAssignments() {
     const visibilityBadge = effectiveStaff && q.status !== 'published' ?
       `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">HIDDEN</span>` : '';
 
-    const timeLimitLabel = q.timeLimit ? `${q.timeLimit} min` : 'No time limit';
+    const myTimeOverride = (appData.quizTimeOverrides || []).find(o => o.quizId === q.id && o.userId === appData.currentUser.id);
+    const effectiveTimeLimit = myTimeOverride ? myTimeOverride.timeLimit : q.timeLimit;
+    const timeLimitLabel = effectiveTimeLimit
+      ? `${effectiveTimeLimit} min once you begin${myTimeOverride ? ' (personalized)' : ''}`
+      : 'No time limit';
     const attemptsLabel = attemptsAllowed ? `${attemptsLeft} of ${attemptsAllowed} left` : 'Unlimited attempts';
     const submissionStatus = latestSubmission
       ? (latestSubmission.released ? `Score: ${latestSubmission.score}/${quizPoints}` : 'Submitted · awaiting review')
@@ -2508,6 +2532,7 @@ function renderAssignments() {
           <div style="display:flex; gap:8px;">
             ${effectiveStaff ? `
               <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
+              <button class="btn btn-secondary btn-sm" onclick="openQuizTimeOverridesModal('${q.id}')">Time Overrides</button>
               <button class="btn btn-secondary btn-sm" onclick="openQuizModal('${q.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="viewQuizDetails('${q.id}')" title="View full quiz details">👁️ Preview</button>
               <button class="btn btn-secondary btn-sm" onclick="deleteQuiz('${q.id}')" style="color:var(--danger);">Delete</button>
@@ -3593,7 +3618,97 @@ function saveSubmission() {
 function viewSubmissions(assignmentId) {
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   const submissions = appData.submissions.filter(s => s.assignmentId === assignmentId);
-  
+
+  // Build metadata analytics
+  const totalStudents = appData.enrollments.filter(e => e.courseId === activeCourseId && e.role === 'student').length;
+  const submittedCount = submissions.length;
+  const completionPct = totalStudents > 0 ? ((submittedCount / totalStudents) * 100).toFixed(0) : 0;
+  const lateCount = submissions.filter(s => assignment.dueDate && new Date(s.submittedAt) > new Date(assignment.dueDate)).length;
+  const gradedSubmissions = submissions.filter(s => appData.grades.find(g => g.submissionId === s.id));
+  const gradedCount = gradedSubmissions.length;
+
+  // Grade distribution
+  const allScores = gradedSubmissions.map(s => {
+    const g = appData.grades.find(gr => gr.submissionId === s.id);
+    return g ? g.score : null;
+  }).filter(s => s !== null);
+
+  let gradeStats = '';
+  if (allScores.length > 0) {
+    const avg = (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(1);
+    const sorted = [...allScores].sort((a, b) => a - b);
+    const median = sorted.length % 2 === 0
+      ? ((sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2).toFixed(1)
+      : sorted[Math.floor(sorted.length / 2)].toFixed(1);
+    const minS = Math.min(...allScores);
+    const maxS = Math.max(...allScores);
+    const pct = (avg / assignment.points * 100).toFixed(1);
+    // Grade distribution buckets
+    const buckets = { A: 0, B: 0, C: 0, D: 0, F: 0 };
+    const gs = (appData.gradeSettings || []).find(g => g.courseId === activeCourseId);
+    allScores.forEach(sc => {
+      const p = (sc / assignment.points) * 100;
+      if (gs) {
+        if (p >= gs.aMin) buckets.A++;
+        else if (p >= gs.bMin) buckets.B++;
+        else if (p >= gs.cMin) buckets.C++;
+        else if (p >= gs.dMin) buckets.D++;
+        else buckets.F++;
+      }
+    });
+    const bucketHtml = gs ? Object.entries(buckets).map(([letter, count]) => {
+      const barWidth = allScores.length > 0 ? (count / allScores.length * 100).toFixed(0) : 0;
+      return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+        <span style="width:16px; font-weight:700; color:${getGradeColor(letter)};">${letter}</span>
+        <div style="flex:1; height:16px; background:var(--border-light); border-radius:8px; overflow:hidden;">
+          <div style="height:100%; width:${barWidth}%; background:${getGradeColor(letter)}; border-radius:8px;"></div>
+        </div>
+        <span class="muted" style="width:30px;">${count}</span>
+      </div>`;
+    }).join('') : '';
+    gradeStats = `
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:16px;">
+        <div style="text-align:center; padding:12px; background:var(--bg-color); border-radius:var(--radius);">
+          <div style="font-size:1.5rem; font-weight:700;">${avg}</div>
+          <div class="muted">Average (${pct}%)</div>
+        </div>
+        <div style="text-align:center; padding:12px; background:var(--bg-color); border-radius:var(--radius);">
+          <div style="font-size:1.5rem; font-weight:700;">${median}</div>
+          <div class="muted">Median</div>
+        </div>
+        <div style="text-align:center; padding:12px; background:var(--bg-color); border-radius:var(--radius);">
+          <div style="font-size:1.5rem; font-weight:700;">${minS}–${maxS}</div>
+          <div class="muted">Range</div>
+        </div>
+      </div>
+      ${gs ? `<div style="margin-bottom:16px;"><div style="font-weight:600; margin-bottom:8px;">Grade Distribution</div>${bucketHtml}</div>` : ''}
+    `;
+  }
+
+  const metadataHtml = `
+    <div class="card" style="margin-bottom:16px; background:var(--primary-light);">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:12px; margin-bottom:${allScores.length > 0 ? '16px' : '0'};">
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem; font-weight:700;">${completionPct}%</div>
+          <div class="muted">Completion (${submittedCount}/${totalStudents})</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem; font-weight:700;">${gradedCount}</div>
+          <div class="muted">Graded</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem; font-weight:700; color:${lateCount > 0 ? 'var(--warning, #d97706)' : 'inherit'}">${lateCount}</div>
+          <div class="muted">Late</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem; font-weight:700;">${totalStudents - submittedCount}</div>
+          <div class="muted">Not Submitted</div>
+        </div>
+      </div>
+      ${gradeStats}
+    </div>
+  `;
+
   const html = `
     <div class="modal-overlay visible" id="submissionsModal">
       <div class="modal" style="max-width:900px;">
@@ -3602,6 +3717,7 @@ function viewSubmissions(assignmentId) {
           <button class="modal-close" onclick="closeModal('submissionsModal')">&times;</button>
         </div>
         <div class="modal-body">
+          ${metadataHtml}
           <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
             <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">⚡ SpeedGrader</button>
             <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">📋 Bulk Import Grades</button>
@@ -5432,11 +5548,14 @@ function renderStudentGradebook() {
 function renderStaffGradebook() {
   const hasWeights = appData.gradeCategories && appData.gradeCategories.some(c => c.courseId === activeCourseId);
 
+  const gradeSettings = (appData.gradeSettings || []).find(gs => gs.courseId === activeCourseId);
+
   // Actions with search
   setHTML('gradebookActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <input type="text" class="form-input" placeholder="Search students..." value="${escapeHtml(gradebookSearch)}" onkeyup="updateGradebookSearch(this.value)" style="width:200px;">
       <button class="btn btn-secondary" onclick="openCategoryWeightsModal()">Category Weights ${hasWeights ? '✓' : ''}</button>
+      <button class="btn btn-secondary" onclick="openGradeSettingsModal()">Grade Settings ${gradeSettings ? '✓' : ''}</button>
       <button class="btn btn-secondary" onclick="exportGradebook()">Export CSV</button>
     </div>
   `);
@@ -5525,7 +5644,8 @@ function renderStaffGradebook() {
             <th style="padding:12px; text-align:left; position:sticky; left:0; background:var(--bg-color);">Student</th>
             ${assignments.map(a => `<th style="padding:12px; text-align:center; min-width:120px;">${a.title}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${a.points}pts)</span></th>`).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
-            <th style="padding:12px; text-align:center;">Percentage</th>
+            <th style="padding:12px; text-align:center;">%</th>
+            ${gradeSettings ? '<th style="padding:12px; text-align:center;">Grade</th>' : ''}
           </tr>
         </thead>
         <tbody>
@@ -5550,7 +5670,15 @@ function renderStaffGradebook() {
                   return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
                 <td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? `${totalScore}/${totalPoints}` : '—'}</td>
-                <td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? ((totalScore / totalPoints) * 100).toFixed(1) + '%' : '—'}</td>
+                ${(() => {
+                  if (totalPoints === 0) return '<td style="padding:12px; text-align:center;">—</td>' + (gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : '');
+                  const curvedScore = Math.min(totalScore + (gradeSettings ? (gradeSettings.curve || 0) * totalPoints / 100 : 0), totalPoints);
+                  const pct = (curvedScore / totalPoints) * 100;
+                  const pctStr = pct.toFixed(1) + '%' + (gradeSettings?.curve ? ` (+${gradeSettings.curve}% curve)` : '');
+                  const letterGrade = gradeSettings ? getLetterGrade(pct, gradeSettings) : null;
+                  return `<td style="padding:12px; text-align:center; font-weight:600;">${pctStr}</td>` +
+                    (gradeSettings ? `<td style="padding:12px; text-align:center; font-weight:700; color:${getGradeColor(letterGrade)};">${letterGrade}</td>` : '');
+                })()}
               </tr>
             `;
             return row;
@@ -5562,6 +5690,93 @@ function renderStaffGradebook() {
   `;
   
   setHTML('gradebookWrap', statsHTML + table);
+}
+
+function getLetterGrade(pct, settings) {
+  if (!settings) return '—';
+  if (pct >= settings.aMin) return 'A';
+  if (pct >= settings.bMin) return 'B';
+  if (pct >= settings.cMin) return 'C';
+  if (pct >= settings.dMin) return 'D';
+  return 'F';
+}
+
+function getGradeColor(letter) {
+  const colors = { A: '#16a34a', B: '#2563eb', C: '#d97706', D: '#dc2626', F: '#991b1b' };
+  return colors[letter] || 'inherit';
+}
+
+function openGradeSettingsModal() {
+  const existing = (appData.gradeSettings || []).find(gs => gs.courseId === activeCourseId) || {};
+  const modalHtml = `
+    <div class="modal-overlay" id="gradeSettingsModal" style="display:flex;">
+      <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Grade Settings</h2>
+          <button class="modal-close" onclick="closeModal('gradeSettingsModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="font-weight:600; margin-bottom:12px;">Letter Grade Cutoffs (minimum %)</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+            <div class="form-group">
+              <label class="form-label">A (min %)</label>
+              <input type="number" class="form-input" id="gs_aMin" min="0" max="100" value="${existing.aMin ?? 90}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">B (min %)</label>
+              <input type="number" class="form-input" id="gs_bMin" min="0" max="100" value="${existing.bMin ?? 80}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">C (min %)</label>
+              <input type="number" class="form-input" id="gs_cMin" min="0" max="100" value="${existing.cMin ?? 70}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">D (min %)</label>
+              <input type="number" class="form-input" id="gs_dMin" min="0" max="100" value="${existing.dMin ?? 60}">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Grade Curve (add % points to all scores)</label>
+            <input type="number" class="form-input" id="gs_curve" min="0" max="100" value="${existing.curve ?? 0}" placeholder="0 = no curve">
+            <div class="hint">E.g. enter 5 to add 5 percentage points to everyone's score.</div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="gs_extraCredit" ${existing.extraCreditEnabled ? 'checked' : ''}>
+              Enable extra credit (scores above 100% shown as bonus)
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('gradeSettingsModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveGradeSettings()">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', modalHtml);
+}
+
+async function saveGradeSettings() {
+  const settings = {
+    courseId: activeCourseId,
+    aMin: parseFloat(document.getElementById('gs_aMin').value) || 90,
+    bMin: parseFloat(document.getElementById('gs_bMin').value) || 80,
+    cMin: parseFloat(document.getElementById('gs_cMin').value) || 70,
+    dMin: parseFloat(document.getElementById('gs_dMin').value) || 60,
+    curve: parseFloat(document.getElementById('gs_curve').value) || 0,
+    extraCreditEnabled: document.getElementById('gs_extraCredit').checked
+  };
+  const result = await supabaseUpsertGradeSettings(settings);
+  if (result) {
+    if (!appData.gradeSettings) appData.gradeSettings = [];
+    const idx = appData.gradeSettings.findIndex(gs => gs.courseId === activeCourseId);
+    if (idx >= 0) appData.gradeSettings[idx] = { id: result.id, ...settings };
+    else appData.gradeSettings.push({ id: result.id, ...settings });
+    closeModal('gradeSettingsModal');
+    renderGradebook();
+    showToast('Grade settings saved!', 'success');
+  }
 }
 
 // Manual grade entry modal
@@ -7519,6 +7734,321 @@ function toggleStudentView() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// DISCUSSION BOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let activeDiscussionThreadId = null; // null = thread list; string = thread detail
+
+function renderDiscussion() {
+  if (!activeCourseId) {
+    setText('discussionSubtitle', 'Select a course');
+    setHTML('discussionActions', '');
+    setHTML('discussionContent', '<div class="empty-state-text">No active course</div>');
+    return;
+  }
+  const course = getCourseById(activeCourseId);
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+
+  if (activeDiscussionThreadId) {
+    renderDiscussionThread(isStaffUser, course);
+  } else {
+    renderDiscussionList(isStaffUser, course);
+  }
+}
+
+function renderDiscussionList(isStaffUser, course) {
+  setText('discussionSubtitle', course.name);
+  setHTML('discussionActions', isStaffUser ? `
+    <button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">New Thread</button>
+  ` : `
+    <button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">Start Discussion</button>
+  `);
+
+  const threads = (appData.discussionThreads || [])
+    .filter(t => t.courseId === activeCourseId && (!t.hidden || isStaffUser))
+    .sort((a, b) => {
+      if (a.pinned !== b.pinned) return b.pinned ? 1 : -1;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+
+  if (threads.length === 0) {
+    setHTML('discussionContent', '<div class="empty-state"><div class="empty-state-title">No discussions yet</div><div class="empty-state-text">Be the first to start a conversation!</div></div>');
+    return;
+  }
+
+  const html = threads.map(t => {
+    const author = getUserById(t.authorId);
+    const replyCount = (t.replies || []).length;
+    return `
+      <div class="card" style="cursor:pointer; ${t.hidden ? 'opacity:0.6;' : ''}" onclick="openDiscussionThread('${t.id}')">
+        <div class="card-header">
+          <div style="flex:1;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              ${t.pinned ? '<span style="font-size:0.7rem; background:var(--primary); color:#fff; padding:2px 7px; border-radius:10px; font-weight:700; letter-spacing:0.05em;">PINNED</span>' : ''}
+              ${t.hidden ? '<span style="font-size:0.7rem; background:var(--warning,#f59e0b); color:#fff; padding:2px 7px; border-radius:10px; font-weight:700; letter-spacing:0.05em;">HIDDEN</span>' : ''}
+              <div class="card-title" style="margin:0;">${escapeHtml(t.title)}</div>
+            </div>
+            <div class="muted" style="font-size:0.85rem; margin-top:4px;">
+              ${escapeHtml(author?.name || 'Unknown')} · ${formatDate(t.createdAt)} · ${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}
+            </div>
+          </div>
+          ${isStaffUser ? `
+            <div style="display:flex; gap:6px;" onclick="event.stopPropagation()">
+              <button class="btn btn-secondary btn-sm" onclick="toggleDiscussionPin('${t.id}')">${t.pinned ? 'Unpin' : 'Pin'}</button>
+              <button class="btn btn-secondary btn-sm" onclick="toggleDiscussionHide('${t.id}')">${t.hidden ? 'Show' : 'Hide'}</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteDiscussionThread('${t.id}')">Delete</button>
+            </div>
+          ` : ''}
+        </div>
+        ${t.content ? `<div class="muted" style="margin-top:8px; white-space:pre-wrap; overflow:hidden; max-height:3.6em;">${escapeHtml(t.content.slice(0, 200))}${t.content.length > 200 ? '…' : ''}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  setHTML('discussionContent', html);
+}
+
+function renderDiscussionThread(isStaffUser, course) {
+  const thread = (appData.discussionThreads || []).find(t => t.id === activeDiscussionThreadId);
+  if (!thread) { activeDiscussionThreadId = null; renderDiscussion(); return; }
+
+  setText('discussionSubtitle', course.name + ' › ' + thread.title);
+  setHTML('discussionActions', `<button class="btn btn-secondary" onclick="closeDiscussionThread()">← All Threads</button>`);
+
+  const author = getUserById(thread.authorId);
+  const repliesHtml = (thread.replies || []).map(r => {
+    const rAuthor = getUserById(r.authorId);
+    const canDelete = isStaffUser || r.authorId === appData.currentUser.id;
+    return `
+      <div class="card" style="margin-bottom:8px; ${r.isAi ? 'border-color:var(--primary); background:var(--primary-light);' : ''}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div>
+            <strong>${escapeHtml(r.isAi ? 'AI Assistant' : (rAuthor?.name || 'Unknown'))}</strong>
+            ${r.isAi ? '<span style="font-size:0.75rem; background:var(--primary); color:#fff; padding:1px 6px; border-radius:8px; margin-left:6px;">AI</span>' : ''}
+            <span class="muted" style="font-size:0.85rem; margin-left:8px;">${formatDate(r.createdAt)}</span>
+          </div>
+          ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteDiscussionReply('${r.id}', '${thread.id}')">Delete</button>` : ''}
+        </div>
+        <div class="markdown-content" style="margin-top:8px;">${renderMarkdown(r.content)}</div>
+      </div>
+    `;
+  }).join('') || '<div class="muted" style="padding:12px 0;">No replies yet. Be the first to reply!</div>';
+
+  const isStudent = !isStaffUser;
+  setHTML('discussionContent', `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div>
+          <h2 style="margin:0 0 4px;">${escapeHtml(thread.title)}</h2>
+          <div class="muted">${escapeHtml(author?.name || 'Unknown')} · ${formatDate(thread.createdAt)}</div>
+        </div>
+        ${isStaffUser ? `
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-secondary btn-sm" onclick="toggleDiscussionPin('${thread.id}')">${thread.pinned ? 'Unpin' : 'Pin'}</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleDiscussionHide('${thread.id}')">${thread.hidden ? 'Show' : 'Hide'}</button>
+          </div>
+        ` : ''}
+      </div>
+      ${thread.content ? `<div class="markdown-content" style="margin-top:12px;">${renderMarkdown(thread.content)}</div>` : ''}
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <div style="font-weight:600; margin-bottom:8px;">${(thread.replies || []).length} Repl${(thread.replies || []).length === 1 ? 'y' : 'ies'}</div>
+      ${repliesHtml}
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Add Reply</div>
+      <textarea class="form-textarea" id="discussionReplyInput" rows="4" placeholder="Write your reply…"></textarea>
+      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="postDiscussionReply('${thread.id}')">Post Reply</button>
+        ${isStudent ? `<button class="btn btn-secondary" onclick="postDiscussionAiReply('${thread.id}')">Ask AI</button>` : ''}
+      </div>
+    </div>
+  `);
+}
+
+function openDiscussionThread(threadId) {
+  activeDiscussionThreadId = threadId;
+  renderDiscussion();
+}
+
+function closeDiscussionThread() {
+  activeDiscussionThreadId = null;
+  renderDiscussion();
+}
+
+function openCreateDiscussionThreadModal() {
+  if (!activeCourseId) return;
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+  const modalHtml = `
+    <div class="modal-overlay" id="discussionThreadModal" style="display:flex;">
+      <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+          <h2 class="modal-title">New Discussion Thread</h2>
+          <button class="modal-close" onclick="closeModal('discussionThreadModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Title *</label>
+            <input type="text" class="form-input" id="newThreadTitle" placeholder="Thread title…">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Content (optional)</label>
+            <textarea class="form-textarea" id="newThreadContent" rows="4" placeholder="Add context, question, or prompt…"></textarea>
+          </div>
+          ${isStaffUser ? `
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="newThreadPinned"> Pin this thread
+            </label>
+          </div>` : ''}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('discussionThreadModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="createDiscussionThread()">Create Thread</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const container = document.getElementById('modalsContainer');
+  container.insertAdjacentHTML('beforeend', modalHtml);
+  setTimeout(() => document.getElementById('newThreadTitle')?.focus(), 50);
+}
+
+async function createDiscussionThread() {
+  const title = document.getElementById('newThreadTitle')?.value.trim();
+  if (!title) { showToast('Thread title required', 'error'); return; }
+  const content = document.getElementById('newThreadContent')?.value.trim();
+  const pinned = document.getElementById('newThreadPinned')?.checked || false;
+
+  const thread = {
+    id: generateId(),
+    courseId: activeCourseId,
+    title,
+    content: content || null,
+    authorId: appData.currentUser.id,
+    createdAt: new Date().toISOString(),
+    pinned,
+    hidden: false,
+    replies: []
+  };
+
+  const result = await supabaseCreateDiscussionThread(thread);
+  if (!result) return;
+
+  if (!appData.discussionThreads) appData.discussionThreads = [];
+  appData.discussionThreads.unshift(thread);
+  closeModal('discussionThreadModal');
+  openDiscussionThread(thread.id);
+  showToast('Thread created!', 'success');
+}
+
+async function postDiscussionReply(threadId) {
+  const input = document.getElementById('discussionReplyInput');
+  const content = input?.value.trim();
+  if (!content) { showToast('Reply cannot be empty', 'error'); return; }
+
+  const reply = {
+    id: generateId(),
+    threadId,
+    content,
+    authorId: appData.currentUser.id,
+    isAi: false,
+    createdAt: new Date().toISOString()
+  };
+
+  const result = await supabaseCreateDiscussionReply(reply);
+  if (!result) return;
+
+  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+  if (thread) {
+    if (!thread.replies) thread.replies = [];
+    thread.replies.push(reply);
+  }
+  renderDiscussion();
+  showToast('Reply posted!', 'success');
+}
+
+async function postDiscussionAiReply(threadId) {
+  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+  if (!thread) return;
+
+  const questionInput = document.getElementById('discussionReplyInput');
+  const question = questionInput?.value.trim();
+  if (!question) { showToast('Please type your question to ask the AI', 'error'); return; }
+
+  const btn = document.querySelector('[onclick*="postDiscussionAiReply"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Thinking…'; }
+
+  try {
+    const course = getCourseById(activeCourseId);
+    const systemPrompt = `You are a helpful academic assistant for the course "${course?.name || 'this course'}". Answer the student's question clearly and concisely. Keep your response focused and educational.`;
+    const threadContext = `Discussion thread: "${thread.title}"\n${thread.content ? 'Thread content: ' + thread.content + '\n' : ''}Student question: ${question}`;
+
+    const contents = [{ role: 'user', parts: [{ text: systemPrompt + '\n\n' + threadContext }] }];
+    const response = await callGeminiAPIWithRetry(contents);
+    const aiText = response?.candidates?.[0]?.content?.parts?.[0]?.text || 'I was unable to generate a response.';
+
+    const aiReply = {
+      id: generateId(),
+      threadId,
+      content: aiText,
+      authorId: appData.currentUser.id,
+      isAi: true,
+      createdAt: new Date().toISOString()
+    };
+    await supabaseCreateDiscussionReply(aiReply);
+    if (thread.replies) thread.replies.push(aiReply);
+    if (questionInput) questionInput.value = '';
+    renderDiscussion();
+    showToast('AI response posted!', 'success');
+  } catch (err) {
+    showToast('Failed to get AI response', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Ask AI'; }
+  }
+}
+
+async function toggleDiscussionPin(threadId) {
+  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+  if (!thread) return;
+  thread.pinned = !thread.pinned;
+  const ok = await supabaseUpdateDiscussionThread(thread);
+  if (ok) renderDiscussion();
+}
+
+async function toggleDiscussionHide(threadId) {
+  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+  if (!thread) return;
+  thread.hidden = !thread.hidden;
+  const ok = await supabaseUpdateDiscussionThread(thread);
+  if (ok) renderDiscussion();
+}
+
+async function deleteDiscussionThread(threadId) {
+  if (!await showConfirmDialog('Delete this thread and all its replies?')) return;
+  const ok = await supabaseDeleteDiscussionThread(threadId);
+  if (ok) {
+    appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
+    if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
+    renderDiscussion();
+    showToast('Thread deleted', 'success');
+  }
+}
+
+async function deleteDiscussionReply(replyId, threadId) {
+  if (!await showConfirmDialog('Delete this reply?')) return;
+  const ok = await supabaseDeleteDiscussionReply(replyId);
+  if (ok) {
+    const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+    if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
+    renderDiscussion();
+    showToast('Reply deleted', 'success');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // AI OVERLAY PANEL
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -7541,6 +8071,17 @@ function toggleAiOverlay() {
   }
 }
 
+/**
+ * Navigate to a page and close the AI overlay — used in AI confirmation links
+ */
+function navigateAndClose(page) {
+  const overlay = document.getElementById('aiOverlay');
+  if (overlay) overlay.style.display = 'none';
+  const btn = document.getElementById('aiOverlayBtn');
+  if (btn) btn.classList.remove('active');
+  navigateTo(page);
+}
+
 function renderTopBarViewToggle() {
   const container = document.getElementById('viewToggleContainer');
   if (!container) return;
@@ -7558,7 +8099,7 @@ function renderTopBarViewToggle() {
     } else {
       container.innerHTML = `
         <button class="btn btn-secondary" onclick="toggleStudentView()" style="font-size:0.85rem; padding:6px 12px;">
-          Student View
+          View as Student
         </button>
       `;
     }
@@ -7611,6 +8152,7 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // Navigation, modals, and AI overlay
 window.navigateTo = navigateTo;
 window.toggleAiOverlay = toggleAiOverlay;
+window.navigateAndClose = navigateAndClose;
 window.openModal = openModal;
 window.closeModal = closeModal;
 window.openImportContentModal = openImportContentModal;
@@ -7806,6 +8348,7 @@ window.updatePeopleSearch = updatePeopleSearch;
 
 // File handling
 window.handleFilesDrop = handleFilesDrop;
+window.viewFile = viewFile;
 window.updateFileUploadPreview = updateFileUploadPreview;
 
 // Syllabus parsing
@@ -7815,12 +8358,253 @@ window.handleSyllabusParserDrop = handleSyllabusParserDrop;
 window.onSyllabusParserFileSelected = onSyllabusParserFileSelected;
 window.clearSyllabusParserUpload = clearSyllabusParserUpload;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUIZ TIME OVERRIDES (per-student time limits)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function openQuizTimeOverridesModal(quizId) {
+  const quiz = appData.quizzes.find(q => q.id === quizId);
+  if (!quiz) return;
+
+  const students = appData.enrollments
+    .filter(e => e.courseId === activeCourseId && e.role === 'student')
+    .map(e => getUserById(e.userId))
+    .filter(u => u)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const existingOverrides = (appData.quizTimeOverrides || []).filter(o => o.quizId === quizId);
+  const defaultLabel = quiz.timeLimit ? `${quiz.timeLimit} min (default)` : 'No limit (default)';
+
+  const rowsHtml = students.map(s => {
+    const override = existingOverrides.find(o => o.userId === s.id);
+    return `
+      <tr>
+        <td style="padding:8px;">${escapeHtml(s.name)}</td>
+        <td style="padding:8px;" class="muted">${defaultLabel}</td>
+        <td style="padding:8px;">
+          <input type="number" class="form-input" style="width:120px;" min="1" max="600"
+            id="qto_${s.id}" value="${override?.timeLimit || ''}" placeholder="min">
+        </td>
+        <td style="padding:8px;">
+          ${override ? `<button class="btn btn-danger btn-sm" onclick="removeQuizTimeOverride('${quizId}', '${s.id}')">Remove</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  const modalHtml = `
+    <div class="modal-overlay" id="quizTimeOverridesModal" style="display:flex;">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Time Overrides — ${escapeHtml(quiz.title)}</h2>
+          <button class="modal-close" onclick="closeModal('quizTimeOverridesModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:60vh; overflow-y:auto;">
+          ${students.length === 0 ? '<div class="muted">No students enrolled.</div>' : `
+            <p class="muted" style="margin-bottom:12px;">Set custom time limits for individual students. Leave blank to use the default. Set to 0 for unlimited time.</p>
+            <table style="width:100%; border-collapse:collapse;">
+              <thead><tr style="text-align:left;">
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Student</th>
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Default</th>
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Custom (minutes)</th>
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);"></th>
+              </tr></thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          `}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('quizTimeOverridesModal')">Close</button>
+          <button class="btn btn-primary" onclick="saveQuizTimeOverrides('${quizId}')">Save All</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', modalHtml);
+}
+
+async function saveQuizTimeOverrides(quizId) {
+  const students = appData.enrollments
+    .filter(e => e.courseId === activeCourseId && e.role === 'student')
+    .map(e => getUserById(e.userId))
+    .filter(u => u);
+
+  for (const s of students) {
+    const input = document.getElementById(`qto_${s.id}`);
+    if (!input || input.value === '') continue;
+    const timeLimit = parseInt(input.value, 10);
+    const override = { quizId, userId: s.id, timeLimit: timeLimit || null };
+    const result = await supabaseUpsertQuizTimeOverride(override);
+    if (result) {
+      if (!appData.quizTimeOverrides) appData.quizTimeOverrides = [];
+      const idx = appData.quizTimeOverrides.findIndex(o => o.quizId === quizId && o.userId === s.id);
+      if (idx >= 0) appData.quizTimeOverrides[idx].timeLimit = override.timeLimit;
+      else appData.quizTimeOverrides.push({ id: result.id, ...override });
+    }
+  }
+  closeModal('quizTimeOverridesModal');
+  showToast('Time overrides saved!', 'success');
+}
+
+async function removeQuizTimeOverride(quizId, userId) {
+  const ok = await supabaseDeleteQuizTimeOverride(quizId, userId);
+  if (ok) {
+    appData.quizTimeOverrides = (appData.quizTimeOverrides || []).filter(
+      o => !(o.quizId === quizId && o.userId === userId)
+    );
+    closeModal('quizTimeOverridesModal');
+    openQuizTimeOverridesModal(quizId);
+    showToast('Override removed', 'success');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEADLINE OVERRIDES (per-student deadlines)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function openDeadlineOverridesModal(assignmentId) {
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment) return;
+
+  const students = appData.enrollments
+    .filter(e => e.courseId === activeCourseId && e.role === 'student')
+    .map(e => getUserById(e.userId))
+    .filter(u => u)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const invitedEmails = (appData.invites || [])
+    .filter(i => i.courseId === activeCourseId && i.status === 'pending' && (!i.role || i.role === 'student'))
+    .map(i => ({ id: 'invited_' + i.id, name: i.email + ' (invited)', email: i.email }));
+
+  const allPeople = [...students, ...invitedEmails];
+  const existingOverrides = (appData.assignmentOverrides || []).filter(o => o.assignmentId === assignmentId);
+
+  const rowsHtml = allPeople.map(p => {
+    const override = existingOverrides.find(o => o.userId === p.id);
+    const defaultDue = assignment.dueDate ? assignment.dueDate.slice(0, 16) : '';
+    const overrideVal = override?.dueDate ? override.dueDate.slice(0, 16) : '';
+    return `
+      <tr>
+        <td style="padding:8px;">${escapeHtml(p.name)}</td>
+        <td style="padding:8px;" class="muted">${formatDate(assignment.dueDate)} (default)</td>
+        <td style="padding:8px;">
+          <input type="datetime-local" class="form-input" style="width:200px;"
+            id="override_${p.id}" value="${escapeHtml(overrideVal)}"
+            placeholder="${escapeHtml(defaultDue)}">
+        </td>
+        <td style="padding:8px;">
+          ${override ? `<button class="btn btn-danger btn-sm" onclick="removeDeadlineOverride('${assignmentId}', '${p.id}')">Remove</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  const modalHtml = `
+    <div class="modal-overlay" id="deadlineOverridesModal" style="display:flex;">
+      <div class="modal" style="max-width:750px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Deadline Overrides — ${escapeHtml(assignment.title)}</h2>
+          <button class="modal-close" onclick="closeModal('deadlineOverridesModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:60vh; overflow-y:auto;">
+          ${allPeople.length === 0 ? '<div class="muted">No students enrolled yet.</div>' : `
+            <p class="muted" style="margin-bottom:12px;">Set a custom deadline for individual students. Leave blank to use the default deadline.</p>
+            <table style="width:100%; border-collapse:collapse;">
+              <thead><tr style="text-align:left;">
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Student</th>
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Default Due Date</th>
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Custom Deadline</th>
+                <th style="padding:8px; border-bottom:1px solid var(--border-color);"></th>
+              </tr></thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          `}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('deadlineOverridesModal')">Close</button>
+          <button class="btn btn-primary" onclick="saveDeadlineOverrides('${assignmentId}')">Save All</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const container = document.getElementById('modalsContainer');
+  container.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+async function saveDeadlineOverrides(assignmentId) {
+  const students = appData.enrollments
+    .filter(e => e.courseId === activeCourseId && e.role === 'student')
+    .map(e => getUserById(e.userId))
+    .filter(u => u);
+  const invitedEmails = (appData.invites || [])
+    .filter(i => i.courseId === activeCourseId && i.status === 'pending' && (!i.role || i.role === 'student'))
+    .map(i => ({ id: 'invited_' + i.id }));
+  const allPeople = [...students, ...invitedEmails];
+
+  for (const p of allPeople) {
+    const input = document.getElementById(`override_${p.id}`);
+    if (!input) continue;
+    const val = input.value;
+    if (val) {
+      const override = { assignmentId, userId: p.id, dueDate: new Date(val).toISOString() };
+      const result = await supabaseUpsertAssignmentOverride(override);
+      if (result) {
+        if (!appData.assignmentOverrides) appData.assignmentOverrides = [];
+        const idx = appData.assignmentOverrides.findIndex(o => o.assignmentId === assignmentId && o.userId === p.id);
+        if (idx >= 0) appData.assignmentOverrides[idx].dueDate = override.dueDate;
+        else appData.assignmentOverrides.push({ id: result.id, ...override });
+      }
+    }
+  }
+  closeModal('deadlineOverridesModal');
+  showToast('Overrides saved!', 'success');
+}
+
+async function removeDeadlineOverride(assignmentId, userId) {
+  const ok = await supabaseDeleteAssignmentOverride(assignmentId, userId);
+  if (ok) {
+    appData.assignmentOverrides = (appData.assignmentOverrides || []).filter(
+      o => !(o.assignmentId === assignmentId && o.userId === userId)
+    );
+    closeModal('deadlineOverridesModal');
+    openDeadlineOverridesModal(assignmentId);
+    showToast('Override removed', 'success');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Utility functions
 window.debugAuthState = debugAuthState;
 window.viewSubmissionHistory = viewSubmissionHistory;
 window.scrollAiThreadToBottom = scrollAiThreadToBottom;
 window.updateAiActionField = updateAiActionField;
 window.rejectAiAction = rejectAiAction;
+
+// Grade settings
+window.openGradeSettingsModal = openGradeSettingsModal;
+window.saveGradeSettings = saveGradeSettings;
+
+// Quiz time overrides
+window.openQuizTimeOverridesModal = openQuizTimeOverridesModal;
+window.saveQuizTimeOverrides = saveQuizTimeOverrides;
+window.removeQuizTimeOverride = removeQuizTimeOverride;
+
+// Deadline overrides
+window.openDeadlineOverridesModal = openDeadlineOverridesModal;
+window.saveDeadlineOverrides = saveDeadlineOverrides;
+window.removeDeadlineOverride = removeDeadlineOverride;
+
+// Discussion board
+window.openDiscussionThread = openDiscussionThread;
+window.closeDiscussionThread = closeDiscussionThread;
+window.openCreateDiscussionThreadModal = openCreateDiscussionThreadModal;
+window.createDiscussionThread = createDiscussionThread;
+window.postDiscussionReply = postDiscussionReply;
+window.postDiscussionAiReply = postDiscussionAiReply;
+window.toggleDiscussionPin = toggleDiscussionPin;
+window.toggleDiscussionHide = toggleDiscussionHide;
+window.deleteDiscussionThread = deleteDiscussionThread;
+window.deleteDiscussionReply = deleteDiscussionReply;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EVENT LISTENERS
