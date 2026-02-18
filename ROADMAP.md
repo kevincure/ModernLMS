@@ -335,3 +335,32 @@ Track these to measure if the LMS is working:
 ---
 
 *This roadmap is a living document. Prioritize based on user feedback and real teaching needs.*
+
+---
+
+## Pending Integrations (Added)
+
+### Pangram AI / Turnitin
+Integrate with Pangram AI or Turnitin for AI-generated content detection and plagiarism analysis on student submissions. Hook into the submission flow so results appear alongside the grade panel in `gradeSubmission()`.
+
+### Autograding
+Support automated grading for code submissions (Gradescope-style or custom test runners). Define test cases per assignment, run them against submitted files server-side via an edge function, and write scores back to the `grades` table automatically.
+
+### Common Cartridge (IMS CC) Transfer
+Import and export courses in IMS Common Cartridge 1.3 format for compatibility with Canvas, Blackboard, Moodle, etc. The import modal skeleton already exists (`openImportContentModal`); needs full CC XML parsing and mapping to the app data model.
+
+### Process File Text for AI Context
+Extract text from uploaded course files (PDF via PDF.js, DOCX via mammoth.js, TXT directly) and pass extracted content into `buildAiContext()` so the AI assistant can answer questions about course readings. Needs either client-side parsing or a server-side edge function writing to a `file_text` column on the `files` table.
+
+## Accessibility Remediation (WCAG 2.1 AA)
+
+Audit findings — none are launch blockers but should be addressed before a public release:
+
+- **Focus-visible outlines** — `.tool-btn` and `.btn` need an explicit `outline` on `:focus-visible`; currently relying on browser default which some resets strip
+- **Color contrast** — `var(--text-muted)` on white background is ~3.8:1; needs to reach 4.5:1 for body-size text; audit all `.muted` / `.hint` text
+- **Toast announcements** — `#toast` has `role="status"`; verify it re-announces on repeated messages (may need a DOM swap trick to force re-read)
+- **Toolbar keyboard nav** — arrow keys should move focus between `.tool-btn` items; currently only Tab cycles through them
+- **`aria-expanded`** — dropdowns (new-assignment dropdown, etc.) need `aria-expanded` toggled on open/close
+- **Modal focus trap** — `openModal()` does not trap Tab focus inside the overlay; Tab can escape to background content
+- **Form `aria-describedby`** — inputs with `.hint` text beneath them should link to that hint via `aria-describedby`
+- **Video embed titles** — YouTube `<iframe>` elements need a `title` attribute; no caption or transcript support yet
