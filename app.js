@@ -1263,6 +1263,7 @@ function renderCourses() {
             <button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>
             ${c.role === 'instructor' ? `
               <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="openCloneCourseModal('${c.id}')">Clone</button>
             ` : ''}
           </div>
         </div>
@@ -1272,6 +1273,188 @@ function renderCourses() {
   }).join('');
   
   setHTML('coursesList', html);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLONE COURSE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let cloneSourceCourseId = null;
+
+function openCloneCourseModal(courseId) {
+  cloneSourceCourseId = courseId;
+  const source = getCourseById(courseId);
+  if (!source) return;
+  ensureModalsRendered();
+  const nameEl = document.getElementById('cloneCourseNameInput');
+  const codeEl = document.getElementById('cloneCourseCodeInput');
+  const infoEl = document.getElementById('cloneCourseSourceInfo');
+  if (nameEl) nameEl.value = `${source.name} (Copy)`;
+  if (codeEl) codeEl.value = `${source.code}-COPY`;
+  if (infoEl) infoEl.textContent = `Cloning from: ${source.name} (${source.code})`;
+  openModal('cloneCourseModal');
+}
+
+async function cloneCourse() {
+  const name = document.getElementById('cloneCourseNameInput')?.value.trim();
+  const code = document.getElementById('cloneCourseCodeInput')?.value.trim();
+  const cloneAssignments = document.getElementById('cloneAssignments')?.checked !== false;
+  const cloneQuizzes = document.getElementById('cloneQuizzes')?.checked !== false;
+  const cloneModules = document.getElementById('cloneModules')?.checked !== false;
+  const cloneQBanks = document.getElementById('cloneQBanks')?.checked !== false;
+  const cloneAnnouncements = document.getElementById('cloneAnnouncements')?.checked || false;
+
+  if (!name || !code) {
+    showToast('Please fill in course name and code', 'error');
+    return;
+  }
+
+  const source = getCourseById(cloneSourceCourseId);
+  if (!source) { showToast('Source course not found', 'error'); return; }
+
+  const newCourseId = generateId();
+  const newInviteCode = generateInviteCode();
+
+  const newCourse = {
+    id: newCourseId,
+    name,
+    code,
+    description: source.description || '',
+    inviteCode: newInviteCode,
+    createdBy: appData.currentUser.id,
+    startHereTitle: source.startHereTitle || 'Start Here',
+    startHereContent: source.startHereContent || `Welcome to ${name}.`,
+    active: false // hidden until instructor is ready
+  };
+
+  await supabaseCreateCourse(newCourse);
+  appData.courses.push(newCourse);
+
+  const enrollment = { userId: appData.currentUser.id, courseId: newCourseId, role: 'instructor' };
+  await supabaseCreateEnrollment(enrollment);
+  appData.enrollments.push(enrollment);
+
+  // Build ID maps for cross-referencing
+  const assignmentIdMap = {};
+  const quizIdMap = {};
+  const bankIdMap = {};
+
+  // Clone question banks first (quizzes may reference them)
+  if (cloneQBanks) {
+    const banks = (appData.questionBanks || []).filter(b => b.courseId === cloneSourceCourseId);
+    for (const bank of banks) {
+      const newBankId = generateId();
+      bankIdMap[bank.id] = newBankId;
+      const newBank = {
+        id: newBankId,
+        courseId: newCourseId,
+        name: bank.name,
+        questions: (bank.questions || []).map(q => ({ ...q, id: generateId(), bankId: newBankId })),
+        createdAt: new Date().toISOString()
+      };
+      if (!appData.questionBanks) appData.questionBanks = [];
+      await supabaseCreateQuestionBank(newBank);
+      appData.questionBanks.push(newBank);
+    }
+  }
+
+  // Clone assignments
+  if (cloneAssignments) {
+    const assignments = (appData.assignments || []).filter(a => a.courseId === cloneSourceCourseId);
+    for (const a of assignments) {
+      const newId = generateId();
+      assignmentIdMap[a.id] = newId;
+      const newAssignment = {
+        ...a,
+        id: newId,
+        courseId: newCourseId,
+        status: 'draft',
+        dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
+        createdAt: new Date().toISOString(),
+        // remap question bank if cloned
+        questionBankId: a.questionBankId && bankIdMap[a.questionBankId] ? bankIdMap[a.questionBankId] : a.questionBankId
+      };
+      await supabaseCreateAssignment(newAssignment);
+      appData.assignments.push(newAssignment);
+    }
+  }
+
+  // Clone quizzes
+  if (cloneQuizzes) {
+    const quizzes = (appData.quizzes || []).filter(q => q.courseId === cloneSourceCourseId);
+    for (const q of quizzes) {
+      const newId = generateId();
+      quizIdMap[q.id] = newId;
+      const newQuiz = {
+        ...q,
+        id: newId,
+        courseId: newCourseId,
+        status: 'draft',
+        dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
+        createdAt: new Date().toISOString(),
+        questions: (q.questions || []).map(qq => ({ ...qq, id: generateId() }))
+      };
+      await supabaseCreateQuiz(newQuiz);
+      appData.quizzes.push(newQuiz);
+    }
+  }
+
+  // Clone announcements (as drafts/hidden)
+  if (cloneAnnouncements) {
+    const announcements = (appData.announcements || []).filter(a => a.courseId === cloneSourceCourseId);
+    for (const ann of announcements) {
+      const newAnn = {
+        ...ann,
+        id: generateId(),
+        courseId: newCourseId,
+        hidden: true,
+        pinned: false,
+        authorId: appData.currentUser.id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await supabaseCreateAnnouncement(newAnn);
+      appData.announcements.push(newAnn);
+    }
+  }
+
+  // Clone modules (and remap item references)
+  if (cloneModules) {
+    const modules = (appData.modules || []).filter(m => m.courseId === cloneSourceCourseId)
+      .sort((a, b) => a.position - b.position);
+    for (const mod of modules) {
+      const newMod = {
+        id: generateId(),
+        courseId: newCourseId,
+        name: mod.name,
+        position: mod.position,
+        hidden: mod.hidden || false,
+        items: []
+      };
+      await supabaseCreateModule(newMod);
+      // Clone items, remapping IDs
+      for (const item of (mod.items || [])) {
+        let newRefId = item.refId;
+        if (item.type === 'assignment' && assignmentIdMap[item.refId]) newRefId = assignmentIdMap[item.refId];
+        if (item.type === 'quiz' && quizIdMap[item.refId]) newRefId = quizIdMap[item.refId];
+        const newItem = {
+          id: generateId(),
+          type: item.type,
+          refId: newRefId,
+          title: item.title,
+          url: item.url,
+          position: item.position
+        };
+        await supabaseCreateModuleItem(newItem, newMod.id);
+        newMod.items.push(newItem);
+      }
+      appData.modules.push(newMod);
+    }
+  }
+
+  closeModal('cloneCourseModal');
+  renderCourses();
+  showToast(`Course "${name}" created successfully! It's hidden from students until you publish it.`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2359,8 +2542,10 @@ function renderCalendar() {
   
   const course = getCourseById(activeCourseId);
   setText('calendarSubtitle', course.name);
-  setHTML('calendarActions', '');
-  
+  setHTML('calendarActions', `
+    <button class="btn btn-secondary" onclick="exportCalendarICS()">Export .ics</button>
+  `);
+
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
   const now = new Date();
   const start = new Date();
@@ -2414,6 +2599,65 @@ function renderCalendar() {
   setHTML('calendarList', html);
 }
 
+function exportCalendarICS() {
+  if (!activeCourseId) return;
+  const course = getCourseById(activeCourseId);
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+
+  const items = [
+    ...(appData.assignments || [])
+      .filter(a => a.courseId === activeCourseId && (isStaffUser || a.status === 'published') && a.dueDate)
+      .map(a => ({ title: `[Assignment] ${a.title}`, date: new Date(a.dueDate), description: a.description || '' })),
+    ...(appData.quizzes || [])
+      .filter(q => q.courseId === activeCourseId && (isStaffUser || q.status === 'published') && q.dueDate)
+      .map(q => ({ title: `[Quiz] ${q.title}`, date: new Date(q.dueDate), description: q.description || '' }))
+  ];
+
+  function icsDate(d) {
+    return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  }
+
+  function icsEscape(s) {
+    return (s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  }
+
+  const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}@modernlms`;
+
+  const events = items.map(item => {
+    const start = icsDate(item.date);
+    const end = icsDate(new Date(item.date.getTime() + 3600000)); // 1 hour duration
+    return [
+      'BEGIN:VEVENT',
+      `UID:${uid()}`,
+      `DTSTAMP:${icsDate(new Date())}`,
+      `DTSTART:${start}`,
+      `DTEND:${end}`,
+      `SUMMARY:${icsEscape(item.title)}`,
+      item.description ? `DESCRIPTION:${icsEscape(item.description.slice(0, 500))}` : '',
+      'END:VEVENT'
+    ].filter(Boolean).join('\r\n');
+  }).join('\r\n');
+
+  const icsContent = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//ModernLMS//EN',
+    `X-WR-CALNAME:${icsEscape(course.name)}`,
+    'CALSCALE:GREGORIAN',
+    events,
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${(course.code || 'course').replace(/\s+/g, '_')}_calendar.ics`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Calendar exported!', 'success');
+}
+
 async function createAssignment() {
   const title = document.getElementById('assignmentTitle').value.trim();
   const description = document.getElementById('assignmentDescription').value.trim();
@@ -2424,6 +2668,7 @@ async function createAssignment() {
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
   const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
+  const blindGrading = document.getElementById('assignmentBlindGrading')?.checked || false;
 
   if (!title || !description || !points || !dueDate) {
     showToast('Please fill in all required fields', 'error');
@@ -2444,6 +2689,7 @@ async function createAssignment() {
     allowLateSubmissions: allowLate,
     lateDeduction: lateDeduction,
     allowResubmission: allowResubmit,
+    blindGrading: blindGrading,
     rubric: null
   };
 
@@ -4762,18 +5008,25 @@ function renderSpeedGrader() {
     <button class="btn btn-secondary" onclick="speedGraderNext()" ${currentSpeedGraderStudentIndex === speedGraderStudents.length - 1 ? 'disabled' : ''}>Next →</button>
   `;
 
-  // Student selector dropdown
+  // Student selector dropdown — anonymize if blind grading
+  const isBlindForDropdown = !!assignment.blindGrading;
   document.getElementById('speedGraderStudentSelect').innerHTML = speedGraderStudents.map((s, i) => {
     const status = s.grade ? '✓' : (s.submission ? '○' : '—');
-    return `<option value="${i}" ${i === currentSpeedGraderStudentIndex ? 'selected' : ''}>${status} ${s.user ? s.user.name : 'Unknown'}</option>`;
+    const label = isBlindForDropdown ? `Student ${i + 1}` : (s.user ? s.user.name : 'Unknown');
+    return `<option value="${i}" ${i === currentSpeedGraderStudentIndex ? 'selected' : ''}>${status} ${label}</option>`;
   }).join('');
 
-  // Student info
+  // Student info — hide identity if blind grading is enabled
+  const isBlind = !!assignment.blindGrading;
+  const displayName = isBlind ? `Student ${currentSpeedGraderStudentIndex + 1} (Anonymous)` : (student ? student.name : 'Unknown Student');
+  const displayEmail = isBlind ? '' : (student ? student.email : '');
+  const displayAvatar = isBlind ? '🙈' : (student ? student.avatar : '?');
   document.getElementById('speedGraderStudentInfo').innerHTML = `
-    <div class="user-avatar" style="width:48px; height:48px; font-size:1.2rem;">${student ? student.avatar : '?'}</div>
+    <div class="user-avatar" style="width:48px; height:48px; font-size:1.2rem;">${displayAvatar}</div>
     <div>
-      <div style="font-weight:600; font-size:1.1rem;">${student ? student.name : 'Unknown Student'}</div>
-      <div class="muted">${student ? student.email : ''}</div>
+      <div style="font-weight:600; font-size:1.1rem;">${displayName}</div>
+      ${displayEmail ? `<div class="muted">${displayEmail}</div>` : ''}
+      ${isBlind ? '<div class="muted" style="font-size:0.8rem;">🙈 Blind grading — student identity hidden</div>' : ''}
     </div>
   `;
 
@@ -5252,35 +5505,38 @@ function renderStaffGradebook() {
   
   statsHTML += '</div></div>';
   
+  // For the gradebook header, flag which assignments have blind grading on
   const table = `
     <div style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse;">
         <thead>
           <tr style="background:var(--bg-color); border-bottom:2px solid var(--border-color);">
             <th style="padding:12px; text-align:left; position:sticky; left:0; background:var(--bg-color);">Student</th>
-            ${assignments.map(a => `<th style="padding:12px; text-align:center; min-width:120px;">${a.title}<br><span class="muted" style="font-weight:normal;">(${a.points}pts)</span></th>`).join('')}
+            ${assignments.map(a => `<th style="padding:12px; text-align:center; min-width:120px;">${a.title}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${a.points}pts)</span></th>`).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">Percentage</th>
           </tr>
         </thead>
         <tbody>
-          ${students.map(student => {
+          ${students.map((student, studentIdx) => {
             let totalScore = 0;
             let totalPoints = 0;
-            
+
             const row = `
               <tr style="border-bottom:1px solid var(--border-light);">
                 <td style="padding:12px; position:sticky; left:0; background:var(--bg-card);">${student.name}</td>
                 ${assignments.map(a => {
                   const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === student.id);
                   const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
+                  // Blind grading: use anonymous ID in click handler label but real IDs in function call
+                  const displayName = a.blindGrading ? `Student ${studentIdx + 1}` : student.name;
 
                   if (grade) {
                     totalScore += grade.score;
                     totalPoints += a.points;
-                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade">${grade.score} ${grade.released ? '' : '🔒'}</td>`;
+                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${grade.score} ${grade.released ? '' : '🔒'}</td>`;
                   }
-                  return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade">—</td>`;
+                  return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
                 <td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? `${totalScore}/${totalPoints}` : '—'}</td>
                 <td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? ((totalScore / totalPoints) * 100).toFixed(1) + '%' : '—'}</td>
@@ -5291,7 +5547,7 @@ function renderStaffGradebook() {
         </tbody>
       </table>
     </div>
-    <div class="muted" style="margin-top:12px; font-size:0.85rem;">🔒 = Grade not yet released to student</div>
+    <div class="muted" style="margin-top:12px; font-size:0.85rem;">🔒 = Grade not yet released to student · 🙈 = Blind grading enabled</div>
   `;
   
   setHTML('gradebookWrap', statsHTML + table);
@@ -7457,6 +7713,13 @@ window.revokeInvite = revokeInvite;
 // Settings
 window.saveSettings = saveSettings;
 window.openEditCourseModal = openEditCourseModal;
+
+// Clone course
+window.openCloneCourseModal = openCloneCourseModal;
+window.cloneCourse = cloneCourse;
+
+// Calendar export
+window.exportCalendarICS = exportCalendarICS;
 
 // Editor toolbar and insert
 window.insertLink = insertLink;
