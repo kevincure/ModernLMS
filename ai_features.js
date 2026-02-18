@@ -24,6 +24,7 @@ import { AI_PROMPTS, AI_CONFIG } from './constants.js';
 
 let appData = null;
 let activeCourseId = null;
+let studentViewMode = false;
 let aiThread = [];
 let aiProcessing = false;
 let aiDraft = null;
@@ -66,6 +67,14 @@ export function initAiModule(deps) {
  */
 export function setActiveCourse(courseId) {
   activeCourseId = courseId;
+}
+
+/**
+ * Set student view mode — when true the AI behaves as if the user is a student
+ * (no content creation even for instructor accounts)
+ */
+export function setStudentViewMode(mode) {
+  studentViewMode = !!mode;
 }
 
 /**
@@ -188,12 +197,21 @@ export function buildAiContext() {
         });
       }
 
-      // Add modules
+      // Add modules — include IDs and item details so AI can reference exact modules/items
       const modules = appData.modules?.filter(m => m.courseId === activeCourseId) || [];
       if (modules.length > 0) {
         context += `\nCOURSE MODULES (${modules.length}):\n`;
         modules.forEach(m => {
-          context += `- ${m.name} (${m.items?.length || 0} items)\n`;
+          context += `- ID: ${m.id} | Name: "${m.name}" (${m.items?.length || 0} items)\n`;
+          (m.items || []).forEach(item => {
+            let refTitle = item.title || '';
+            if (item.refId && !refTitle) {
+              if (item.type === 'assignment') refTitle = (appData.assignments || []).find(a => a.id === item.refId)?.title || '';
+              else if (item.type === 'quiz') refTitle = (appData.quizzes || []).find(q => q.id === item.refId)?.title || '';
+              else if (item.type === 'file') refTitle = (appData.files || []).find(f => f.id === item.refId)?.name || '';
+            }
+            context += `  - Item ID: ${item.id} | type: ${item.type}${item.refId ? ` | refId: ${item.refId}` : ''}${refTitle ? ` | title: "${refTitle}"` : ''}\n`;
+          });
         });
       }
     }
@@ -381,6 +399,8 @@ export async function sendAiMessage(audioBase64 = null) {
   updateAiProcessingState();
 
   const isStaffUser = activeCourseId && isStaffCallback && isStaffCallback(appData.currentUser.id, activeCourseId);
+  // In student-preview mode, AI behaves as student (no content creation) even for instructors
+  const effectiveIsStaff = isStaffUser && !studentViewMode;
 
   // Use enhanced context builder
   const context = buildAiContext();
@@ -393,7 +413,7 @@ export async function sendAiMessage(audioBase64 = null) {
     return '';
   }).filter(Boolean).join('\n');
 
-  const systemPrompt = AI_PROMPTS.chatAssistant(isStaffUser, context, conversationContext);
+  const systemPrompt = AI_PROMPTS.chatAssistant(effectiveIsStaff, context, conversationContext);
 
   aiThread.push({ role: 'user', content: audioBase64 ? '🎤 Voice message' : message });
   if (!audioBase64 && input) input.value = '';
@@ -795,6 +815,60 @@ export function updateAiActionField(idx, field, value) {
 }
 
 /**
+ * Generate a natural-language confirmation message after an AI action succeeds.
+ */
+function generateActionConfirmation(msg, publish = false) {
+  const d = msg.data || {};
+  const wasPublished = publish || d.status === 'published';
+  const pubNote = wasPublished ? ' It\'s now **published** and visible to students.' : ' It\'s saved as a **draft** — you can publish it anytime.';
+
+  switch (msg.actionType) {
+    case 'announcement':
+      return `Done! Created announcement **"${d.title || 'Untitled'}"**${d.pinned ? ' and pinned it to the top' : ''}.${pubNote}`;
+    case 'announcement_update':
+      return `Done! Updated the announcement **"${d.title || 'that announcement'}"**.`;
+    case 'announcement_delete':
+      return `Done! The announcement has been permanently deleted.`;
+    case 'announcement_publish':
+      return `Done! The announcement is now **published** and visible to students.`;
+    case 'announcement_pin':
+      return `Done! The announcement has been **${d.pinned !== false ? 'pinned' : 'unpinned'}**.`;
+    case 'assignment':
+      return `Done! Created assignment **"${d.title || 'Untitled'}"** (${d.points || 100} pts, due ${d.dueDate ? new Date(d.dueDate).toLocaleDateString() : 'as set'}).${pubNote}`;
+    case 'assignment_update':
+      return `Done! Updated assignment **"${d.title || 'that assignment'}"**.`;
+    case 'assignment_delete':
+      return `Done! The assignment has been permanently deleted.`;
+    case 'quiz':
+    case 'quiz_from_bank':
+      return `Done! Created quiz/exam **"${d.title || 'Untitled'}"**.${pubNote}`;
+    case 'quiz_update':
+      return `Done! Updated quiz **"${d.title || 'that quiz'}"**.`;
+    case 'quiz_delete':
+      return `Done! The quiz has been permanently deleted.`;
+    case 'module':
+      return `Done! Created module **"${d.name || 'Untitled'}"**. You can add content to it from the Modules page.`;
+    case 'module_add_item':
+      return `Done! Added **"${d.itemTitle || 'the item'}"** to module **"${d.moduleName || d.moduleId}"**.`;
+    case 'module_remove_item':
+      return `Done! Removed **"${d.itemTitle || 'the item'}"** from the module.`;
+    case 'module_move_item':
+      return `Done! Moved **"${d.itemTitle || 'the item'}"** to **"${d.toModuleName || 'the new module'}"**.`;
+    case 'invite_create': {
+      const count = Array.isArray(d.emails) ? d.emails.length : 1;
+      const emailList = Array.isArray(d.emails) ? d.emails.join(', ') : (d.emails || '');
+      return `Done! Sent ${count} invitation${count !== 1 ? 's' : ''} to **${emailList}** as ${d.role || 'student'}.`;
+    }
+    case 'invite_revoke':
+      return `Done! The invitation for **${d.email || 'that person'}** has been revoked.`;
+    case 'course_visibility':
+      return `Done! The course is now **${d.visible !== false ? 'visible to students' : 'hidden from students'}**.`;
+    default:
+      return `Done! The action was completed successfully.`;
+  }
+}
+
+/**
  * Confirm and execute an AI action
  */
 export async function confirmAiAction(idx, publish = false) {
@@ -815,7 +889,10 @@ export async function confirmAiAction(idx, publish = false) {
         return;
       }
     }
-    showToast('AI pipeline executed successfully', 'success');
+    msg.confirmed = true;
+    aiThread.push({ role: 'assistant', content: `Done! I completed all ${(msg.data.steps || []).length} steps in the pipeline successfully.` });
+    renderAiThread();
+    return;
   } else {
     const operation = { action: msg.actionType, ...msg.data };
     const missing = getMissingPublishRequirements(operation, publish);
@@ -829,6 +906,7 @@ export async function confirmAiAction(idx, publish = false) {
   }
 
   msg.confirmed = true;
+  aiThread.push({ role: 'assistant', content: generateActionConfirmation(msg, publish) });
   renderAiThread();
 }
 
