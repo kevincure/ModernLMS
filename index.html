@@ -85,7 +85,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-8 0"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
       </button>
 
-      <button class="tool-btn" data-page="ai" onclick="navigateTo('ai')" title="AI" aria-label="AI">
+      <button class="tool-btn" id="aiOverlayBtn" onclick="toggleAiOverlay()" title="AI Assistant" aria-label="AI Assistant">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><path d="M7 7h10v10H7z"/></svg>
       </button>
 
@@ -272,35 +272,13 @@
         </div>
       </section>
 
-      <!-- AI -->
-      <section class="page" id="page-ai">
-        <div class="page-header">
-          <div>
-            <h1 class="page-title">AI Assistant</h1>
-            <div class="page-subtitle" id="aiSubtitle">Ask questions or create announcements, quizzes, and more</div>
-          </div>
-        </div>
-        <div class="page-body ai-page-body">
-          <div class="ai-thread-container">
-            <div class="ai-thread" id="aiThread"></div>
-          </div>
-          <div class="ai-composer-fixed">
-            <div class="ai-composer-row">
-              <textarea class="form-textarea ai-input" id="aiInput" placeholder="Ask a question..." rows="2"></textarea>
-              <div class="ai-composer-buttons">
-                <button class="btn btn-secondary" id="aiRecordBtn" onclick="toggleAiRecording()">
-                  <span id="aiRecordIcon">🎤</span> <span id="aiRecordText" class="ai-btn-text">Record</span>
-                </button>
-                <button class="btn btn-primary" id="aiSendBtn" onclick="sendAiMessage()">
-                  <span id="aiProcessingSpinner" class="ai-spinner-small" style="display:none;"></span>
-                  Send
-                </button>
-              </div>
-            </div>
-            <div class="muted ai-hint">
-              Press Enter to send, or use voice input
-            </div>
-          </div>
+      <!-- AI page is now an overlay panel; this section is a stub -->
+      <section class="page" id="page-ai" style="display:flex; align-items:center; justify-content:center;">
+        <div style="text-align:center; color:var(--text-muted);">
+          <div style="font-size:2.5rem; margin-bottom:16px;">🤖</div>
+          <div style="font-size:1.1rem; font-weight:500; margin-bottom:8px;">AI Assistant</div>
+          <div style="margin-bottom:20px;">Available as a panel overlay from any page.</div>
+          <button class="btn btn-primary" onclick="toggleAiOverlay()">Open AI Panel</button>
         </div>
       </section>
     </main>
@@ -309,6 +287,50 @@
   <!-- Modals + toast -->
   <div id="modalsContainer"></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- AI Overlay Panel — appears over any page -->
+  <div id="aiOverlay" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:800; pointer-events:none;">
+    <!-- Translucent backdrop (click outside to close) -->
+    <div onclick="toggleAiOverlay()"
+         style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.08); pointer-events:all;"></div>
+    <!-- Sliding panel -->
+    <div style="position:absolute; right:0; top:0; bottom:0; width:440px; max-width:100vw;
+                background:rgba(255,255,255,0.97); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+                border-left:1px solid var(--border-color); display:flex; flex-direction:column;
+                pointer-events:all; box-shadow:-4px 0 32px rgba(0,0,0,0.12);">
+      <!-- Header -->
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px;
+                  border-bottom:1px solid var(--border-light); flex-shrink:0;">
+        <div>
+          <div style="font-weight:600; font-size:1rem;">AI Assistant</div>
+          <div class="muted" style="font-size:0.78rem;" id="aiSubtitle">Ask questions or create content</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="toggleAiOverlay()" style="padding:4px 10px;">✕ Close</button>
+      </div>
+      <!-- Thread -->
+      <div style="flex:1; overflow-y:auto; padding:16px;">
+        <div class="ai-thread" id="aiThread"></div>
+      </div>
+      <!-- Composer -->
+      <div style="flex-shrink:0; padding:10px 14px; border-top:1px solid var(--border-light);">
+        <div class="ai-composer-row">
+          <textarea class="form-textarea ai-input" id="aiInput"
+                    placeholder="Ask a question or say 'create an announcement about...'" rows="2"
+                    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.sendAiMessage();}"></textarea>
+          <div class="ai-composer-buttons">
+            <button class="btn btn-secondary btn-sm" id="aiRecordBtn" onclick="toggleAiRecording()">
+              <span id="aiRecordIcon">🎤</span> <span id="aiRecordText" class="ai-btn-text">Record</span>
+            </button>
+            <button class="btn btn-primary btn-sm" id="aiSendBtn" onclick="window.sendAiMessage()">
+              <span id="aiProcessingSpinner" class="ai-spinner-small" style="display:none;"></span>
+              Send
+            </button>
+          </div>
+        </div>
+        <div class="muted ai-hint" style="font-size:0.75rem; margin-top:4px;">Enter to send · Shift+Enter for new line</div>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="app.js"></script>
 </body>

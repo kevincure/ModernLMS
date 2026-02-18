@@ -96,9 +96,11 @@ import {
   confirmAiAction,
   buildAiContext,
   renderAiThread,
+  clearAiThread,
   draftGradeWithAI,
   generateAiDraft,
-  setActiveCourse as setAIActiveCourseId
+  setActiveCourse as setAIActiveCourseId,
+  setStudentViewMode as setAIStudentViewMode
 } from './ai_features.js';
 
 // Quiz Logic - quiz creation, taking, grading
@@ -324,6 +326,7 @@ function updateModuleActiveCourse(courseId) {
  */
 function updateModuleStudentViewMode(mode) {
   setFileStudentViewMode(mode);
+  setAIStudentViewMode(mode);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1216,10 +1219,20 @@ function navigateTo(page) {
   const pageEl = document.getElementById(`page-${page}`);
   if (pageEl) pageEl.classList.add('active');
 
-  // Clear AI thread when leaving AI page
-  if (page !== 'ai' && aiThread.length > 0) {
-    aiThread = [];
-    renderAiThread();
+  // Re-render the target page to pick up any data changes since last visit
+  if (appData.currentUser) {
+    const pageRenders = {
+      courses:     renderCourses,
+      home:        renderHome,
+      updates:     renderUpdates,
+      assignments: renderAssignments,
+      calendar:    renderCalendar,
+      modules:     renderModules,
+      files:       renderFiles,
+      gradebook:   renderGradebook,
+      people:      renderPeople,
+    };
+    if (pageRenders[page]) pageRenders[page]();
   }
 }
 
@@ -1323,8 +1336,7 @@ async function cloneCourse() {
     inviteCode: newInviteCode,
     createdBy: appData.currentUser.id,
     startHereTitle: source.startHereTitle || 'Start Here',
-    startHereContent: source.startHereContent || `Welcome to ${name}.`,
-    active: false // hidden until instructor is ready
+    startHereContent: source.startHereContent || `Welcome to ${name}.`
   };
 
   await supabaseCreateCourse(newCourse);
@@ -1924,10 +1936,14 @@ function renderHome() {
     setHTML('homeUpcoming', html);
   }
 
-  // Recent announcements (clickable)
+  // Recent announcements — pinned first, then by date descending
   const updates = appData.announcements
     .filter(a => a.courseId === activeCourseId)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    })
     .slice(0, 5);
 
   if (updates.length === 0) {
@@ -2425,13 +2441,12 @@ function renderAssignments() {
     const submissionCount = appData.submissions.filter(s => s.assignmentId === a.id).length;
     const isPlaceholder = a.isPlaceholder;
 
-    let statusBadge = '';
-    if (a.status === 'draft') statusBadge = '<span style="padding:4px 8px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.75rem; font-weight:600;">DRAFT</span>';
-    if (a.status === 'closed') statusBadge = '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>';
+    // Only show CLOSED for that specific state; hidden assignments show HIDDEN badge
+    const statusBadge = a.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
 
-    // Visibility indicator for staff
+    // Single visibility badge for staff — replaces DRAFT label
     const visibilityBadge = effectiveStaff && a.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleAssignmentVisibility('${a.id}')" title="Click to publish">Hidden</span>` : '';
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleAssignmentVisibility('${a.id}')" title="Click to publish">HIDDEN</span>` : '';
 
     return `
       <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
@@ -2470,13 +2485,11 @@ function renderAssignments() {
     const attemptsLeft = attemptsAllowed ? Math.max(attemptsAllowed - attemptsUsed, 0) : null;
     const isPlaceholder = q.isPlaceholder;
 
-    let statusBadge = '';
-    if (q.status === 'draft') statusBadge = '<span style="padding:4px 8px; background:var(--warning-light); color:var(--warning); border-radius:4px; font-size:0.75rem; font-weight:600;">DRAFT</span>';
-    if (q.status === 'closed') statusBadge = '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>';
+    const statusBadge = q.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
 
-    // Visibility indicator for staff
+    // Single visibility badge for staff — replaces DRAFT label
     const visibilityBadge = effectiveStaff && q.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">Hidden</span>` : '';
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">HIDDEN</span>` : '';
 
     const timeLimitLabel = q.timeLimit ? `${q.timeLimit} min` : 'No time limit';
     const attemptsLabel = attemptsAllowed ? `${attemptsLeft} of ${attemptsAllowed} left` : 'Unlimited attempts';
@@ -2513,10 +2526,7 @@ function renderAssignments() {
 
   const sections = [];
   if (assignments.length > 0) {
-    sections.push(`
-      <div class="section-header">Assignments</div>
-      ${assignmentCards}
-    `);
+    sections.push(assignmentCards);
   }
   if (quizzes.length > 0) {
     sections.push(`
@@ -2547,20 +2557,21 @@ function renderCalendar() {
   `);
 
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isStaffUser && !studentViewMode;
   const now = new Date();
   const start = new Date();
   start.setDate(now.getDate() - 7);
   const end = new Date();
   end.setDate(now.getDate() + 45);
-  
+
   const items = [
     ...appData.assignments
       .filter(a => a.courseId === activeCourseId)
-      .filter(a => isStaffUser || a.status === 'published')
+      .filter(a => effectiveStaff || a.status === 'published')
       .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status })),
     ...appData.quizzes
       .filter(q => q.courseId === activeCourseId)
-      .filter(q => isStaffUser || q.status === 'published')
+      .filter(q => effectiveStaff || q.status === 'published')
       .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate, status: q.status }))
   ].filter(item => {
     const date = new Date(item.dueDate);
@@ -7498,13 +7509,36 @@ function viewQuizDetails(quizId) {
 
 function toggleStudentView() {
   studentViewMode = !studentViewMode;
-  updateModuleStudentViewMode(studentViewMode); // Notify modules of view mode change
-  // Clear AI thread when switching views
-  aiThread = [];
+  updateModuleStudentViewMode(studentViewMode); // also calls setAIStudentViewMode
+  // Clear AI thread so professor-view history doesn't bleed into student view and vice versa
+  clearAiThread();
   renderAiThread();
   renderTopBarViewToggle();
   renderAll();
   showToast(studentViewMode ? 'Viewing as student' : 'Back to instructor view', 'info');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI OVERLAY PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function toggleAiOverlay() {
+  const overlay = document.getElementById('aiOverlay');
+  if (!overlay) return;
+  const isOpen = overlay.style.display !== 'none';
+  overlay.style.display = isOpen ? 'none' : 'block';
+
+  // Update toolbar button active state
+  const btn = document.getElementById('aiOverlayBtn');
+  if (btn) btn.classList.toggle('active', !isOpen);
+
+  if (!isOpen) {
+    // Focus the input when opening
+    setTimeout(() => {
+      const input = document.getElementById('aiInput');
+      if (input) input.focus();
+    }, 50);
+  }
 }
 
 function renderTopBarViewToggle() {
@@ -7574,8 +7608,9 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // Since this is loaded as a module, functions must be explicitly assigned to window
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Navigation and modals
+// Navigation, modals, and AI overlay
 window.navigateTo = navigateTo;
+window.toggleAiOverlay = toggleAiOverlay;
 window.openModal = openModal;
 window.closeModal = closeModal;
 window.openImportContentModal = openImportContentModal;
