@@ -560,10 +560,11 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="form-group" style="padding:16px; background:var(--success-light, #e8f5e9); border-radius:var(--radius); margin-bottom:16px;">
-            <div style="font-weight:600; margin-bottom:8px;">Authentication</div>
+            <div style="font-weight:600; margin-bottom:8px;">Account</div>
             <div class="hint">
-              Signed in with Google.<br>
-              User: <strong>${appData.currentUser?.email || 'Not signed in'}</strong>
+              <strong>${appData.currentUser?.name || appData.currentUser?.email || 'Not signed in'}</strong><br>
+              ${appData.currentUser?.email || ''}<br>
+              <span style="color:var(--text-muted); font-size:0.85rem;">Signed in with Google</span>
             </div>
           </div>
           <div class="form-group">

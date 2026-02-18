@@ -85,6 +85,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-8 0"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
       </button>
 
+      <button class="tool-btn" data-page="discussion" onclick="navigateTo('discussion')" title="Discussion" aria-label="Discussion">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </button>
+
       <button class="tool-btn" id="aiOverlayBtn" onclick="toggleAiOverlay()" title="AI Assistant" aria-label="AI Assistant">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><path d="M7 7h10v10H7z"/></svg>
       </button>
@@ -122,14 +126,7 @@
           </div>
         </div>
         <div class="top-bar-right">
-          <div id="viewToggleContainer" style="margin-right:12px;"></div>
-          <div class="user-info-compact">
-            <div class="user-avatar-small" id="userAvatarTop">U</div>
-            <div class="user-details-compact">
-              <div class="user-name-small" id="userNameTop">User</div>
-              <div class="user-email-small" id="userEmailTop">user@example.com</div>
-            </div>
-          </div>
+          <div id="viewToggleContainer"></div>
         </div>
       </div>
 
@@ -272,6 +269,20 @@
         </div>
       </section>
 
+      <!-- Discussion Board -->
+      <section class="page" id="page-discussion">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Discussion</h1>
+            <div class="page-subtitle" id="discussionSubtitle"></div>
+          </div>
+          <div class="page-actions" id="discussionActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="discussionContent"></div>
+        </div>
+      </section>
+
       <!-- AI page is now an overlay panel; this section is a stub -->
       <section class="page" id="page-ai" style="display:flex; align-items:center; justify-content:center;">
         <div style="text-align:center; color:var(--text-muted);">
@@ -294,10 +305,10 @@
     <div onclick="toggleAiOverlay()"
          style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.08); pointer-events:all;"></div>
     <!-- Sliding panel -->
-    <div style="position:absolute; right:0; top:0; bottom:0; width:440px; max-width:100vw;
-                background:rgba(255,255,255,0.97); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    <div style="position:absolute; right:0; top:0; bottom:0; width:75vw; max-width:900px; min-width:320px;
+                background:rgba(255,255,255,0.92); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
                 border-left:1px solid var(--border-color); display:flex; flex-direction:column;
-                pointer-events:all; box-shadow:-4px 0 32px rgba(0,0,0,0.12);">
+                pointer-events:all; box-shadow:-8px 0 48px rgba(0,0,0,0.16);">
       <!-- Header -->
       <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px;
                   border-bottom:1px solid var(--border-light); flex-shrink:0;">

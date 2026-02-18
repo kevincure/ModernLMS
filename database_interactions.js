@@ -117,7 +117,12 @@ export async function loadDataFromSupabase() {
       invitesRes,
       rubricRes,
       rubricCriteriaRes,
-      gradeCategoriesRes
+      gradeCategoriesRes,
+      discussionThreadsRes,
+      discussionRepliesRes,
+      assignmentOverridesRes,
+      quizTimeOverridesRes,
+      gradeSettingsRes
     ] = await Promise.all([
       supabaseClient.from('profiles').select('*'),
       supabaseClient.from('courses').select('*'),
@@ -135,7 +140,12 @@ export async function loadDataFromSupabase() {
       supabaseClient.from('invites').select('*'),
       supabaseClient.from('rubrics').select('*'),
       supabaseClient.from('rubric_criteria').select('*'),
-      supabaseClient.from('grade_categories').select('*')
+      supabaseClient.from('grade_categories').select('*'),
+      supabaseClient.from('discussion_threads').select('*').order('created_at', { ascending: false }),
+      supabaseClient.from('discussion_replies').select('*').order('created_at', { ascending: true }),
+      supabaseClient.from('assignment_overrides').select('*'),
+      supabaseClient.from('quiz_time_overrides').select('*'),
+      supabaseClient.from('grade_settings').select('*')
     ]);
 
     // Log any errors
@@ -156,7 +166,12 @@ export async function loadDataFromSupabase() {
       { name: 'invites', res: invitesRes },
       { name: 'rubrics', res: rubricRes },
       { name: 'rubric_criteria', res: rubricCriteriaRes },
-      { name: 'grade_categories', res: gradeCategoriesRes }
+      { name: 'grade_categories', res: gradeCategoriesRes },
+      { name: 'discussion_threads', res: discussionThreadsRes },
+      { name: 'discussion_replies', res: discussionRepliesRes },
+      { name: 'assignment_overrides', res: assignmentOverridesRes },
+      { name: 'quiz_time_overrides', res: quizTimeOverridesRes },
+      { name: 'grade_settings', res: gradeSettingsRes }
     ];
 
     responses.forEach(({ name, res }) => {
@@ -368,6 +383,57 @@ export async function loadDataFromSupabase() {
       courseId: gc.course_id,
       name: gc.name,
       weight: gc.weight
+    }));
+
+    // Discussion threads and replies
+    const discussionReplies = discussionRepliesRes.data || [];
+    appData.discussionThreads = (discussionThreadsRes.data || []).map(t => ({
+      id: t.id,
+      courseId: t.course_id,
+      title: t.title,
+      content: t.content,
+      authorId: t.author_id,
+      createdAt: t.created_at,
+      pinned: t.pinned || false,
+      hidden: t.hidden || false,
+      replies: discussionReplies
+        .filter(r => r.thread_id === t.id)
+        .map(r => ({
+          id: r.id,
+          threadId: r.thread_id,
+          content: r.content,
+          authorId: r.author_id,
+          isAi: r.is_ai || false,
+          createdAt: r.created_at
+        }))
+    }));
+
+    // Assignment overrides (per-student due dates)
+    appData.assignmentOverrides = (assignmentOverridesRes.data || []).map(o => ({
+      id: o.id,
+      assignmentId: o.assignment_id,
+      userId: o.user_id,
+      dueDate: o.due_date
+    }));
+
+    // Quiz time overrides (per-student time limits)
+    appData.quizTimeOverrides = (quizTimeOverridesRes.data || []).map(o => ({
+      id: o.id,
+      quizId: o.quiz_id,
+      userId: o.user_id,
+      timeLimit: o.time_limit
+    }));
+
+    // Grade settings (letter grades, curve, extra credit)
+    appData.gradeSettings = (gradeSettingsRes.data || []).map(gs => ({
+      id: gs.id,
+      courseId: gs.course_id,
+      aMin: gs.a_min ?? 90,
+      bMin: gs.b_min ?? 80,
+      cMin: gs.c_min ?? 70,
+      dMin: gs.d_min ?? 60,
+      curve: gs.curve ?? 0,
+      extraCreditEnabled: gs.extra_credit_enabled ?? false
     }));
 
     appData.settings = {};
@@ -1621,4 +1687,127 @@ export async function callGeminiAPIWithRetry(contents, generationConfig = null, 
     }
   }
   throw lastError;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DISCUSSION BOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseCreateDiscussionThread(thread) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('discussion_threads').insert({
+    id: thread.id,
+    course_id: thread.courseId,
+    title: thread.title,
+    content: thread.content,
+    author_id: thread.authorId,
+    pinned: thread.pinned || false,
+    hidden: thread.hidden || false
+  }).select().single();
+  if (error) { console.error('[Supabase] Create thread error:', error); showToast('Failed to create thread', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseUpdateDiscussionThread(thread) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('discussion_threads').update({
+    title: thread.title,
+    content: thread.content,
+    pinned: thread.pinned,
+    hidden: thread.hidden
+  }).eq('id', thread.id);
+  if (error) { console.error('[Supabase] Update thread error:', error); showToast('Failed to update thread', 'error'); return false; }
+  return true;
+}
+
+export async function supabaseDeleteDiscussionThread(threadId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('discussion_threads').delete().eq('id', threadId);
+  if (error) { console.error('[Supabase] Delete thread error:', error); showToast('Failed to delete thread', 'error'); return false; }
+  return true;
+}
+
+export async function supabaseCreateDiscussionReply(reply) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('discussion_replies').insert({
+    id: reply.id,
+    thread_id: reply.threadId,
+    content: reply.content,
+    author_id: reply.authorId,
+    is_ai: reply.isAi || false
+  }).select().single();
+  if (error) { console.error('[Supabase] Create reply error:', error); showToast('Failed to post reply', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseDeleteDiscussionReply(replyId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('discussion_replies').delete().eq('id', replyId);
+  if (error) { console.error('[Supabase] Delete reply error:', error); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ASSIGNMENT OVERRIDES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseUpsertAssignmentOverride(override) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('assignment_overrides').upsert({
+    assignment_id: override.assignmentId,
+    user_id: override.userId,
+    due_date: override.dueDate
+  }, { onConflict: 'assignment_id,user_id' }).select().single();
+  if (error) { console.error('[Supabase] Upsert override error:', error); showToast('Failed to save override', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseDeleteAssignmentOverride(assignmentId, userId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('assignment_overrides')
+    .delete().eq('assignment_id', assignmentId).eq('user_id', userId);
+  if (error) { console.error('[Supabase] Delete override error:', error); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUIZ TIME OVERRIDES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseUpsertQuizTimeOverride(override) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('quiz_time_overrides').upsert({
+    quiz_id: override.quizId,
+    user_id: override.userId,
+    time_limit: override.timeLimit
+  }, { onConflict: 'quiz_id,user_id' }).select().single();
+  if (error) { console.error('[Supabase] Upsert quiz time override error:', error); showToast('Failed to save override', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseDeleteQuizTimeOverride(quizId, userId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('quiz_time_overrides')
+    .delete().eq('quiz_id', quizId).eq('user_id', userId);
+  if (error) { console.error('[Supabase] Delete quiz override error:', error); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GRADE SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseUpsertGradeSettings(settings) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('grade_settings').upsert({
+    course_id: settings.courseId,
+    a_min: settings.aMin,
+    b_min: settings.bMin,
+    c_min: settings.cMin,
+    d_min: settings.dMin,
+    curve: settings.curve,
+    extra_credit_enabled: settings.extraCreditEnabled
+  }, { onConflict: 'course_id' }).select().single();
+  if (error) { console.error('[Supabase] Upsert grade settings error:', error); showToast('Failed to save grade settings', 'error'); return null; }
+  return data;
 }
