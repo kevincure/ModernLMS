@@ -1306,7 +1306,7 @@ export function rejectAiAction(idx) {
 
   if (!msg.confirmed && !msg.rejected) msg.rejected = true;
   msg.hidden = true;
-  aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
+  aiThread.push({ role: 'assistant', content: 'No problem - canceled that proposal and no changes have been made.' });
   try {
     renderAiThread();
   } catch (e) {

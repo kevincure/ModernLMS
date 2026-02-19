@@ -1245,6 +1245,18 @@ function renderTopBarCourse() {
   renderTopBarViewToggle();
 }
 
+function renderMarkdownWithLinkedFiles(markdownText) {
+  const html = renderMarkdown(markdownText || '');
+  return html.replace(/href="#file-([^"]+)"/g, (m, fileId) => `href="#" onclick="openLinkedFile('${fileId}'); return false;"`);
+}
+
+function openLinkedFile(fileId) {
+  if (!fileId) return;
+  if (window.viewFile) {
+    window.viewFile(fileId);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // NAVIGATION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2299,23 +2311,36 @@ function renderUpdates() {
 
   const html = announcements.map(a => {
     const author = getUserById(a.authorId);
-    const visibilityText = a.hidden ? 'Hidden' : 'Hide from Students';
+    const visibilityText = a.hidden ? 'Make Visible' : 'Hide from Students';
+    const hiddenBadge = a.hidden
+      ? '<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">Hidden</span>'
+      : '';
+
+    const announcementMenu = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleAnnouncementVisibility('${a.id}')">${visibilityText}</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editAnnouncement('${a.id}')">Edit</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteAnnouncement('${a.id}')">Delete</button>
+        </div>
+      </details>
+    ` : '';
+
     return `
       <div class="card" data-announcement-id="${a.id}" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''} transition: background-color 0.3s ease;">
         <div class="card-header">
           <div>
-            <div class="card-title">${escapeHtml(a.title)} ${a.pinned ? '📌' : ''}</div>
+            <div class="card-title">${escapeHtml(a.title)} ${a.pinned ? '📌' : ''} ${hiddenBadge}</div>
             <div class="muted">${author ? escapeHtml(author.name) : 'Unknown'} · ${formatDate(a.createdAt)}</div>
           </div>
           ${effectiveStaff ? `
             <div style="display:flex; gap:8px; align-items:center;">
-              <button class="btn btn-secondary btn-sm" onclick="toggleAnnouncementVisibility('${a.id}')" style="padding:4px 8px;">${visibilityText}</button>
-              <button class="btn btn-secondary btn-sm" onclick="editAnnouncement('${a.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="deleteAnnouncement('${a.id}')">Delete</button>
+              ${announcementMenu}
             </div>
           ` : ''}
         </div>
-        <div class="markdown-content">${renderMarkdown(a.content)}</div>
+        <div class="markdown-content">${renderMarkdownWithLinkedFiles(a.content)}</div>
       </div>
     `;
   }).join('');
@@ -2515,7 +2540,7 @@ function renderAssignments() {
 
   const assignments = appData.assignments
     .filter(a => a.courseId === activeCourseId)
-    .filter(a => effectiveStaff || a.status === 'published')
+    .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const quizzes = appData.quizzes
@@ -2537,16 +2562,19 @@ function renderAssignments() {
 
     // Only show CLOSED for that specific state; hidden assignments show HIDDEN badge
     const statusBadge = a.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
+    const isHiddenAssignment = !!a.hidden || a.status !== 'published';
+    const assignmentVisibilityText = isHiddenAssignment ? 'Make Visible' : 'Hide from Students';
 
-    // Single visibility badge for staff — non-clickable, like hidden assignments
-    const visibilityBadge = effectiveStaff && a.status !== 'published' ?
+    // Single visibility badge for staff — non-clickable, like hidden announcements/files
+    const visibilityBadge = effectiveStaff && isHiddenAssignment ?
       `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">HIDDEN</span>` : '';
 
     const assignmentMenu = effectiveStaff ? `
       <details style="position:relative;" onclick="event.stopPropagation();">
         <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
-        <div style="position:absolute; right:0; top:32px; min-width:190px; z-index:20; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+        <div style="position:absolute; right:0; top:32px; min-width:190px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleAssignmentVisibility('${a.id}')">${assignmentVisibilityText}</button>
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editAssignment('${a.id}')">Edit</button>
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openDeadlineOverridesModal('${a.id}')">Edit: Overrides</button>
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
@@ -2555,7 +2583,7 @@ function renderAssignments() {
     ` : '';
 
     return `
-      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
+      <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHiddenAssignment ? 'opacity:0.7; border-style:dashed;' : ''}">
         <div class="card-header">
           <div>
             <div class="card-title">${escapeHtml(a.title)} ${statusBadge} ${visibilityBadge}</div>
@@ -2569,7 +2597,7 @@ function renderAssignments() {
             ` : ''}
           </div>
         </div>
-        <div class="markdown-content">${renderMarkdown(a.description)}</div>
+        <div class="markdown-content">${renderMarkdownWithLinkedFiles(a.description)}</div>
         ${a.externalUrl ? `<div style="margin-top:8px;"><a href="${escapeHtml(a.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">🔗 Open External Link</a></div>` : ''}
       </div>
     `;
@@ -2626,7 +2654,7 @@ function renderAssignments() {
             ` : ''}
           </div>
         </div>
-        <div class="markdown-content">${renderMarkdown(q.description || '')}</div>
+        <div class="markdown-content">${renderMarkdownWithLinkedFiles(q.description || '')}</div>
       </div>
     `;
   }).join('');
@@ -2809,6 +2837,7 @@ async function createAssignment() {
     category: category,
     points: points,
     status: status,
+    hidden: status !== 'published',
     dueDate: new Date(dueDate).toISOString(),
     createdAt: new Date().toISOString(),
     allowLateSubmissions: allowLate,
@@ -2968,6 +2997,7 @@ async function updateAssignment() {
   assignment.category = category;
   assignment.points = points;
   assignment.status = status;
+  assignment.hidden = status !== 'published';
   assignment.dueDate = new Date(dueDate).toISOString();
   assignment.allowLateSubmissions = allowLate;
   assignment.lateDeduction = lateDeduction;
@@ -3552,6 +3582,7 @@ async function saveNewAssignment() {
     assignment.availableUntil = availableUntil ? new Date(availableUntil).toISOString() : null;
     assignment.dueDate = new Date(dueDate).toISOString();
     assignment.status = status;
+    assignment.hidden = status !== 'published';
     assignment.allowLateSubmissions = allowLate;
     assignment.latePenaltyType = latePenaltyType;
     assignment.lateDeduction = latePenalty;
@@ -3588,6 +3619,7 @@ async function saveNewAssignment() {
       availableUntil: availableUntil ? new Date(availableUntil).toISOString() : null,
       dueDate: new Date(dueDate).toISOString(),
       status: status,
+      hidden: status !== 'published',
       allowLateSubmissions: allowLate,
       latePenaltyType: latePenaltyType,
       lateDeduction: latePenalty,
@@ -3626,10 +3658,25 @@ function saveSubmission() {
   const fileInput = document.getElementById('submissionFile');
   
   const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment) {
+    showToast('Assignment not found', 'error');
+    return;
+  }
+
+  const now = new Date();
+
+  if (assignment.availableFrom && now < new Date(assignment.availableFrom)) {
+    showToast('This assignment is not available yet', 'error');
+    return;
+  }
+
+  if (assignment.availableUntil && now > new Date(assignment.availableUntil)) {
+    showToast('This assignment is closed (past available-until)', 'error');
+    return;
+  }
   
   // Check if past due and late submissions not allowed
   const dueDate = new Date(assignment.dueDate);
-  const now = new Date();
   
   if (now > dueDate && !assignment.allowLateSubmissions) {
     showToast('This assignment is past due and does not accept late submissions', 'error');
@@ -4435,7 +4482,22 @@ function renderModules() {
       `;
     }).join('');
 
-    const moduleVisText = mod.hidden ? 'Hidden' : 'Hide from Students';
+    const moduleVisText = mod.hidden ? 'Make Visible' : 'Hide from Students';
+    const moduleHiddenBadge = mod.hidden
+      ? '<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; margin-left:8px;">Hidden</span>'
+      : '';
+
+    const moduleMenu = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:200px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openAddModuleItemModal('${mod.id}')">Add Item</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editModule('${mod.id}')">Edit</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteModule('${mod.id}')">Delete</button>
+        </div>
+      </details>
+    ` : '';
 
     return `
       <div class="module-card ${effectiveStaff ? 'draggable' : ''}" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
@@ -4446,13 +4508,10 @@ function renderModules() {
            ondrop="handleModuleDrop(event)"
            ondragend="handleModuleDragEnd(event)">
         <div class="module-header">
-          <h3 class="module-title">${escapeHtml(mod.name)}</h3>
+          <h3 class="module-title">${escapeHtml(mod.name)} ${moduleHiddenBadge}</h3>
           ${effectiveStaff ? `
             <div class="module-actions">
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openAddModuleItemModal('${mod.id}')">Add Item</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editModule('${mod.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteModule('${mod.id}')">Delete</button>
+              ${moduleMenu}
             </div>
           ` : ''}
         </div>
@@ -5577,12 +5636,46 @@ function renderGradebook() {
   setText('gradebookSubtitle', course.name);
 
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  debugGradebookAssignmentVisibility();
 
   if (isStaffUser) {
     renderStaffGradebook();
   } else {
     renderStudentGradebook();
   }
+}
+
+function debugGradebookAssignmentVisibility() {
+  const now = Date.now();
+  const relevant = (appData.assignments || []).filter(a => a.courseId === activeCourseId);
+  const details = relevant.map(a => {
+    const status = (a.status || '').toLowerCase();
+    const publishedLike = status === 'published' || status === 'active' || status === 'closed';
+    const closedByUntil = !!(a.availableUntil && new Date(a.availableUntil).getTime() <= now);
+    const closedByDue = !!(a.dueDate && new Date(a.dueDate).getTime() <= now);
+    const visible = isAssignmentVisibleInGradebook(a);
+    const reasons = [];
+    if (publishedLike) reasons.push('status');
+    if (closedByUntil) reasons.push('availableUntil<=now');
+    if (closedByDue) reasons.push('dueDate<=now');
+    return {
+      id: a.id,
+      title: a.title,
+      status: a.status,
+      hidden: !!a.hidden,
+      dueDate: a.dueDate,
+      availableFrom: a.availableFrom,
+      availableUntil: a.availableUntil,
+      visible,
+      reasons: reasons.join('|') || 'none'
+    };
+  });
+
+  console.groupCollapsed('[Gradebook Debug] Assignment visibility');
+  console.log('activeCourseId:', activeCourseId);
+  console.log('total assignments in course:', relevant.length);
+  console.table(details);
+  console.groupEnd();
 }
 
 function renderStudentGradebook() {
@@ -6352,7 +6445,7 @@ function rejectAiAction(idx) {
 
   if (!msg.confirmed && !msg.rejected) msg.rejected = true;
   msg.hidden = true;
-  aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
+  aiThread.push({ role: 'assistant', content: 'No problem - canceled that proposal and no changes have been made.' });
   renderAiThread();
 }
 
@@ -7732,16 +7825,27 @@ function saveExternalLink() {
 // VISIBILITY TOGGLES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function toggleAssignmentVisibility(assignmentId) {
+async function toggleAssignmentVisibility(assignmentId) {
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
 
-  const wasPublished = assignment.status === 'published';
-  assignment.status = wasPublished ? 'draft' : 'published';
+  const originalStatus = assignment.status;
+  const originalHidden = assignment.hidden;
+  const shouldHide = !(assignment.hidden || assignment.status !== 'published');
 
+  assignment.hidden = shouldHide;
+  assignment.status = shouldHide ? 'draft' : 'published';
+
+  const result = await supabaseUpdateAssignment(assignment);
+  if (!result) {
+    assignment.status = originalStatus;
+    assignment.hidden = originalHidden;
+    showToast('Failed to update assignment visibility', 'error');
+    return;
+  }
 
   renderAssignments();
-  showToast(wasPublished ? 'Assignment hidden from students' : 'Assignment published!', 'success');
+  showToast(shouldHide ? 'Assignment hidden from students' : 'Assignment visible to students', 'success');
 }
 
 function toggleQuizVisibility(quizId) {
@@ -8362,6 +8466,7 @@ window.openModal = openModal;
 window.closeModal = closeModal;
 window.openImportContentModal = openImportContentModal;
 window.executeImportContent = executeImportContent;
+window.openLinkedFile = openLinkedFile;
 
 // Course management
 window.createCourse = createCourse;

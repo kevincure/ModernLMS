@@ -1032,7 +1032,7 @@ export function renderFiles() {
     const menuButton = effectiveStaff ? `
       <details style="position:relative;" onclick="event.stopPropagation();">
         <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
-        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:20; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); renameFile('${f.id}')">Rename</button>
           ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); updateFileContent('${f.id}')">Replace File</button>` : ''}
           ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}

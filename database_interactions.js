@@ -217,10 +217,13 @@ export async function loadDataFromSupabase() {
       points: a.points,
       status: a.status,
       dueDate: a.due_date,
+      availableFrom: a.available_from,
+      availableUntil: a.available_until,
       createdAt: a.created_at,
       allowLateSubmissions: a.allow_late_submissions,
       lateDeduction: a.late_deduction,
       allowResubmission: a.allow_resubmission,
+      hidden: a.hidden || false,
       category: a.category,
       rubric: null
     }));
@@ -604,7 +607,7 @@ export async function supabaseCreateAssignment(assignment) {
     return null;
   }
 
-  const { data, error } = await supabaseClient.from('assignments').insert({
+  const modernPayload = {
     id: assignment.id,
     course_id: assignment.courseId,
     title: assignment.title,
@@ -612,12 +615,36 @@ export async function supabaseCreateAssignment(assignment) {
     points: assignment.points || 100,
     status: assignment.status || 'draft',
     due_date: assignment.dueDate || null,
+    available_from: assignment.availableFrom || null,
+    available_until: assignment.availableUntil || null,
     allow_late_submissions: assignment.allowLateSubmissions !== false,
     late_deduction: assignment.lateDeduction || 10,
     allow_resubmission: assignment.allowResubmission !== false,
+    hidden: assignment.hidden || false,
     category: assignment.category || 'homework',
     created_by: appData.currentUser?.id
-  }).select().single();
+  };
+
+  let { data, error } = await supabaseClient.from('assignments').insert(modernPayload).select().single();
+
+  if (error?.code === 'PGRST204' && /available_from|available_until|hidden/.test(error.message || '')) {
+    console.warn('[Supabase] Modern assignment columns missing, retrying create with legacy assignment schema');
+    const legacyPayload = {
+      id: assignment.id,
+      course_id: assignment.courseId,
+      title: assignment.title,
+      description: assignment.description || null,
+      points: assignment.points || 100,
+      status: assignment.status || 'draft',
+      due_date: assignment.dueDate || null,
+      allow_late_submissions: assignment.allowLateSubmissions !== false,
+      late_deduction: assignment.lateDeduction || 10,
+      allow_resubmission: assignment.allowResubmission !== false,
+      category: assignment.category || 'homework',
+      created_by: appData.currentUser?.id
+    };
+    ({ data, error } = await supabaseClient.from('assignments').insert(legacyPayload).select().single());
+  }
 
   if (error) {
     console.error('[Supabase] Error creating assignment:', error);
@@ -642,17 +669,38 @@ export async function supabaseUpdateAssignment(assignment) {
     return null;
   }
 
-  const { data, error } = await supabaseClient.from('assignments').update({
+  const modernPayload = {
     title: assignment.title,
     description: assignment.description,
     points: assignment.points,
     status: assignment.status,
     due_date: assignment.dueDate,
+    available_from: assignment.availableFrom || null,
+    available_until: assignment.availableUntil || null,
     allow_late_submissions: assignment.allowLateSubmissions,
     late_deduction: assignment.lateDeduction,
     allow_resubmission: assignment.allowResubmission,
+    hidden: assignment.hidden || false,
     category: assignment.category
-  }).eq('id', assignment.id).select().single();
+  };
+
+  let { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
+
+  if (error?.code === 'PGRST204' && /available_from|available_until|hidden/.test(error.message || '')) {
+    console.warn('[Supabase] Modern assignment columns missing, retrying update with legacy assignment schema');
+    const legacyPayload = {
+      title: assignment.title,
+      description: assignment.description,
+      points: assignment.points,
+      status: assignment.status,
+      due_date: assignment.dueDate,
+      allow_late_submissions: assignment.allowLateSubmissions,
+      late_deduction: assignment.lateDeduction,
+      allow_resubmission: assignment.allowResubmission,
+      category: assignment.category
+    };
+    ({ data, error } = await supabaseClient.from('assignments').update(legacyPayload).eq('id', assignment.id).select().single());
+  }
 
   if (error) {
     console.error('[Supabase] Error updating assignment:', error);
