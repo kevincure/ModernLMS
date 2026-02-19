@@ -333,7 +333,10 @@ export function openModal(id) {
 
 export function closeModal(id) {
   const modal = document.getElementById(id);
-  if (modal) modal.classList.remove('visible');
+  if (!modal) return;
+  modal.classList.remove('visible');
+  // Also clear any inline display style (used by dynamically inserted modals)
+  if (modal.style.display) modal.style.display = '';
 }
 
 // Confirmation dialog helper

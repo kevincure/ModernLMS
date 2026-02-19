@@ -1028,18 +1028,16 @@ export function renderFiles() {
       ? `<span style="padding:2px 8px; margin-left:8px; border-radius:4px; background:var(--danger-light); color:var(--danger); font-size:0.75rem; font-weight:600;">Hidden</span>`
       : '';
 
-    const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
+    const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '';
     const menuButton = effectiveStaff ? `
-      <details style="position:relative;" onclick="event.stopPropagation();">
-        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
-        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); renameFile('${f.id}')">Rename</button>
-          ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); updateFileContent('${f.id}')">Replace File</button>` : ''}
-          ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteFile('${f.id}')">Delete</button>
-        </div>
-      </details>
+      <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-file-${f.id}')">☰</button>
+      <div id="menu-file-${f.id}" class="floating-menu">
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); renameFile('${f.id}')">Rename</button>
+        ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); updateFileContent('${f.id}')">Replace File</button>` : ''}
+        ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteFile('${f.id}')" style="color:var(--danger);">Delete</button>
+      </div>
     ` : '';
 
     return `
@@ -1049,7 +1047,7 @@ export function renderFiles() {
            ${isPlaceholder && effectiveStaff ? `ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border-color)'" ondrop="handlePlaceholderFileDrop(event, '${f.id}'); this.style.borderColor='var(--border-color)'"` : ''}>
         <div class="card-header">
           <div style="flex:1;">
-            <div class="card-title">${icon} ${escapeHtml(f.name)} ${visibilityBadge}</div>
+            <div class="card-title">${icon ? icon + ' ' : ''}${escapeHtml(f.name)} ${visibilityBadge}</div>
             <div class="muted">
               ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
               · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
