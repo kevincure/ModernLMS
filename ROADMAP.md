@@ -318,7 +318,7 @@ Don't add these (they bloat the product):
 - Proctoring services (privacy concerns)
 - Social networking features (not a focus)
 - Gamification (can feel forced)
-- LTI integrations (adds complexity)
+- LTI interoperability planning moved to `INTEROPERABILITY_IMPLEMENTATION_PLAN.md`
 
 ---
 
@@ -339,6 +339,8 @@ Track these to measure if the LMS is working:
 ---
 
 ## Pending Integrations (Added)
+
+> Interoperability standards planning (LTI 1.3/Advantage, SIS, OneRoster 1.2, Caliper 1.2) is maintained in `INTEROPERABILITY_IMPLEMENTATION_PLAN.md`.
 
 ### Pangram AI / Turnitin
 Integrate with Pangram AI or Turnitin for AI-generated content detection and plagiarism analysis on student submissions. Hook into the submission flow so results appear alongside the grade panel in `gradeSubmission()`.

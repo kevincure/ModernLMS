@@ -1,5 +1,12 @@
 # Campus LMS - Implementation Summary (Current State)
 
+## 📌 Planning Source of Truth
+
+- Interoperability standards planning (LTI 1.3 + Advantage, SIS, OneRoster 1.2, Caliper 1.2) is maintained in `INTEROPERABILITY_IMPLEMENTATION_PLAN.md`.
+- This implementation summary focuses on currently shipped behavior and known runtime issues.
+
+---
+
 ## ✅ Completed Updates (Code + UI)
 
 ### 1. Gemini API Update
