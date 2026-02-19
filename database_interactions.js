@@ -1992,12 +1992,12 @@ export function downloadOneRosterExport(appDataRef) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CALIPER ANALYTICS 1.1  (IMS Global Sensor API)
+// CALIPER ANALYTICS 1.2  (IMS Global / 1EdTech Sensor API)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let _caliperSensorId = null;
 let _caliperEndpoint = null;
-let _caliperDataVersion = 'http://purl.imsglobal.org/ctx/caliper/v1p1';
+let _caliperDataVersion = 'http://purl.imsglobal.org/ctx/caliper/v1p2';
 
 /**
  * Configure the Caliper sensor.  Call once after app init.
@@ -2010,7 +2010,7 @@ export function initCaliperSensor(sensorId, endpoint) {
 }
 
 /**
- * Build and send a Caliper 1.1 event to the configured endpoint.
+ * Build and send a Caliper 1.2 event to the configured endpoint.
  * Silently no-ops if sensor is not configured.
  * @param {string} type    - Event type, e.g. 'SessionEvent'
  * @param {string} action  - Action verb, e.g. 'LoggedIn'

@@ -1017,16 +1017,30 @@ The app generates a **client-side OneRoster 1.2 CSV export** (see `generateOneRo
 The following gaps exist between the current schema and full OneRoster 1.2 server compliance.
 They do **not** block CSV export but would be required for a certified OneRoster REST API.
 
+#### REST API Architecture (not yet implemented)
+OneRoster 1.2 defines **three independent services**, each with a separate base path:
+- **Rostering Service** — `GET /ims/oneroster/rostering/v1p2/...`
+- **Gradebook Service** — `GET /ims/oneroster/gradebook/v1p2/...`
+- **Resources Service** — `GET /ims/oneroster/resources/v1p2/...`
+
+Conformance requires **22 core Rostering endpoints** (Table 4.1 of the conformance guide).
+
+#### Data Model Gaps
+
 | Gap | Current | OneRoster 1.2 Required |
 |-----|---------|------------------------|
 | `sourcedId` | `id` (UUID) | Explicit `sourcedId` field |
 | `status` on all entities | Not stored | `'active'` or `'tobedeleted'` |
 | `dateLastModified` on all entities | Not stored | ISO-8601 timestamp |
-| User name fields | `name` (single string) | `givenName`, `familyName`, optional `middleName` |
+| User `givenName` / `familyName` | Single `name` string | Separate given/family (split on export) |
+| User `userMasterIdentifier` | Not stored | New in 1.2: canonical universal ID (optional) |
+| User preferred names | Not stored | `preferredFirstName`, `preferredLastName` (optional, new in 1.2) |
 | `orgs` table | None (synthetic) | Persistent `orgs` table with `sourcedId` |
 | `academicSessions` table | None (synthetic) | Persistent `academicSessions` table |
+| Class `periods` | Not stored | New in 1.2, optional |
+| Class `subjectCodes` | Not stored | New in 1.2, optional |
 | Role enum | `instructor`, `ta`, `student` | `teacher`, `teaching assistant`, `student` |
-| REST API | Not implemented | OAuth 2.0 Bearer-token endpoints for all 6 resources |
+| REST API | Not implemented | OAuth 2.0 Bearer-token endpoints |
 
 ### Required SQL Migrations (for full server compliance)
 
@@ -1101,43 +1115,54 @@ CREATE TABLE IF NOT EXISTS academic_sessions (
 
 ---
 
-## Caliper Analytics 1.1
+## Caliper Analytics 1.2
 
 ### Overview
 
 Caliper support is implemented in `database_interactions.js` as a lightweight client-side
-sensor. When a Caliper endpoint URL is configured (Settings → Caliper Analytics Endpoint),
-events are `POST`ed as JSON envelopes to the LRS.
+sensor targeting the **IMS Global / 1EdTech Caliper Analytics 1.2** specification.
+When a Caliper endpoint URL is configured (Settings → Caliper Analytics Endpoint),
+events are `POST`ed as JSON envelopes to the LRS via `POST /send`.
+
+### Metric Profiles Implemented
+
+| Profile | Events emitted |
+|---------|---------------|
+| Session Profile | `SessionEvent / LoggedIn` |
+| Reading Profile | `ViewEvent / Viewed` (page navigation) |
+| Assignable Profile | `AssignableEvent / Submitted` |
+| Grading Profile | `GradeEvent / Graded` |
+| Assessment Profile | `AssessmentEvent / Started`, `AssessmentEvent / Completed` |
 
 ### Configuration
 
 Set in **Settings modal** and persisted in `localStorage`:
-- `caliperEndpoint` — LRS endpoint URL (e.g. `https://lrs.example.com/caliper/v1p1`)
+- `caliperEndpoint` — LRS endpoint URL (e.g. `https://lrs.example.com/caliper/v1p2/send`)
 - `caliperSensorId` — Sensor identifier string (default: `campus-lms`)
 
 The sensor is initialized on app start if a saved endpoint is found.
 
 ### Instrumented Events
 
-| Lifecycle point | Caliper event type | Action |
-|---|---|---|
-| User login | `SessionEvent` | `LoggedIn` |
-| Page navigation | `ViewEvent` | `Viewed` |
-| Assignment submission | `AssignableEvent` | `Submitted` |
-| Grade posted | `GradeEvent` | `Graded` |
-| Quiz started | `AssessmentEvent` | `Started` |
-| Quiz completed | `AssessmentEvent` | `Completed` |
+| Lifecycle point | Profile | Caliper event type | Action |
+|---|---|---|---|
+| User login | Session | `SessionEvent` | `LoggedIn` |
+| Page navigation | Reading | `ViewEvent` | `Viewed` |
+| Assignment submission | Assignable | `AssignableEvent` | `Submitted` |
+| Grade posted | Grading | `GradeEvent` | `Graded` |
+| Quiz started | Assessment | `AssessmentEvent` | `Started` |
+| Quiz completed | Assessment | `AssessmentEvent` | `Completed` |
 
-### Envelope Format
+### Envelope Format (Caliper 1.2)
 
 ```json
 {
   "sensor": "campus-lms",
   "sendTime": "2026-02-18T12:00:00.000Z",
-  "dataVersion": "http://purl.imsglobal.org/ctx/caliper/v1p1",
+  "dataVersion": "http://purl.imsglobal.org/ctx/caliper/v1p2",
   "data": [
     {
-      "@context": "http://purl.imsglobal.org/ctx/caliper/v1p1",
+      "@context": "http://purl.imsglobal.org/ctx/caliper/v1p2",
       "id": "urn:uuid:<uuid>",
       "type": "AssessmentEvent",
       "actor": { "id": "urn:campus-lms:user:<userId>", "type": "Person" },
@@ -1149,12 +1174,13 @@ The sensor is initialized on app start if a saved endpoint is found.
 }
 ```
 
-### Future Work (for certified Caliper compliance)
+### Future Work (for certified Caliper 1.2 compliance)
 
 - Add `membership` (course enrollment context) to all events
-- Add `session` object to all events
+- Add `session` object referencing the active `SessionEvent`
 - Support `federatedSession` for LTI contexts
-- Implement Caliper endpoint discovery via `/.well-known/caliper`
-- Add authorization header (Bearer token) support in `emitCaliperEvent`
+- Add `Authorization: Bearer <token>` header support in `emitCaliperEvent`
+- Implement `NavigationEvent` with `navigatedFrom` for page transitions
 - Persist events locally when offline and flush on reconnect
-- Emit `NavigationEvent` with `navigatedFrom` for page transitions
+- Emit `Forum/Posted` events for discussion board posts
+- Emit `ToolUseEvent` for AI chat interactions

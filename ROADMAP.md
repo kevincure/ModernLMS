@@ -356,12 +356,13 @@ Produces 6 files: `orgs.csv`, `academicSessions.csv`, `users.csv`, `courses.csv`
 2. Add persistent `orgs` and `academic_sessions` tables
 3. Implement edge functions for OneRoster REST API endpoints
 
-### Caliper Analytics 1.1 ✅ (client-side sensor implemented)
-Lightweight IMS Caliper 1.1 sensor implemented in `database_interactions.js`.
+### Caliper Analytics 1.2 ✅ (client-side sensor implemented)
+Lightweight 1EdTech Caliper 1.2 sensor implemented in `database_interactions.js`.
 Configure endpoint URL in **Settings → Caliper Analytics Endpoint**.
 
+**Metric profiles covered:** Session, Reading (ViewEvent), Assignable, Grading, Assessment.
 **Instrumented events:** login, page navigation, assignment submission, grade posting, quiz start/complete.
-**Full spec details and future work:** see `DATABASE_SCHEMA.md` → Caliper Analytics section.
+**Full spec details, envelope format, and future work:** see `DATABASE_SCHEMA.md` → Caliper Analytics section.
 
 ### Pangram AI / Turnitin
 Integrate with Pangram AI or Turnitin for AI-generated content detection and plagiarism analysis on student submissions. Hook into the submission flow so results appear alongside the grade panel in `gradeSubmission()`.
