@@ -112,6 +112,7 @@ import {
   initAiModule,
   sendAiMessage,
   confirmAiAction,
+  rejectAiAction as rejectAiActionFromModule,
   buildAiContext,
   renderAiThread,
   clearAiThread,
@@ -2537,9 +2538,21 @@ function renderAssignments() {
     // Only show CLOSED for that specific state; hidden assignments show HIDDEN badge
     const statusBadge = a.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
 
-    // Single visibility badge for staff — replaces DRAFT label
+    // Single visibility badge for staff — non-clickable, like hidden assignments
     const visibilityBadge = effectiveStaff && a.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleAssignmentVisibility('${a.id}')" title="Click to publish">HIDDEN</span>` : '';
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">HIDDEN</span>` : '';
+
+    const assignmentMenu = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:190px; z-index:20; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editAssignment('${a.id}')">Edit</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openDeadlineOverridesModal('${a.id}')">Edit: Overrides</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
+        </div>
+      </details>
+    ` : '';
 
     return `
       <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
@@ -2549,12 +2562,7 @@ function renderAssignments() {
             <div class="muted">${formatDueDate(a.dueDate)} · ${a.points} points${a.externalUrl ? ' · 🔗 External Link' : ''}</div>
           </div>
           <div style="display:flex; gap:8px;">
-            ${effectiveStaff ? `
-              <button class="btn btn-secondary btn-sm" onclick="viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
-              <button class="btn btn-secondary btn-sm" onclick="openDeadlineOverridesModal('${a.id}')">Overrides</button>
-              <button class="btn btn-secondary btn-sm" onclick="editAssignment('${a.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
-            ` : mySubmission ? `
+            ${effectiveStaff ? assignmentMenu : mySubmission ? `
               <button class="btn btn-secondary btn-sm" onclick="viewMySubmission('${a.id}')">View Submission</button>
             ` : a.status === 'published' && !isPast ? `
               <button class="btn btn-primary btn-sm" onclick="submitAssignment('${a.id}')">Submit</button>
@@ -2768,13 +2776,20 @@ function exportCalendarICS() {
   showToast('Calendar exported!', 'success');
 }
 
+function normalizeContentStatus(status) {
+  // DB enum supports draft/published only
+  if (status === 'closed') return 'published';
+  if (status === 'active') return 'published';
+  return status || 'draft';
+}
+
 async function createAssignment() {
   const title = document.getElementById('assignmentTitle').value.trim();
   const description = document.getElementById('assignmentDescription').value.trim();
   const category = document.getElementById('assignmentCategory').value;
   const points = parseInt(document.getElementById('assignmentPoints').value);
   const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = document.getElementById('assignmentStatus').value;
+  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
   const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
@@ -2891,7 +2906,7 @@ function openAssignmentModal(assignmentId = null) {
   document.getElementById('assignmentCategory').value = assignment ? assignment.category : 'homework';
   document.getElementById('assignmentPoints').value = assignment ? assignment.points : '100';
   setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', assignment ? assignment.dueDate : null);
-  document.getElementById('assignmentStatus').value = assignment ? assignment.status : 'draft';
+  document.getElementById('assignmentStatus').value = assignment ? normalizeContentStatus(assignment.status) : 'draft';
   document.getElementById('assignmentAllowLate').checked = assignment ? assignment.allowLateSubmissions !== false : true;
   document.getElementById('assignmentLateDeduction').value = assignment ? assignment.lateDeduction || 0 : '10';
   document.getElementById('assignmentAllowResubmit').checked = assignment ? assignment.allowResubmission !== false : true;
@@ -2933,7 +2948,7 @@ async function updateAssignment() {
   const category = document.getElementById('assignmentCategory').value;
   const points = parseInt(document.getElementById('assignmentPoints').value);
   const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = document.getElementById('assignmentStatus').value;
+  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
   const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
@@ -3395,7 +3410,7 @@ function openNewAssignmentModal(assignmentId = null) {
     document.getElementById('newAssignmentDescription').value = assignment.description || '';
     document.getElementById('newAssignmentIntroNotes').value = assignment.introNotes || '';
     document.getElementById('newAssignmentPoints').value = assignment.points || 100;
-    document.getElementById('newAssignmentStatus').value = assignment.status || 'draft';
+    document.getElementById('newAssignmentStatus').value = normalizeContentStatus(assignment.status || 'draft');
     document.getElementById('newAssignmentAllowLate').checked = assignment.allowLateSubmissions !== false;
     document.getElementById('newAssignmentLatePenaltyType').value = assignment.latePenaltyType || 'per_day';
     document.getElementById('newAssignmentLatePenalty').value = assignment.lateDeduction || 10;
@@ -3486,7 +3501,7 @@ async function saveNewAssignment() {
   const availableFrom = document.getElementById('newAssignmentAvailableFrom').value;
   const availableUntil = document.getElementById('newAssignmentAvailableUntil').value;
   const dueDate = getDateTimeFromSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm');
-  const status = document.getElementById('newAssignmentStatus').value;
+  const status = normalizeContentStatus(document.getElementById('newAssignmentStatus').value);
   const allowLate = document.getElementById('newAssignmentAllowLate').checked;
   const latePenaltyType = document.getElementById('newAssignmentLatePenaltyType').value;
   const latePenalty = parseInt(document.getElementById('newAssignmentLatePenalty').value) || 0;
@@ -4459,10 +4474,11 @@ function openModuleFile(fileId, event) {
 function isAssignmentVisibleInGradebook(assignment) {
   if (!assignment || assignment.courseId !== activeCourseId) return false;
 
-  // Show published assignments and anything that has passed its availability/due window
-  // so staff can always grade closed work even if content status remains draft.
+  // Show active/published/closed assignments and anything that has passed
+  // availability/due windows (treated as closed for grading visibility).
   const now = Date.now();
-  const published = assignment.status === 'published';
+  const status = (assignment.status || '').toLowerCase();
+  const published = status === 'published' || status === 'active' || status === 'closed';
   const closedByUntil = assignment.availableUntil && new Date(assignment.availableUntil).getTime() <= now;
   const closedByDue = assignment.dueDate && new Date(assignment.dueDate).getTime() <= now;
   return published || closedByUntil || closedByDue;
@@ -6013,7 +6029,7 @@ async function saveManualGrade() {
 
 function exportGradebook() {
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
+    .filter(a => isAssignmentVisibleInGradebook(a))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
   
   const students = appData.enrollments
@@ -8765,7 +8781,7 @@ window.debugAuthState = debugAuthState;
 window.viewSubmissionHistory = viewSubmissionHistory;
 window.scrollAiThreadToBottom = scrollAiThreadToBottom;
 window.updateAiActionField = updateAiActionField;
-window.rejectAiAction = rejectAiAction;
+window.rejectAiAction = rejectAiActionFromModule;
 
 // Grade settings
 window.openGradeSettingsModal = openGradeSettingsModal;

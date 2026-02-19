@@ -94,7 +94,6 @@ export function initFileHandlingModule(deps) {
   window.updateFileContent = updateFileContent;
   window.handlePlaceholderFileDrop = handlePlaceholderFileDrop;
   window.renameFile = renameFile;
-  window.aiRenameFile = aiRenameFile;
   window.convertPlaceholderToLink = convertPlaceholderToLink;
   window.toggleFileVisibility = toggleFileVisibility;
   window.convertYouTubeUrl = convertYouTubeUrl;
@@ -1024,9 +1023,9 @@ export function renderFiles() {
     const isHidden = f.hidden;
 
     // Visibility badge for staff
-    const visibilityText = isHidden ? 'Hidden' : 'Hide from Students';
-    const visibilityBadge = effectiveStaff
-      ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${f.id}')" style="padding:2px 8px; margin-left:8px;">${visibilityText}</button>`
+    const visibilityText = isHidden ? 'Make Visible' : 'Hide from Students';
+    const visibilityBadge = isHidden
+      ? `<span style="padding:2px 8px; margin-left:8px; border-radius:4px; background:var(--danger-light); color:var(--danger); font-size:0.75rem; font-weight:600;">Hidden</span>`
       : '';
 
     const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
@@ -1035,7 +1034,6 @@ export function renderFiles() {
         <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
         <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:20; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); renameFile('${f.id}')">Rename</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); aiRenameFile('${f.id}')">AI Rename</button>
           ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); updateFileContent('${f.id}')">Replace File</button>` : ''}
           ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
@@ -1308,39 +1306,6 @@ export async function renameFile(fileId) {
   renderFiles();
   if (renderModulesCallback) renderModulesCallback();
   showToast('File renamed', 'success');
-}
-
-export async function aiRenameFile(fileId) {
-  const file = appData.files.find(f => f.id === fileId);
-  if (!file) return;
-
-  try {
-    const promptText = `Suggest a concise, student-friendly LMS file title. Return ONLY JSON: {"name":"..."}. Current file name: ${file.name}`;
-    const contents = [{ parts: [{ text: promptText }] }];
-    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: 'application/json', temperature: 0.2 });
-    if (data.error) throw new Error(data.error.message);
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const parsed = parseAiJsonResponse(text);
-    const aiName = (parsed?.name || '').trim();
-    if (!aiName) throw new Error('AI did not return a valid name');
-
-    const originalName = file.name;
-    file.name = aiName;
-    const result = await supabaseUpdateFile(file);
-    if (!result) {
-      file.name = originalName;
-      showToast('AI rename failed to save', 'error');
-      return;
-    }
-
-    renderFiles();
-    if (renderModulesCallback) renderModulesCallback();
-    showToast(`AI renamed file to: ${aiName}`, 'success');
-  } catch (err) {
-    console.error('[aiRenameFile] Error:', err);
-    showToast('AI rename failed: ' + err.message, 'error');
-  }
 }
 
 export async function updateFileContent(fileId) {

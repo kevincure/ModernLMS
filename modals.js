@@ -295,7 +295,6 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             <select class="form-select" id="assignmentStatus">
               <option value="draft">Draft (not visible to students)</option>
               <option value="published">Published</option>
-              <option value="closed">Closed (no new submissions)</option>
             </select>
           </div>
           <div class="form-group">
@@ -367,7 +366,6 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               <select class="form-select" id="quizStatus">
                 <option value="draft">Draft</option>
                 <option value="published">Published</option>
-                <option value="closed">Closed</option>
               </select>
             </div>
             <div class="form-group">
