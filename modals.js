@@ -1210,11 +1210,11 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
             <div class="form-group">
               <label class="form-label">Available From</label>
-              <input type="date" class="form-input" id="newAssignmentAvailableFrom">
+              <input type="datetime-local" class="form-input" id="newAssignmentAvailableFrom">
             </div>
             <div class="form-group">
               <label class="form-label">Available Until</label>
-              <input type="date" class="form-input" id="newAssignmentAvailableUntil">
+              <input type="datetime-local" class="form-input" id="newAssignmentAvailableUntil">
             </div>
           </div>
 

@@ -93,6 +93,8 @@ export function initFileHandlingModule(deps) {
   window.convertPlaceholderToFile = convertPlaceholderToFile;
   window.updateFileContent = updateFileContent;
   window.handlePlaceholderFileDrop = handlePlaceholderFileDrop;
+  window.renameFile = renameFile;
+  window.aiRenameFile = aiRenameFile;
   window.convertPlaceholderToLink = convertPlaceholderToLink;
   window.toggleFileVisibility = toggleFileVisibility;
   window.convertYouTubeUrl = convertYouTubeUrl;
@@ -1028,6 +1030,19 @@ export function renderFiles() {
       : '';
 
     const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
+    const menuButton = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:20; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); renameFile('${f.id}')">Rename</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); aiRenameFile('${f.id}')">AI Rename</button>
+          ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); updateFileContent('${f.id}')">Replace File</button>` : ''}
+          ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteFile('${f.id}')">Delete</button>
+        </div>
+      </details>
+    ` : '';
 
     return `
       <div class="card"
@@ -1048,12 +1063,8 @@ export function renderFiles() {
                 ${f.isYouTube ? '▶ Watch' : '🔗 Open'}
               </a>
             ` : ''}
-            ${effectiveStaff && isPlaceholder ? `
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToFile('${f.id}')">📎 Upload File</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToLink('${f.id}')">🔗 Add Link</button>
-            ` : ''}
-            ${effectiveStaff && !isPlaceholder && !isExternal ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); updateFileContent('${f.id}')">Update</button>` : ''}
-            ${effectiveStaff ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteFile('${f.id}')">Delete</button>` : ''}
+            ${effectiveStaff && isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToFile('${f.id}')">📎 Upload File</button>` : ''}
+            ${menuButton}
           </div>
         </div>
         ${isExternal && f.isYouTube ? `
@@ -1214,10 +1225,21 @@ export async function uploadFile() {
 }
 
 export function deleteFile(id) {
+  console.log('[deleteFile] Request received for file:', id);
+  if (typeof confirm !== 'function') {
+    console.error('[deleteFile] Confirm helper is not initialized');
+    showToast('Confirmation dialog not available', 'error');
+    return;
+  }
+
   confirm('Delete this file?', async () => {
+    console.log('[deleteFile] Confirmed delete for file:', id);
     // Delete from Supabase
     const deleted = await supabaseDeleteFile(id);
-    if (!deleted) return;
+    if (!deleted) {
+      console.warn('[deleteFile] Backend delete failed for file:', id);
+      return;
+    }
 
     appData.files = appData.files.filter(f => f.id !== id);
 
@@ -1265,6 +1287,60 @@ export function convertPlaceholderToFile(fileId) {
     }
   };
   input.click();
+}
+
+export async function renameFile(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  const newName = prompt('Enter new file name:', file.name || '');
+  if (!newName || !newName.trim() || newName.trim() === file.name) return;
+
+  const originalName = file.name;
+  file.name = newName.trim();
+  const result = await supabaseUpdateFile(file);
+  if (!result) {
+    file.name = originalName;
+    showToast('Failed to rename file', 'error');
+    return;
+  }
+
+  renderFiles();
+  if (renderModulesCallback) renderModulesCallback();
+  showToast('File renamed', 'success');
+}
+
+export async function aiRenameFile(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  try {
+    const promptText = `Suggest a concise, student-friendly LMS file title. Return ONLY JSON: {"name":"..."}. Current file name: ${file.name}`;
+    const contents = [{ parts: [{ text: promptText }] }];
+    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: 'application/json', temperature: 0.2 });
+    if (data.error) throw new Error(data.error.message);
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsed = parseAiJsonResponse(text);
+    const aiName = (parsed?.name || '').trim();
+    if (!aiName) throw new Error('AI did not return a valid name');
+
+    const originalName = file.name;
+    file.name = aiName;
+    const result = await supabaseUpdateFile(file);
+    if (!result) {
+      file.name = originalName;
+      showToast('AI rename failed to save', 'error');
+      return;
+    }
+
+    renderFiles();
+    if (renderModulesCallback) renderModulesCallback();
+    showToast(`AI renamed file to: ${aiName}`, 'success');
+  } catch (err) {
+    console.error('[aiRenameFile] Error:', err);
+    showToast('AI rename failed: ' + err.message, 'error');
+  }
 }
 
 export async function updateFileContent(fileId) {

@@ -1289,6 +1289,16 @@ function navigateTo(page) {
 
 let showInactiveCourses = false;
 
+function showInactiveCoursesSection() {
+  showInactiveCourses = true;
+  renderCourses();
+}
+
+function hideInactiveCoursesSection() {
+  showInactiveCourses = false;
+  renderCourses();
+}
+
 function renderCourses() {
   const allCourses = getUserCourses(appData.currentUser.id);
   const activeCourses = allCourses.filter(c => c.active !== false);
@@ -1310,7 +1320,6 @@ function renderCourses() {
           <div>
             <div class="card-title">
               ${escapeHtml(c.name)}
-              ${isActiveCourse ? ' <span style="font-size:0.7rem; font-weight:700; background:var(--primary); color:#fff; padding:2px 7px; border-radius:10px; vertical-align:middle;">ACTIVE</span>' : ''}
               ${dimmed ? ' <span style="font-size:0.7rem; font-weight:600; background:var(--border-color); color:var(--text-muted); padding:2px 7px; border-radius:10px; vertical-align:middle;">INACTIVE</span>' : ''}
             </div>
             <div class="muted">${escapeHtml(c.code)} · ${roleLabel}</div>
@@ -1342,13 +1351,13 @@ function renderCourses() {
       html += `<div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border-color);">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
           <span class="muted" style="font-size:0.9rem; font-weight:600;">Inactive / Archived Courses (${inactiveCourses.length})</span>
-          <button class="btn btn-secondary btn-sm" onclick="showInactiveCourses=false; renderCourses();">Hide</button>
+          <button class="btn btn-secondary btn-sm" onclick="hideInactiveCoursesSection()">Hide</button>
         </div>
         ${inactiveCourses.map(c => courseCard(c, true)).join('')}
       </div>`;
     } else {
       html += `<div style="margin-top:16px; text-align:center;">
-        <button class="btn btn-secondary btn-sm" onclick="showInactiveCourses=true; renderCourses();">
+        <button class="btn btn-secondary btn-sm" onclick="showInactiveCoursesSection()">
           Show ${inactiveCourses.length} inactive course${inactiveCourses.length > 1 ? 's' : ''}
         </button>
       </div>`;
@@ -3403,10 +3412,10 @@ function openNewAssignmentModal(assignmentId = null) {
 
     // Dates
     if (assignment.availableFrom) {
-      document.getElementById('newAssignmentAvailableFrom').value = assignment.availableFrom.split('T')[0];
+      document.getElementById('newAssignmentAvailableFrom').value = assignment.availableFrom.slice(0, 16);
     }
     if (assignment.availableUntil) {
-      document.getElementById('newAssignmentAvailableUntil').value = assignment.availableUntil.split('T')[0];
+      document.getElementById('newAssignmentAvailableUntil').value = assignment.availableUntil.slice(0, 16);
     }
     setDateTimeSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm', assignment.dueDate);
 
@@ -4445,6 +4454,18 @@ function renderModules() {
 function openModuleFile(fileId, event) {
   if (event?.target?.closest('.module-item-actions')) return;
   viewFile(fileId);
+}
+
+function isAssignmentVisibleInGradebook(assignment) {
+  if (!assignment || assignment.courseId !== activeCourseId) return false;
+
+  // Show published assignments and anything that has passed its availability/due window
+  // so staff can always grade closed work even if content status remains draft.
+  const now = Date.now();
+  const published = assignment.status === 'published';
+  const closedByUntil = assignment.availableUntil && new Date(assignment.availableUntil).getTime() <= now;
+  const closedByDue = assignment.dueDate && new Date(assignment.dueDate).getTime() <= now;
+  return published || closedByUntil || closedByDue;
 }
 
 // Module drag-and-drop handlers
@@ -5552,7 +5573,7 @@ function renderStudentGradebook() {
   setHTML('gradebookActions', '');
   
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
+    .filter(a => isAssignmentVisibleInGradebook(a))
     .sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
   
   if (assignments.length === 0) {
@@ -5639,7 +5660,7 @@ function renderStaffGradebook() {
   `);
 
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
+    .filter(a => isAssignmentVisibleInGradebook(a))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
   let students = appData.enrollments
@@ -6307,9 +6328,14 @@ function updateAiActionField(idx, field, value) {
 
 
 function rejectAiAction(idx) {
-  const msg = aiThread[idx];
+  let msg = aiThread[idx];
+  if (!msg || msg.role !== 'action') {
+    msg = [...aiThread].reverse().find(m => m.role === 'action' && !m.hidden && !m.confirmed && !m.rejected);
+  }
   if (!msg || msg.role !== 'action') return;
-  msg.rejected = true;
+
+  if (!msg.confirmed && !msg.rejected) msg.rejected = true;
+  msg.hidden = true;
   aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
   renderAiThread();
 }
@@ -8326,6 +8352,8 @@ window.createCourse = createCourse;
 window.joinCourse = joinCourse;
 window.updateCourse = updateCourse;
 window.switchCourse = switchCourse;
+window.showInactiveCoursesSection = showInactiveCoursesSection;
+window.hideInactiveCoursesSection = hideInactiveCoursesSection;
 
 // Start Here section
 window.addStartHereLink = addStartHereLink;
