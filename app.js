@@ -154,6 +154,9 @@ import {
   formatFileSize,
   convertPlaceholderToFile,
   convertPlaceholderToLink,
+  getCourseCreationSyllabusData,
+  getCourseCreationSyllabusFile,
+  clearCourseCreationSyllabusData,
   setActiveCourseId as setFileActiveCourseId,
   setStudentViewMode as setFileStudentViewMode,
   viewFile
@@ -196,7 +199,7 @@ function initModules() {
     closeModal,
     setText,
     setHTML,
-    confirm,
+    confirm: showConfirmDialog,
     // Data helpers
     getCourseById,
     getUserById,
@@ -285,7 +288,7 @@ function initModules() {
     closeModal,
     setHTML,
     setText,
-    confirm,
+    confirm: showConfirmDialog,
     getCourseById,
     getUserById,
     isStaff,
@@ -309,7 +312,7 @@ function initModules() {
     closeModal,
     setText,
     setHTML,
-    confirm,
+    confirm: showConfirmDialog,
     getCourseById,
     getUserById,
     isStaff,
@@ -1558,7 +1561,7 @@ function onSyllabusFileSelected() {
         <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
         <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
       </div>
-      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
     `;
     // Re-attach the selected file to the new hidden input via DataTransfer
     try {
@@ -1579,12 +1582,12 @@ function clearSyllabusUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
     `;
   }
   const status = document.getElementById('courseCreationSyllabusStatus');
   if (status) status.innerHTML = '';
-  courseCreationSyllabusData = null;
+  clearCourseCreationSyllabusData();
 }
 
 // Handlers for the syllabus parser modal drop zone
@@ -1600,7 +1603,7 @@ function handleSyllabusParserDrop(e) {
   const files = e.dataTransfer.files;
   if (files.length > 0) {
     const file = files[0];
-    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
+    const validTypes = ['.pdf', '.doc', '.docx', '.txt', '.tex'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!validTypes.includes(ext)) {
       showToast('Please upload a PDF, DOC, or TXT file', 'error');
@@ -1643,14 +1646,10 @@ function clearSyllabusParserUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusParserFileSelected()">
+      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusParserFileSelected()">
     `;
   }
 }
-
-// Store parsed syllabus data for course creation
-let courseCreationSyllabusData = null;
-
 
 async function createCourse() {
   const name = document.getElementById('courseName').value.trim();
@@ -1667,7 +1666,8 @@ async function createCourse() {
   const inviteCode = generateInviteCode();
 
   // Check if we have parsed syllabus data and should create modules
-  const hasSyllabusData = courseCreationSyllabusData && courseCreationSyllabusData.modules;
+  const parsedSyllabusData = getCourseCreationSyllabusData();
+  const hasSyllabusData = parsedSyllabusData && parsedSyllabusData.modules;
   const checkedModules = document.querySelectorAll('.course-creation-module-check:checked');
   const selectedModuleIndices = new Set(Array.from(checkedModules).map(el => parseInt(el.dataset.index)));
 
@@ -1677,9 +1677,9 @@ async function createCourse() {
 
   // If syllabus was uploaded, save it as a file and add to pinned essentials
   const syllabusInput = document.getElementById('courseCreationSyllabus');
+  const syllabusFile = syllabusInput?.files?.[0] || getCourseCreationSyllabusFile();
   let syllabusFileId = null;
-  if (syllabusInput && syllabusInput.files.length > 0) {
-    const syllabusFile = syllabusInput.files[0];
+  if (syllabusFile) {
     syllabusFileId = generateId();
     const syllabusFileData = {
       id: syllabusFileId,
@@ -1698,17 +1698,20 @@ async function createCourse() {
         .from('course-files')
         .upload(syllabusFileData.storagePath, syllabusFile, { cacheControl: '3600', upsert: false });
 
-      if (uploadData) {
+      if (uploadError || !uploadData?.path) {
+        console.error('[createCourse] Failed to upload syllabus file:', uploadError);
+        showToast('Could not upload syllabus file to storage. Course will still be created.', 'warning');
+      } else {
         syllabusFileData.storagePath = uploadData.path;
+
+        // Save file metadata only after successful upload
+        const savedSyllabusFile = await supabaseCreateFile(syllabusFileData);
+        if (savedSyllabusFile) {
+          appData.files.push(syllabusFileData);
+          startHereLinks.push({ label: 'Syllabus', fileId: syllabusFileId });
+        }
       }
     }
-
-    // Save file metadata
-    await supabaseCreateFile(syllabusFileData);
-    appData.files.push(syllabusFileData);
-
-    // Add syllabus to pinned essentials
-    startHereLinks.push({ label: 'Syllabus', fileId: syllabusFileId });
   }
 
   if (hasSyllabusData && selectedModuleIndices.size > 0) {
@@ -1789,7 +1792,7 @@ async function createCourse() {
   if (hasSyllabusData && selectedModuleIndices.size > 0) {
     if (!appData.modules) appData.modules = [];
 
-    for (const [modIndex, mod] of courseCreationSyllabusData.modules.entries()) {
+    for (const [modIndex, mod] of parsedSyllabusData.modules.entries()) {
       if (!selectedModuleIndices.has(modIndex)) continue;
 
       const courseModules = appData.modules.filter(m => m.courseId === courseId);
@@ -1821,6 +1824,7 @@ async function createCourse() {
             questions: [],
             isPlaceholder: true
           };
+          await supabaseCreateQuiz(newQuiz);
           appData.quizzes.push(newQuiz);
           refId = newQuiz.id;
         } else if (item.type === 'reading') {
@@ -1830,12 +1834,13 @@ async function createCourse() {
             name: item.title,
             type: 'placeholder',
             size: 0,
-            visible: false,
+            hidden: true,
             isPlaceholder: true,
             description: item.description || '',
             uploadedBy: appData.currentUser.id,
             uploadedAt: new Date().toISOString()
           };
+          await supabaseCreateFile(newFile);
           appData.files.push(newFile);
           refId = newFile.id;
         } else {
@@ -1851,6 +1856,7 @@ async function createCourse() {
             createdAt: new Date().toISOString(),
             isPlaceholder: true
           };
+          await supabaseCreateAssignment(newAssignment);
           appData.assignments.push(newAssignment);
           refId = newAssignment.id;
         }
@@ -1867,6 +1873,9 @@ async function createCourse() {
       }
 
       await supabaseCreateModule(newModule);
+      for (const moduleItem of newModule.items) {
+        await supabaseCreateModuleItem(moduleItem, newModule.id);
+      }
       appData.modules.push(newModule);
       modulesImported++;
     }
@@ -1902,7 +1911,7 @@ async function createCourse() {
   if (document.getElementById('courseCreationModulesPreview')) {
     document.getElementById('courseCreationModulesPreview').style.display = 'none';
   }
-  courseCreationSyllabusData = null;
+  clearCourseCreationSyllabusData();
 }
 
 async function joinCourse() {
@@ -4385,6 +4394,7 @@ function renderModules() {
              draggable="${effectiveStaff}"
              data-module-id="${mod.id}"
              data-item-id="${item.id}"
+             onclick="${item.type === 'file' ? `openModuleFile('${item.refId}', event)` : ''}"
              ondragstart="handleModuleItemDragStart(event)"
              ondragover="handleModuleItemDragOver(event)"
              ondrop="handleModuleItemDrop(event)"
@@ -4430,6 +4440,11 @@ function renderModules() {
   }).join('');
 
   setHTML('modulesList', html);
+}
+
+function openModuleFile(fileId, event) {
+  if (event?.target?.closest('.module-item-actions')) return;
+  viewFile(fileId);
 }
 
 // Module drag-and-drop handlers
@@ -8500,13 +8515,7 @@ window.updatePeopleSearch = updatePeopleSearch;
 window.handleFilesDrop = handleFilesDrop;
 window.viewFile = viewFile;
 window.updateFileUploadPreview = updateFileUploadPreview;
-
-// Syllabus parsing
-window.onSyllabusFileSelected = onSyllabusFileSelected;
-window.clearSyllabusUpload = clearSyllabusUpload;
-window.handleSyllabusParserDrop = handleSyllabusParserDrop;
-window.onSyllabusParserFileSelected = onSyllabusParserFileSelected;
-window.clearSyllabusParserUpload = clearSyllabusParserUpload;
+window.openModuleFile = openModuleFile;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZ TIME OVERRIDES (per-student time limits)
