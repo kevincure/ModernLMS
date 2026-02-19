@@ -1326,6 +1326,31 @@ export async function supabaseDeleteFile(fileId) {
     return false;
   }
 
+  // Find file first so we can remove corresponding storage object
+  const { data: fileRecord, error: fileReadError } = await supabaseClient
+    .from('files')
+    .select('id, storage_path')
+    .eq('id', fileId)
+    .single();
+
+  if (fileReadError) {
+    console.error('[Supabase] Error reading file before delete:', fileReadError);
+    if (showToast) showToast('Failed to delete file: ' + fileReadError.message, 'error');
+    return false;
+  }
+
+  if (fileRecord?.storage_path) {
+    const { error: storageError } = await supabaseClient.storage
+      .from('course-files')
+      .remove([fileRecord.storage_path]);
+
+    if (storageError) {
+      console.error('[Supabase] Error deleting storage object:', storageError);
+      if (showToast) showToast('Failed to delete file from storage: ' + storageError.message, 'error');
+      return false;
+    }
+  }
+
   const { error } = await supabaseClient.from('files').delete().eq('id', fileId);
   if (error) {
     console.error('[Supabase] Error deleting file:', error);
