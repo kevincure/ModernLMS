@@ -36,6 +36,7 @@ let confirm = null;
 let filesSearch = '';
 let filesSort = 'date-desc';
 let courseCreationSyllabusData = null;
+let courseCreationSyllabusFile = null; // saved File reference (survives dropzone HTML replacement)
 let parsedSyllabusData = null;
 let pendingUploadFiles = [];
 
@@ -182,6 +183,7 @@ export function onSyllabusFileSelected() {
   const input = document.getElementById('courseCreationSyllabus');
   if (input.files.length > 0) {
     const file = input.files[0];
+    courseCreationSyllabusFile = file; // save before innerHTML wipes the input element
     const dropZone = document.getElementById('syllabusDropZone');
     if (dropZone) {
       dropZone.innerHTML = `
@@ -214,19 +216,19 @@ export function clearSyllabusUpload() {
   const status = document.getElementById('courseCreationSyllabusStatus');
   if (status) status.innerHTML = '';
   courseCreationSyllabusData = null;
+  courseCreationSyllabusFile = null;
 }
 
 export async function parseCourseSyllabus() {
   const fileInput = document.getElementById('courseCreationSyllabus');
-  if (!fileInput || !fileInput.files || !fileInput.files.length) {
+  const file = fileInput?.files?.[0] || courseCreationSyllabusFile;
+  if (!file) {
     showToast('Please select a syllabus file first', 'error');
     return;
   }
 
   const statusEl = document.getElementById('courseCreationSyllabusStatus');
   if (statusEl) statusEl.innerHTML = '<div class="ai-spinner" style="display:inline-block; width:16px; height:16px; margin-right:8px;"></div> Parsing syllabus with AI…';
-
-  const file = fileInput.files[0];
   try {
     const base64Data = await fileToBase64(file);
     const mimeType = file.type || 'application/octet-stream';
@@ -837,6 +839,10 @@ export async function viewFile(fileId) {
       .createSignedUrl(file.storagePath, 3600);
     if (!error && data?.signedUrl) {
       fileUrl = data.signedUrl;
+    } else if (error?.message?.toLowerCase().includes('bucket not found') ||
+               error?.error?.toLowerCase?.()?.includes('bucket not found')) {
+      showToast('Storage bucket "course-files" not found — create it in your Supabase Storage dashboard', 'error');
+      return;
     } else {
       // Fallback: try public URL (works if bucket is public)
       const { data: pubData } = supabaseClient.storage

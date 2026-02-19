@@ -7973,15 +7973,21 @@ function closeDiscussionThread() {
   renderDiscussion();
 }
 
+function closeDiscussionThreadModal() {
+  document.getElementById('discussionThreadModal')?.remove();
+}
+
 function openCreateDiscussionThreadModal() {
   if (!activeCourseId) return;
+  // Remove any stale copy before inserting a fresh one
+  closeDiscussionThreadModal();
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
   const modalHtml = `
     <div class="modal-overlay" id="discussionThreadModal" style="display:flex;">
       <div class="modal" style="max-width:600px;">
         <div class="modal-header">
           <h2 class="modal-title">New Discussion Thread</h2>
-          <button class="modal-close" onclick="closeModal('discussionThreadModal')">&times;</button>
+          <button class="modal-close" onclick="closeDiscussionThreadModal()">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -8000,7 +8006,7 @@ function openCreateDiscussionThreadModal() {
           </div>` : ''}
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('discussionThreadModal')">Cancel</button>
+          <button class="btn btn-secondary" onclick="closeDiscussionThreadModal()">Cancel</button>
           <button class="btn btn-primary" onclick="createDiscussionThread()">Create Thread</button>
         </div>
       </div>
@@ -8032,7 +8038,7 @@ function createDiscussionThread() {
   // Optimistic update — don't block UI on Supabase
   if (!appData.discussionThreads) appData.discussionThreads = [];
   appData.discussionThreads.unshift(thread);
-  closeModal('discussionThreadModal');
+  closeDiscussionThreadModal();
   openDiscussionThread(thread.id);
   showToast('Thread created!', 'success');
   supabaseCreateDiscussionThread(thread); // fire and don't await
@@ -8168,24 +8174,26 @@ async function toggleDiscussionHide(threadId) {
   if (ok) renderDiscussion();
 }
 
-async function deleteDiscussionThread(threadId) {
-  if (!await showConfirmDialog('Delete this thread and all its replies?')) return;
-  // Optimistic update
-  appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
-  if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
-  renderDiscussion();
-  showToast('Thread deleted', 'success');
-  supabaseDeleteDiscussionThread(threadId); // fire and don't await
+function deleteDiscussionThread(threadId) {
+  ensureModalsRendered();
+  showConfirmDialog('Delete this thread and all its replies?', () => {
+    appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
+    if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
+    renderDiscussion();
+    showToast('Thread deleted', 'success');
+    supabaseDeleteDiscussionThread(threadId);
+  });
 }
 
-async function deleteDiscussionReply(replyId, threadId) {
-  if (!await showConfirmDialog('Delete this reply?')) return;
-  // Optimistic update
-  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
-  if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
-  renderDiscussion();
-  showToast('Reply deleted', 'success');
-  supabaseDeleteDiscussionReply(replyId); // fire and don't await
+function deleteDiscussionReply(replyId, threadId) {
+  ensureModalsRendered();
+  showConfirmDialog('Delete this reply?', () => {
+    const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+    if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
+    renderDiscussion();
+    showToast('Reply deleted', 'success');
+    supabaseDeleteDiscussionReply(replyId);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -8740,6 +8748,7 @@ window.removeDeadlineOverride = removeDeadlineOverride;
 window.openDiscussionThread = openDiscussionThread;
 window.closeDiscussionThread = closeDiscussionThread;
 window.openCreateDiscussionThreadModal = openCreateDiscussionThreadModal;
+window.closeDiscussionThreadModal = closeDiscussionThreadModal;
 window.createDiscussionThread = createDiscussionThread;
 window.postDiscussionReply = postDiscussionReply;
 window.postDiscussionAiReply = postDiscussionAiReply;
