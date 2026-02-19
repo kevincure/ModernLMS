@@ -199,7 +199,7 @@ function initModules() {
     closeModal,
     setText,
     setHTML,
-    confirm,
+    confirm: showConfirmDialog,
     // Data helpers
     getCourseById,
     getUserById,
@@ -288,7 +288,7 @@ function initModules() {
     closeModal,
     setHTML,
     setText,
-    confirm,
+    confirm: showConfirmDialog,
     getCourseById,
     getUserById,
     isStaff,
@@ -312,7 +312,7 @@ function initModules() {
     closeModal,
     setText,
     setHTML,
-    confirm,
+    confirm: showConfirmDialog,
     getCourseById,
     getUserById,
     isStaff,
@@ -1561,7 +1561,7 @@ function onSyllabusFileSelected() {
         <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
         <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
       </div>
-      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
     `;
     // Re-attach the selected file to the new hidden input via DataTransfer
     try {
@@ -1582,7 +1582,7 @@ function clearSyllabusUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
     `;
   }
   const status = document.getElementById('courseCreationSyllabusStatus');
@@ -1603,7 +1603,7 @@ function handleSyllabusParserDrop(e) {
   const files = e.dataTransfer.files;
   if (files.length > 0) {
     const file = files[0];
-    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
+    const validTypes = ['.pdf', '.doc', '.docx', '.txt', '.tex'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!validTypes.includes(ext)) {
       showToast('Please upload a PDF, DOC, or TXT file', 'error');
@@ -1646,7 +1646,7 @@ function clearSyllabusParserUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusParserFileSelected()">
+      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusParserFileSelected()">
     `;
   }
 }
@@ -4394,6 +4394,7 @@ function renderModules() {
              draggable="${effectiveStaff}"
              data-module-id="${mod.id}"
              data-item-id="${item.id}"
+             onclick="${item.type === 'file' ? `openModuleFile('${item.refId}', event)` : ''}"
              ondragstart="handleModuleItemDragStart(event)"
              ondragover="handleModuleItemDragOver(event)"
              ondrop="handleModuleItemDrop(event)"
@@ -4439,6 +4440,11 @@ function renderModules() {
   }).join('');
 
   setHTML('modulesList', html);
+}
+
+function openModuleFile(fileId, event) {
+  if (event?.target?.closest('.module-item-actions')) return;
+  viewFile(fileId);
 }
 
 // Module drag-and-drop handlers
@@ -8509,13 +8515,7 @@ window.updatePeopleSearch = updatePeopleSearch;
 window.handleFilesDrop = handleFilesDrop;
 window.viewFile = viewFile;
 window.updateFileUploadPreview = updateFileUploadPreview;
-
-// Syllabus parsing
-window.onSyllabusFileSelected = onSyllabusFileSelected;
-window.clearSyllabusUpload = clearSyllabusUpload;
-window.handleSyllabusParserDrop = handleSyllabusParserDrop;
-window.onSyllabusParserFileSelected = onSyllabusParserFileSelected;
-window.clearSyllabusParserUpload = clearSyllabusParserUpload;
+window.openModuleFile = openModuleFile;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZ TIME OVERRIDES (per-student time limits)

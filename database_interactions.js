@@ -1331,7 +1331,7 @@ export async function supabaseDeleteFile(fileId) {
     .from('files')
     .select('id, storage_path')
     .eq('id', fileId)
-    .single();
+    .maybeSingle();
 
   if (fileReadError) {
     console.error('[Supabase] Error reading file before delete:', fileReadError);
@@ -1387,7 +1387,7 @@ export async function supabaseUpdateFile(file) {
     hidden: file.hidden || false
   };
 
-  let { data, error } = await supabaseClient.from('files').update(modernPayload).eq('id', file.id).select().single();
+  let { data, error } = await supabaseClient.from('files').update(modernPayload).eq('id', file.id).select().maybeSingle();
 
   if (error?.code === 'PGRST204' && /mime_type|size_bytes|storage_path/.test(error.message || '')) {
     console.warn('[Supabase] Canonical file columns missing, retrying update with legacy file schema');
@@ -1401,7 +1401,12 @@ export async function supabaseUpdateFile(file) {
       is_youtube: file.isYouTube,
       hidden: file.hidden || false
     };
-    ({ data, error } = await supabaseClient.from('files').update(legacyPayload).eq('id', file.id).select().single());
+    ({ data, error } = await supabaseClient.from('files').update(legacyPayload).eq('id', file.id).select().maybeSingle());
+  }
+
+  if (!error && !data) {
+    console.warn('[Supabase] File update affected 0 rows:', file.id);
+    return null;
   }
 
   if (error) {

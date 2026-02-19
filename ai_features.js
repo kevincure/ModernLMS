@@ -1297,13 +1297,14 @@ async function executeAiOperation(operation, publish = false) {
  * Reject an AI action
  */
 export function rejectAiAction(idx) {
-  // Try the exact index first; fallback to finding the latest pending action
+  // Prefer exact index to avoid stale-index issues after rerenders
   let msg = aiThread[idx];
-  if (!msg || msg.role !== 'action' || msg.confirmed || msg.rejected) {
-    msg = [...aiThread].reverse().find(m => m.role === 'action' && !m.confirmed && !m.rejected);
+  if (!msg || msg.role !== 'action') {
+    msg = [...aiThread].reverse().find(m => m.role === 'action' && !m.hidden && !m.confirmed && !m.rejected);
   }
-  if (!msg || msg.role !== 'action' || msg.confirmed || msg.rejected) return;
-  msg.rejected = true;
+  if (!msg || msg.role !== 'action') return;
+
+  if (!msg.confirmed && !msg.rejected) msg.rejected = true;
   msg.hidden = true;
   aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
   try {
