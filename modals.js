@@ -1277,6 +1277,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">Cancel</button>
+          <button class="btn btn-secondary" id="newAssignmentOverridesBtn" style="display:none;" onclick="openDeadlineOverridesFromModal()">Deadline Overrides</button>
           <button class="btn btn-primary" id="newAssignmentSubmitBtn" onclick="saveNewAssignment()">Create Assignment</button>
         </div>
       </div>

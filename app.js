@@ -358,6 +358,78 @@ function updateModuleStudentViewMode(mode) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FLOATING CONTEXT MENU SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let _openMenuId = null;
+
+function closeMenu() {
+  if (_openMenuId) {
+    const menu = document.getElementById(_openMenuId);
+    if (menu) menu.classList.remove('menu-open');
+    _openMenuId = null;
+  }
+}
+
+function toggleMenu(event, menuId) {
+  event.stopPropagation();
+
+  // If this menu is already open, close it
+  if (_openMenuId === menuId) {
+    closeMenu();
+    return;
+  }
+
+  // Close any currently open menu
+  closeMenu();
+
+  const menu = document.getElementById(menuId);
+  if (!menu) return;
+
+  const btn = event.currentTarget;
+  const rect = btn.getBoundingClientRect();
+
+  // Horizontal: right-align to button, but clamp to viewport
+  const menuWidth = Math.max(menu.offsetWidth || 190, 180);
+  const rightSpace = window.innerWidth - rect.right;
+  if (rightSpace < menuWidth - rect.width && rect.left >= menuWidth) {
+    menu.style.right = 'auto';
+    menu.style.left = `${Math.max(8, rect.left)}px`;
+  } else {
+    menu.style.left = 'auto';
+    menu.style.right = `${Math.max(8, rightSpace)}px`;
+  }
+
+  // Vertical: below button unless near bottom of viewport
+  const estimatedMenuHeight = (menu.children.length || 4) * 38 + 12;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  if (spaceBelow < estimatedMenuHeight + 8) {
+    menu.style.top = 'auto';
+    menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+  } else {
+    menu.style.bottom = 'auto';
+    menu.style.top = `${rect.bottom + 4}px`;
+  }
+
+  menu.classList.add('menu-open');
+  _openMenuId = menuId;
+}
+
+// Close menus when clicking outside
+document.addEventListener('click', (e) => {
+  if (_openMenuId && !e.target.closest('.floating-menu') && !e.target.closest('[data-menu-btn]')) {
+    closeMenu();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeMenu();
+});
+
+window.toggleMenu = toggleMenu;
+window.closeMenu = closeMenu;
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SUPABASE CLIENT INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2116,7 +2188,7 @@ function renderStartHere(course) {
         if (link.fileId) {
           const file = appData.files.find(f => f.id === link.fileId);
           if (file) {
-            return `<a href="#" onclick="openFile('${file.id}'); return false;" class="pill pill-link">📄 ${escapeHtml(link.label)}</a>`;
+            return `<a href="#" onclick="openFile('${file.id}'); return false;" class="pill pill-link">${escapeHtml(link.label)}</a>`;
           }
           return ''; // File not found
         }
@@ -2317,14 +2389,12 @@ function renderUpdates() {
       : '';
 
     const announcementMenu = effectiveStaff ? `
-      <details style="position:relative;" onclick="event.stopPropagation();">
-        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
-        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleAnnouncementVisibility('${a.id}')">${visibilityText}</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editAnnouncement('${a.id}')">Edit</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteAnnouncement('${a.id}')">Delete</button>
-        </div>
-      </details>
+      <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-ann-${a.id}')">☰</button>
+      <div id="menu-ann-${a.id}" class="floating-menu">
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleAnnouncementVisibility('${a.id}')">${visibilityText}</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); editAnnouncement('${a.id}')">Edit</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteAnnouncement('${a.id}')" style="color:var(--danger);">Delete</button>
+      </div>
     ` : '';
 
     return `
@@ -2538,9 +2608,16 @@ function renderAssignments() {
   // When in student view mode, show as student would see
   const effectiveStaff = isStaffUser && !studentViewMode;
 
+  const _now = new Date();
   const assignments = appData.assignments
     .filter(a => a.courseId === activeCourseId)
-    .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
+    .filter(a => {
+      if (effectiveStaff) return true;
+      if (a.status !== 'published' || a.hidden) return false;
+      // Hide from students until availableFrom has passed
+      if (a.availableFrom && _now < new Date(a.availableFrom)) return false;
+      return true;
+    })
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const quizzes = appData.quizzes
@@ -2560,36 +2637,46 @@ function renderAssignments() {
     const submissionCount = appData.submissions.filter(s => s.assignmentId === a.id).length;
     const isPlaceholder = a.isPlaceholder;
 
-    // Only show CLOSED for that specific state; hidden assignments show HIDDEN badge
-    const statusBadge = a.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
+    // Status and visibility badges for staff
     const isHiddenAssignment = !!a.hidden || a.status !== 'published';
     const assignmentVisibilityText = isHiddenAssignment ? 'Make Visible' : 'Hide from Students';
+    const nowMs = Date.now();
+    const availFrom = a.availableFrom ? new Date(a.availableFrom) : null;
+    const availUntil = a.availableUntil ? new Date(a.availableUntil) : null;
+    const notYetAvail = effectiveStaff && !isHiddenAssignment && availFrom && nowMs < availFrom.getTime();
+    const availEnded = effectiveStaff && !isHiddenAssignment && availUntil && nowMs > availUntil.getTime();
 
-    // Single visibility badge for staff — non-clickable, like hidden announcements/files
-    const visibilityBadge = effectiveStaff && isHiddenAssignment ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">HIDDEN</span>` : '';
+    let visibilityBadge = '';
+    if (effectiveStaff) {
+      if (isHiddenAssignment) {
+        visibilityBadge = `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">Hidden</span>`;
+      } else if (notYetAvail) {
+        visibilityBadge = `<span style="padding:4px 8px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:0.75rem; font-weight:600;" title="Opens ${availFrom.toLocaleString()}">Not Yet Visible</span>`;
+      } else if (availEnded && !a.allowLateSubmissions) {
+        visibilityBadge = `<span style="padding:4px 8px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:0.75rem; font-weight:600;" title="Closed ${availUntil.toLocaleString()}">Availability Ended</span>`;
+      } else if (availEnded && a.allowLateSubmissions) {
+        visibilityBadge = `<span style="padding:4px 8px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:0.75rem; font-weight:600;">Late Submissions Open</span>`;
+      }
+    }
 
     const assignmentMenu = effectiveStaff ? `
-      <details style="position:relative;" onclick="event.stopPropagation();">
-        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
-        <div style="position:absolute; right:0; top:32px; min-width:190px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleAssignmentVisibility('${a.id}')">${assignmentVisibilityText}</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editAssignment('${a.id}')">Edit</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openDeadlineOverridesModal('${a.id}')">Edit: Overrides</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
-        </div>
-      </details>
+      <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-assign-${a.id}')">☰</button>
+      <div id="menu-assign-${a.id}" class="floating-menu">
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleAssignmentVisibility('${a.id}')">${assignmentVisibilityText}</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); editAssignment('${a.id}')">Edit</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
+      </div>
     ` : '';
 
     return `
       <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHiddenAssignment ? 'opacity:0.7; border-style:dashed;' : ''}">
         <div class="card-header">
           <div>
-            <div class="card-title">${escapeHtml(a.title)} ${statusBadge} ${visibilityBadge}</div>
-            <div class="muted">${formatDueDate(a.dueDate)} · ${a.points} points${a.externalUrl ? ' · 🔗 External Link' : ''}</div>
+            <div class="card-title">${escapeHtml(a.title)} ${visibilityBadge}</div>
+            <div class="muted">${formatDueDate(a.dueDate)} · ${a.points} points${a.externalUrl ? ' · External Link' : ''}${notYetAvail ? ` · Opens ${availFrom.toLocaleDateString()}` : ''}${availEnded ? ` · Closed ${availUntil.toLocaleDateString()}` : ''}</div>
           </div>
-          <div style="display:flex; gap:8px;">
+          <div style="display:flex; gap:8px; align-items:center;">
             ${effectiveStaff ? assignmentMenu : mySubmission ? `
               <button class="btn btn-secondary btn-sm" onclick="viewMySubmission('${a.id}')">View Submission</button>
             ` : a.status === 'published' && !isPast ? `
@@ -2598,7 +2685,7 @@ function renderAssignments() {
           </div>
         </div>
         <div class="markdown-content">${renderMarkdownWithLinkedFiles(a.description)}</div>
-        ${a.externalUrl ? `<div style="margin-top:8px;"><a href="${escapeHtml(a.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">🔗 Open External Link</a></div>` : ''}
+        ${a.externalUrl ? `<div style="margin-top:8px;"><a href="${escapeHtml(a.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Open External Link</a></div>` : ''}
       </div>
     `;
   }).join('');
@@ -2619,7 +2706,7 @@ function renderAssignments() {
 
     // Single visibility badge for staff — replaces DRAFT label
     const visibilityBadge = effectiveStaff && q.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">HIDDEN</span>` : '';
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">Hidden</span>` : '';
 
     const myTimeOverride = (appData.quizTimeOverrides || []).find(o => o.quizId === q.id && o.userId === appData.currentUser.id);
     const effectiveTimeLimit = myTimeOverride ? myTimeOverride.timeLimit : q.timeLimit;
@@ -3020,7 +3107,13 @@ async function updateAssignment() {
 }
 
 function editAssignment(assignmentId) {
-  openAssignmentModal(assignmentId);
+  openNewAssignmentModal(assignmentId);
+}
+
+function openDeadlineOverridesFromModal() {
+  if (currentNewAssignmentEditId) {
+    openDeadlineOverridesModal(currentNewAssignmentEditId);
+  }
 }
 
 function deleteAssignment(assignmentId) {
@@ -3468,6 +3561,10 @@ function openNewAssignmentModal(assignmentId = null) {
   } else {
     resetNewAssignmentModal();
   }
+
+  // Show "Deadline Overrides" button only when editing an existing assignment
+  const overridesBtn = document.getElementById('newAssignmentOverridesBtn');
+  if (overridesBtn) overridesBtn.style.display = assignmentId ? 'inline-flex' : 'none';
 
   openModal('newAssignmentModal');
 }
@@ -4423,7 +4520,7 @@ function renderModules() {
 
     const itemsHtml = items.map((item, itemIndex) => {
       let itemData = null;
-      let itemIcon = '📄';
+      let itemIcon = '';
       let itemTitle = 'Unknown Item';
       let statusBadge = '';
 
@@ -4443,10 +4540,8 @@ function renderModules() {
         }
       } else if (item.type === 'file') {
         itemData = appData.files.find(f => f.id === item.refId);
-        itemIcon = '📁';
         if (itemData) itemTitle = itemData.name;
       } else if (item.type === 'page') {
-        itemIcon = '📃';
         itemTitle = item.title || 'Untitled Page';
       }
 
@@ -4488,15 +4583,13 @@ function renderModules() {
       : '';
 
     const moduleMenu = effectiveStaff ? `
-      <details style="position:relative;" onclick="event.stopPropagation();">
-        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
-        <div style="position:absolute; right:0; top:32px; min-width:200px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openAddModuleItemModal('${mod.id}')">Add Item</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editModule('${mod.id}')">Edit</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteModule('${mod.id}')">Delete</button>
-        </div>
-      </details>
+      <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-mod-${mod.id}')">☰</button>
+      <div id="menu-mod-${mod.id}" class="floating-menu">
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); openAddModuleItemModal('${mod.id}')">Add Item</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); editModule('${mod.id}')">Edit</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteModule('${mod.id}')" style="color:var(--danger);">Delete</button>
+      </div>
     ` : '';
 
     return `
@@ -5786,10 +5879,13 @@ function renderStaffGradebook() {
     );
   }
 
-  if (students.length === 0 || assignments.length === 0) {
-    setHTML('gradebookWrap', gradebookSearch
-      ? '<div class="empty-state-text">No students match your search</div>'
-      : '<div class="empty-state-text">No students or assignments yet</div>');
+  if (assignments.length === 0) {
+    setHTML('gradebookWrap', '<div class="empty-state-text">No assignments yet</div>');
+    return;
+  }
+
+  if (students.length === 0 && gradebookSearch) {
+    setHTML('gradebookWrap', '<div class="empty-state-text">No students match your search</div>');
     return;
   }
   
@@ -5857,7 +5953,13 @@ function renderStaffGradebook() {
           </tr>
         </thead>
         <tbody>
-          ${students.map((student, studentIdx) => {
+          ${students.length === 0 ? `
+            <tr>
+              <td colspan="${assignments.length + 2 + (gradeSettings ? 1 : 0)}" style="padding:24px; text-align:center; color:var(--text-muted);">
+                No students enrolled yet
+              </td>
+            </tr>
+          ` : students.map((student, studentIdx) => {
             let totalScore = 0;
             let totalPoints = 0;
 
@@ -8023,7 +8125,7 @@ function renderDiscussionList(isStaffUser, course) {
           <div style="flex:1;">
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               ${t.pinned ? '<span style="font-size:0.7rem; background:var(--primary); color:#fff; padding:2px 7px; border-radius:10px; font-weight:700; letter-spacing:0.05em;">PINNED</span>' : ''}
-              ${t.hidden ? '<span style="font-size:0.7rem; background:var(--warning,#f59e0b); color:#fff; padding:2px 7px; border-radius:10px; font-weight:700; letter-spacing:0.05em;">HIDDEN</span>' : ''}
+              ${t.hidden ? '<span style="font-size:0.7rem; background:var(--warning,#f59e0b); color:#fff; padding:2px 7px; border-radius:10px; font-weight:700; letter-spacing:0.05em;">Hidden</span>' : ''}
               <div class="card-title" style="margin:0;">${escapeHtml(t.title)}</div>
             </div>
             <div class="muted" style="font-size:0.85rem; margin-top:4px;">
@@ -8499,6 +8601,7 @@ window.deleteAssignment = deleteAssignment;
 window.saveAssignmentChanges = saveAssignmentChanges;
 window.saveNewAssignment = saveNewAssignment;
 window.openNewAssignmentModal = openNewAssignmentModal;
+window.openDeadlineOverridesFromModal = openDeadlineOverridesFromModal;
 window.handleNewAssignmentTypeChange = handleNewAssignmentTypeChange;
 window.openAssignmentModal = openAssignmentModal;
 window.toggleAssignmentVisibility = toggleAssignmentVisibility;
