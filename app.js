@@ -112,6 +112,7 @@ import {
   initAiModule,
   sendAiMessage,
   confirmAiAction,
+  rejectAiAction as rejectAiActionFromModule,
   buildAiContext,
   renderAiThread,
   clearAiThread,
@@ -154,6 +155,9 @@ import {
   formatFileSize,
   convertPlaceholderToFile,
   convertPlaceholderToLink,
+  getCourseCreationSyllabusData,
+  getCourseCreationSyllabusFile,
+  clearCourseCreationSyllabusData,
   setActiveCourseId as setFileActiveCourseId,
   setStudentViewMode as setFileStudentViewMode,
   viewFile
@@ -196,7 +200,7 @@ function initModules() {
     closeModal,
     setText,
     setHTML,
-    confirm,
+    confirm: showConfirmDialog,
     // Data helpers
     getCourseById,
     getUserById,
@@ -285,7 +289,7 @@ function initModules() {
     closeModal,
     setHTML,
     setText,
-    confirm,
+    confirm: showConfirmDialog,
     getCourseById,
     getUserById,
     isStaff,
@@ -309,7 +313,7 @@ function initModules() {
     closeModal,
     setText,
     setHTML,
-    confirm,
+    confirm: showConfirmDialog,
     getCourseById,
     getUserById,
     isStaff,
@@ -1241,6 +1245,18 @@ function renderTopBarCourse() {
   renderTopBarViewToggle();
 }
 
+function renderMarkdownWithLinkedFiles(markdownText) {
+  const html = renderMarkdown(markdownText || '');
+  return html.replace(/href="#file-([^"]+)"/g, (m, fileId) => `href="#" onclick="openLinkedFile('${fileId}'); return false;"`);
+}
+
+function openLinkedFile(fileId) {
+  if (!fileId) return;
+  if (window.viewFile) {
+    window.viewFile(fileId);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // NAVIGATION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1286,6 +1302,16 @@ function navigateTo(page) {
 
 let showInactiveCourses = false;
 
+function showInactiveCoursesSection() {
+  showInactiveCourses = true;
+  renderCourses();
+}
+
+function hideInactiveCoursesSection() {
+  showInactiveCourses = false;
+  renderCourses();
+}
+
 function renderCourses() {
   const allCourses = getUserCourses(appData.currentUser.id);
   const activeCourses = allCourses.filter(c => c.active !== false);
@@ -1307,7 +1333,6 @@ function renderCourses() {
           <div>
             <div class="card-title">
               ${escapeHtml(c.name)}
-              ${isActiveCourse ? ' <span style="font-size:0.7rem; font-weight:700; background:var(--primary); color:#fff; padding:2px 7px; border-radius:10px; vertical-align:middle;">ACTIVE</span>' : ''}
               ${dimmed ? ' <span style="font-size:0.7rem; font-weight:600; background:var(--border-color); color:var(--text-muted); padding:2px 7px; border-radius:10px; vertical-align:middle;">INACTIVE</span>' : ''}
             </div>
             <div class="muted">${escapeHtml(c.code)} · ${roleLabel}</div>
@@ -1339,13 +1364,13 @@ function renderCourses() {
       html += `<div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border-color);">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
           <span class="muted" style="font-size:0.9rem; font-weight:600;">Inactive / Archived Courses (${inactiveCourses.length})</span>
-          <button class="btn btn-secondary btn-sm" onclick="showInactiveCourses=false; renderCourses();">Hide</button>
+          <button class="btn btn-secondary btn-sm" onclick="hideInactiveCoursesSection()">Hide</button>
         </div>
         ${inactiveCourses.map(c => courseCard(c, true)).join('')}
       </div>`;
     } else {
       html += `<div style="margin-top:16px; text-align:center;">
-        <button class="btn btn-secondary btn-sm" onclick="showInactiveCourses=true; renderCourses();">
+        <button class="btn btn-secondary btn-sm" onclick="showInactiveCoursesSection()">
           Show ${inactiveCourses.length} inactive course${inactiveCourses.length > 1 ? 's' : ''}
         </button>
       </div>`;
@@ -1558,7 +1583,7 @@ function onSyllabusFileSelected() {
         <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
         <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
       </div>
-      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
     `;
     // Re-attach the selected file to the new hidden input via DataTransfer
     try {
@@ -1579,12 +1604,12 @@ function clearSyllabusUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
     `;
   }
   const status = document.getElementById('courseCreationSyllabusStatus');
   if (status) status.innerHTML = '';
-  courseCreationSyllabusData = null;
+  clearCourseCreationSyllabusData();
 }
 
 // Handlers for the syllabus parser modal drop zone
@@ -1600,7 +1625,7 @@ function handleSyllabusParserDrop(e) {
   const files = e.dataTransfer.files;
   if (files.length > 0) {
     const file = files[0];
-    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
+    const validTypes = ['.pdf', '.doc', '.docx', '.txt', '.tex'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!validTypes.includes(ext)) {
       showToast('Please upload a PDF, DOC, or TXT file', 'error');
@@ -1643,14 +1668,10 @@ function clearSyllabusParserUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusParserFileSelected()">
+      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusParserFileSelected()">
     `;
   }
 }
-
-// Store parsed syllabus data for course creation
-let courseCreationSyllabusData = null;
-
 
 async function createCourse() {
   const name = document.getElementById('courseName').value.trim();
@@ -1667,7 +1688,8 @@ async function createCourse() {
   const inviteCode = generateInviteCode();
 
   // Check if we have parsed syllabus data and should create modules
-  const hasSyllabusData = courseCreationSyllabusData && courseCreationSyllabusData.modules;
+  const parsedSyllabusData = getCourseCreationSyllabusData();
+  const hasSyllabusData = parsedSyllabusData && parsedSyllabusData.modules;
   const checkedModules = document.querySelectorAll('.course-creation-module-check:checked');
   const selectedModuleIndices = new Set(Array.from(checkedModules).map(el => parseInt(el.dataset.index)));
 
@@ -1677,9 +1699,9 @@ async function createCourse() {
 
   // If syllabus was uploaded, save it as a file and add to pinned essentials
   const syllabusInput = document.getElementById('courseCreationSyllabus');
+  const syllabusFile = syllabusInput?.files?.[0] || getCourseCreationSyllabusFile();
   let syllabusFileId = null;
-  if (syllabusInput && syllabusInput.files.length > 0) {
-    const syllabusFile = syllabusInput.files[0];
+  if (syllabusFile) {
     syllabusFileId = generateId();
     const syllabusFileData = {
       id: syllabusFileId,
@@ -1698,17 +1720,20 @@ async function createCourse() {
         .from('course-files')
         .upload(syllabusFileData.storagePath, syllabusFile, { cacheControl: '3600', upsert: false });
 
-      if (uploadData) {
+      if (uploadError || !uploadData?.path) {
+        console.error('[createCourse] Failed to upload syllabus file:', uploadError);
+        showToast('Could not upload syllabus file to storage. Course will still be created.', 'warning');
+      } else {
         syllabusFileData.storagePath = uploadData.path;
+
+        // Save file metadata only after successful upload
+        const savedSyllabusFile = await supabaseCreateFile(syllabusFileData);
+        if (savedSyllabusFile) {
+          appData.files.push(syllabusFileData);
+          startHereLinks.push({ label: 'Syllabus', fileId: syllabusFileId });
+        }
       }
     }
-
-    // Save file metadata
-    await supabaseCreateFile(syllabusFileData);
-    appData.files.push(syllabusFileData);
-
-    // Add syllabus to pinned essentials
-    startHereLinks.push({ label: 'Syllabus', fileId: syllabusFileId });
   }
 
   if (hasSyllabusData && selectedModuleIndices.size > 0) {
@@ -1789,7 +1814,7 @@ async function createCourse() {
   if (hasSyllabusData && selectedModuleIndices.size > 0) {
     if (!appData.modules) appData.modules = [];
 
-    for (const [modIndex, mod] of courseCreationSyllabusData.modules.entries()) {
+    for (const [modIndex, mod] of parsedSyllabusData.modules.entries()) {
       if (!selectedModuleIndices.has(modIndex)) continue;
 
       const courseModules = appData.modules.filter(m => m.courseId === courseId);
@@ -1821,6 +1846,7 @@ async function createCourse() {
             questions: [],
             isPlaceholder: true
           };
+          await supabaseCreateQuiz(newQuiz);
           appData.quizzes.push(newQuiz);
           refId = newQuiz.id;
         } else if (item.type === 'reading') {
@@ -1830,12 +1856,13 @@ async function createCourse() {
             name: item.title,
             type: 'placeholder',
             size: 0,
-            visible: false,
+            hidden: true,
             isPlaceholder: true,
             description: item.description || '',
             uploadedBy: appData.currentUser.id,
             uploadedAt: new Date().toISOString()
           };
+          await supabaseCreateFile(newFile);
           appData.files.push(newFile);
           refId = newFile.id;
         } else {
@@ -1851,6 +1878,7 @@ async function createCourse() {
             createdAt: new Date().toISOString(),
             isPlaceholder: true
           };
+          await supabaseCreateAssignment(newAssignment);
           appData.assignments.push(newAssignment);
           refId = newAssignment.id;
         }
@@ -1867,6 +1895,9 @@ async function createCourse() {
       }
 
       await supabaseCreateModule(newModule);
+      for (const moduleItem of newModule.items) {
+        await supabaseCreateModuleItem(moduleItem, newModule.id);
+      }
       appData.modules.push(newModule);
       modulesImported++;
     }
@@ -1902,7 +1933,7 @@ async function createCourse() {
   if (document.getElementById('courseCreationModulesPreview')) {
     document.getElementById('courseCreationModulesPreview').style.display = 'none';
   }
-  courseCreationSyllabusData = null;
+  clearCourseCreationSyllabusData();
 }
 
 async function joinCourse() {
@@ -2280,23 +2311,36 @@ function renderUpdates() {
 
   const html = announcements.map(a => {
     const author = getUserById(a.authorId);
-    const visibilityText = a.hidden ? 'Hidden' : 'Hide from Students';
+    const visibilityText = a.hidden ? 'Make Visible' : 'Hide from Students';
+    const hiddenBadge = a.hidden
+      ? '<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">Hidden</span>'
+      : '';
+
+    const announcementMenu = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleAnnouncementVisibility('${a.id}')">${visibilityText}</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editAnnouncement('${a.id}')">Edit</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteAnnouncement('${a.id}')">Delete</button>
+        </div>
+      </details>
+    ` : '';
+
     return `
       <div class="card" data-announcement-id="${a.id}" style="${a.hidden ? 'opacity:0.7; border-style:dashed;' : ''} transition: background-color 0.3s ease;">
         <div class="card-header">
           <div>
-            <div class="card-title">${escapeHtml(a.title)} ${a.pinned ? '📌' : ''}</div>
+            <div class="card-title">${escapeHtml(a.title)} ${a.pinned ? '📌' : ''} ${hiddenBadge}</div>
             <div class="muted">${author ? escapeHtml(author.name) : 'Unknown'} · ${formatDate(a.createdAt)}</div>
           </div>
           ${effectiveStaff ? `
             <div style="display:flex; gap:8px; align-items:center;">
-              <button class="btn btn-secondary btn-sm" onclick="toggleAnnouncementVisibility('${a.id}')" style="padding:4px 8px;">${visibilityText}</button>
-              <button class="btn btn-secondary btn-sm" onclick="editAnnouncement('${a.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="deleteAnnouncement('${a.id}')">Delete</button>
+              ${announcementMenu}
             </div>
           ` : ''}
         </div>
-        <div class="markdown-content">${renderMarkdown(a.content)}</div>
+        <div class="markdown-content">${renderMarkdownWithLinkedFiles(a.content)}</div>
       </div>
     `;
   }).join('');
@@ -2496,7 +2540,7 @@ function renderAssignments() {
 
   const assignments = appData.assignments
     .filter(a => a.courseId === activeCourseId)
-    .filter(a => effectiveStaff || a.status === 'published')
+    .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const quizzes = appData.quizzes
@@ -2518,32 +2562,42 @@ function renderAssignments() {
 
     // Only show CLOSED for that specific state; hidden assignments show HIDDEN badge
     const statusBadge = a.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
+    const isHiddenAssignment = !!a.hidden || a.status !== 'published';
+    const assignmentVisibilityText = isHiddenAssignment ? 'Make Visible' : 'Hide from Students';
 
-    // Single visibility badge for staff — replaces DRAFT label
-    const visibilityBadge = effectiveStaff && a.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleAssignmentVisibility('${a.id}')" title="Click to publish">HIDDEN</span>` : '';
+    // Single visibility badge for staff — non-clickable, like hidden announcements/files
+    const visibilityBadge = effectiveStaff && isHiddenAssignment ?
+      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">HIDDEN</span>` : '';
+
+    const assignmentMenu = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:190px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleAssignmentVisibility('${a.id}')">${assignmentVisibilityText}</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editAssignment('${a.id}')">Edit</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openDeadlineOverridesModal('${a.id}')">Edit: Overrides</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
+        </div>
+      </details>
+    ` : '';
 
     return `
-      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
+      <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHiddenAssignment ? 'opacity:0.7; border-style:dashed;' : ''}">
         <div class="card-header">
           <div>
             <div class="card-title">${escapeHtml(a.title)} ${statusBadge} ${visibilityBadge}</div>
             <div class="muted">${formatDueDate(a.dueDate)} · ${a.points} points${a.externalUrl ? ' · 🔗 External Link' : ''}</div>
           </div>
           <div style="display:flex; gap:8px;">
-            ${effectiveStaff ? `
-              <button class="btn btn-secondary btn-sm" onclick="viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
-              <button class="btn btn-secondary btn-sm" onclick="openDeadlineOverridesModal('${a.id}')">Overrides</button>
-              <button class="btn btn-secondary btn-sm" onclick="editAssignment('${a.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
-            ` : mySubmission ? `
+            ${effectiveStaff ? assignmentMenu : mySubmission ? `
               <button class="btn btn-secondary btn-sm" onclick="viewMySubmission('${a.id}')">View Submission</button>
             ` : a.status === 'published' && !isPast ? `
               <button class="btn btn-primary btn-sm" onclick="submitAssignment('${a.id}')">Submit</button>
             ` : ''}
           </div>
         </div>
-        <div class="markdown-content">${renderMarkdown(a.description)}</div>
+        <div class="markdown-content">${renderMarkdownWithLinkedFiles(a.description)}</div>
         ${a.externalUrl ? `<div style="margin-top:8px;"><a href="${escapeHtml(a.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">🔗 Open External Link</a></div>` : ''}
       </div>
     `;
@@ -2600,7 +2654,7 @@ function renderAssignments() {
             ` : ''}
           </div>
         </div>
-        <div class="markdown-content">${renderMarkdown(q.description || '')}</div>
+        <div class="markdown-content">${renderMarkdownWithLinkedFiles(q.description || '')}</div>
       </div>
     `;
   }).join('');
@@ -2750,13 +2804,20 @@ function exportCalendarICS() {
   showToast('Calendar exported!', 'success');
 }
 
+function normalizeContentStatus(status) {
+  // DB enum supports draft/published only
+  if (status === 'closed') return 'published';
+  if (status === 'active') return 'published';
+  return status || 'draft';
+}
+
 async function createAssignment() {
   const title = document.getElementById('assignmentTitle').value.trim();
   const description = document.getElementById('assignmentDescription').value.trim();
   const category = document.getElementById('assignmentCategory').value;
   const points = parseInt(document.getElementById('assignmentPoints').value);
   const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = document.getElementById('assignmentStatus').value;
+  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
   const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
@@ -2776,6 +2837,7 @@ async function createAssignment() {
     category: category,
     points: points,
     status: status,
+    hidden: status !== 'published',
     dueDate: new Date(dueDate).toISOString(),
     createdAt: new Date().toISOString(),
     allowLateSubmissions: allowLate,
@@ -2873,7 +2935,7 @@ function openAssignmentModal(assignmentId = null) {
   document.getElementById('assignmentCategory').value = assignment ? assignment.category : 'homework';
   document.getElementById('assignmentPoints').value = assignment ? assignment.points : '100';
   setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', assignment ? assignment.dueDate : null);
-  document.getElementById('assignmentStatus').value = assignment ? assignment.status : 'draft';
+  document.getElementById('assignmentStatus').value = assignment ? normalizeContentStatus(assignment.status) : 'draft';
   document.getElementById('assignmentAllowLate').checked = assignment ? assignment.allowLateSubmissions !== false : true;
   document.getElementById('assignmentLateDeduction').value = assignment ? assignment.lateDeduction || 0 : '10';
   document.getElementById('assignmentAllowResubmit').checked = assignment ? assignment.allowResubmission !== false : true;
@@ -2915,7 +2977,7 @@ async function updateAssignment() {
   const category = document.getElementById('assignmentCategory').value;
   const points = parseInt(document.getElementById('assignmentPoints').value);
   const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = document.getElementById('assignmentStatus').value;
+  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
   const allowLate = document.getElementById('assignmentAllowLate').checked;
   const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
   const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
@@ -2935,6 +2997,7 @@ async function updateAssignment() {
   assignment.category = category;
   assignment.points = points;
   assignment.status = status;
+  assignment.hidden = status !== 'published';
   assignment.dueDate = new Date(dueDate).toISOString();
   assignment.allowLateSubmissions = allowLate;
   assignment.lateDeduction = lateDeduction;
@@ -3377,7 +3440,7 @@ function openNewAssignmentModal(assignmentId = null) {
     document.getElementById('newAssignmentDescription').value = assignment.description || '';
     document.getElementById('newAssignmentIntroNotes').value = assignment.introNotes || '';
     document.getElementById('newAssignmentPoints').value = assignment.points || 100;
-    document.getElementById('newAssignmentStatus').value = assignment.status || 'draft';
+    document.getElementById('newAssignmentStatus').value = normalizeContentStatus(assignment.status || 'draft');
     document.getElementById('newAssignmentAllowLate').checked = assignment.allowLateSubmissions !== false;
     document.getElementById('newAssignmentLatePenaltyType').value = assignment.latePenaltyType || 'per_day';
     document.getElementById('newAssignmentLatePenalty').value = assignment.lateDeduction || 10;
@@ -3394,10 +3457,10 @@ function openNewAssignmentModal(assignmentId = null) {
 
     // Dates
     if (assignment.availableFrom) {
-      document.getElementById('newAssignmentAvailableFrom').value = assignment.availableFrom.split('T')[0];
+      document.getElementById('newAssignmentAvailableFrom').value = assignment.availableFrom.slice(0, 16);
     }
     if (assignment.availableUntil) {
-      document.getElementById('newAssignmentAvailableUntil').value = assignment.availableUntil.split('T')[0];
+      document.getElementById('newAssignmentAvailableUntil').value = assignment.availableUntil.slice(0, 16);
     }
     setDateTimeSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm', assignment.dueDate);
 
@@ -3468,7 +3531,7 @@ async function saveNewAssignment() {
   const availableFrom = document.getElementById('newAssignmentAvailableFrom').value;
   const availableUntil = document.getElementById('newAssignmentAvailableUntil').value;
   const dueDate = getDateTimeFromSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm');
-  const status = document.getElementById('newAssignmentStatus').value;
+  const status = normalizeContentStatus(document.getElementById('newAssignmentStatus').value);
   const allowLate = document.getElementById('newAssignmentAllowLate').checked;
   const latePenaltyType = document.getElementById('newAssignmentLatePenaltyType').value;
   const latePenalty = parseInt(document.getElementById('newAssignmentLatePenalty').value) || 0;
@@ -3519,6 +3582,7 @@ async function saveNewAssignment() {
     assignment.availableUntil = availableUntil ? new Date(availableUntil).toISOString() : null;
     assignment.dueDate = new Date(dueDate).toISOString();
     assignment.status = status;
+    assignment.hidden = status !== 'published';
     assignment.allowLateSubmissions = allowLate;
     assignment.latePenaltyType = latePenaltyType;
     assignment.lateDeduction = latePenalty;
@@ -3555,6 +3619,7 @@ async function saveNewAssignment() {
       availableUntil: availableUntil ? new Date(availableUntil).toISOString() : null,
       dueDate: new Date(dueDate).toISOString(),
       status: status,
+      hidden: status !== 'published',
       allowLateSubmissions: allowLate,
       latePenaltyType: latePenaltyType,
       lateDeduction: latePenalty,
@@ -3593,10 +3658,25 @@ function saveSubmission() {
   const fileInput = document.getElementById('submissionFile');
   
   const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment) {
+    showToast('Assignment not found', 'error');
+    return;
+  }
+
+  const now = new Date();
+
+  if (assignment.availableFrom && now < new Date(assignment.availableFrom)) {
+    showToast('This assignment is not available yet', 'error');
+    return;
+  }
+
+  if (assignment.availableUntil && now > new Date(assignment.availableUntil)) {
+    showToast('This assignment is closed (past available-until)', 'error');
+    return;
+  }
   
   // Check if past due and late submissions not allowed
   const dueDate = new Date(assignment.dueDate);
-  const now = new Date();
   
   if (now > dueDate && !assignment.allowLateSubmissions) {
     showToast('This assignment is past due and does not accept late submissions', 'error');
@@ -4385,6 +4465,7 @@ function renderModules() {
              draggable="${effectiveStaff}"
              data-module-id="${mod.id}"
              data-item-id="${item.id}"
+             onclick="${item.type === 'file' ? `openModuleFile('${item.refId}', event)` : ''}"
              ondragstart="handleModuleItemDragStart(event)"
              ondragover="handleModuleItemDragOver(event)"
              ondrop="handleModuleItemDrop(event)"
@@ -4401,7 +4482,22 @@ function renderModules() {
       `;
     }).join('');
 
-    const moduleVisText = mod.hidden ? 'Hidden' : 'Hide from Students';
+    const moduleVisText = mod.hidden ? 'Make Visible' : 'Hide from Students';
+    const moduleHiddenBadge = mod.hidden
+      ? '<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; margin-left:8px;">Hidden</span>'
+      : '';
+
+    const moduleMenu = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:200px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openAddModuleItemModal('${mod.id}')">Add Item</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editModule('${mod.id}')">Edit</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteModule('${mod.id}')">Delete</button>
+        </div>
+      </details>
+    ` : '';
 
     return `
       <div class="module-card ${effectiveStaff ? 'draggable' : ''}" style="${mod.hidden ? 'opacity:0.7; border-style:dashed;' : ''}"
@@ -4412,13 +4508,10 @@ function renderModules() {
            ondrop="handleModuleDrop(event)"
            ondragend="handleModuleDragEnd(event)">
         <div class="module-header">
-          <h3 class="module-title">${escapeHtml(mod.name)}</h3>
+          <h3 class="module-title">${escapeHtml(mod.name)} ${moduleHiddenBadge}</h3>
           ${effectiveStaff ? `
             <div class="module-actions">
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleModuleVisibility('${mod.id}')">${moduleVisText}</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openAddModuleItemModal('${mod.id}')">Add Item</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editModule('${mod.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteModule('${mod.id}')">Delete</button>
+              ${moduleMenu}
             </div>
           ` : ''}
         </div>
@@ -4430,6 +4523,24 @@ function renderModules() {
   }).join('');
 
   setHTML('modulesList', html);
+}
+
+function openModuleFile(fileId, event) {
+  if (event?.target?.closest('.module-item-actions')) return;
+  viewFile(fileId);
+}
+
+function isAssignmentVisibleInGradebook(assignment) {
+  if (!assignment || assignment.courseId !== activeCourseId) return false;
+
+  // Show active/published/closed assignments and anything that has passed
+  // availability/due windows (treated as closed for grading visibility).
+  const now = Date.now();
+  const status = (assignment.status || '').toLowerCase();
+  const published = status === 'published' || status === 'active' || status === 'closed';
+  const closedByUntil = assignment.availableUntil && new Date(assignment.availableUntil).getTime() <= now;
+  const closedByDue = assignment.dueDate && new Date(assignment.dueDate).getTime() <= now;
+  return published || closedByUntil || closedByDue;
 }
 
 // Module drag-and-drop handlers
@@ -5525,6 +5636,7 @@ function renderGradebook() {
   setText('gradebookSubtitle', course.name);
 
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  debugGradebookAssignmentVisibility();
 
   if (isStaffUser) {
     renderStaffGradebook();
@@ -5533,11 +5645,44 @@ function renderGradebook() {
   }
 }
 
+function debugGradebookAssignmentVisibility() {
+  const now = Date.now();
+  const relevant = (appData.assignments || []).filter(a => a.courseId === activeCourseId);
+  const details = relevant.map(a => {
+    const status = (a.status || '').toLowerCase();
+    const publishedLike = status === 'published' || status === 'active' || status === 'closed';
+    const closedByUntil = !!(a.availableUntil && new Date(a.availableUntil).getTime() <= now);
+    const closedByDue = !!(a.dueDate && new Date(a.dueDate).getTime() <= now);
+    const visible = isAssignmentVisibleInGradebook(a);
+    const reasons = [];
+    if (publishedLike) reasons.push('status');
+    if (closedByUntil) reasons.push('availableUntil<=now');
+    if (closedByDue) reasons.push('dueDate<=now');
+    return {
+      id: a.id,
+      title: a.title,
+      status: a.status,
+      hidden: !!a.hidden,
+      dueDate: a.dueDate,
+      availableFrom: a.availableFrom,
+      availableUntil: a.availableUntil,
+      visible,
+      reasons: reasons.join('|') || 'none'
+    };
+  });
+
+  console.groupCollapsed('[Gradebook Debug] Assignment visibility');
+  console.log('activeCourseId:', activeCourseId);
+  console.log('total assignments in course:', relevant.length);
+  console.table(details);
+  console.groupEnd();
+}
+
 function renderStudentGradebook() {
   setHTML('gradebookActions', '');
   
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
+    .filter(a => isAssignmentVisibleInGradebook(a))
     .sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
   
   if (assignments.length === 0) {
@@ -5624,7 +5769,7 @@ function renderStaffGradebook() {
   `);
 
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
+    .filter(a => isAssignmentVisibleInGradebook(a))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
   let students = appData.enrollments
@@ -5977,7 +6122,7 @@ async function saveManualGrade() {
 
 function exportGradebook() {
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
+    .filter(a => isAssignmentVisibleInGradebook(a))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
   
   const students = appData.enrollments
@@ -6292,10 +6437,15 @@ function updateAiActionField(idx, field, value) {
 
 
 function rejectAiAction(idx) {
-  const msg = aiThread[idx];
+  let msg = aiThread[idx];
+  if (!msg || msg.role !== 'action') {
+    msg = [...aiThread].reverse().find(m => m.role === 'action' && !m.hidden && !m.confirmed && !m.rejected);
+  }
   if (!msg || msg.role !== 'action') return;
-  msg.rejected = true;
-  aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
+
+  if (!msg.confirmed && !msg.rejected) msg.rejected = true;
+  msg.hidden = true;
+  aiThread.push({ role: 'assistant', content: 'No problem - canceled that proposal and no changes have been made.' });
   renderAiThread();
 }
 
@@ -7675,16 +7825,27 @@ function saveExternalLink() {
 // VISIBILITY TOGGLES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function toggleAssignmentVisibility(assignmentId) {
+async function toggleAssignmentVisibility(assignmentId) {
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
 
-  const wasPublished = assignment.status === 'published';
-  assignment.status = wasPublished ? 'draft' : 'published';
+  const originalStatus = assignment.status;
+  const originalHidden = assignment.hidden;
+  const shouldHide = !(assignment.hidden || assignment.status !== 'published');
 
+  assignment.hidden = shouldHide;
+  assignment.status = shouldHide ? 'draft' : 'published';
+
+  const result = await supabaseUpdateAssignment(assignment);
+  if (!result) {
+    assignment.status = originalStatus;
+    assignment.hidden = originalHidden;
+    showToast('Failed to update assignment visibility', 'error');
+    return;
+  }
 
   renderAssignments();
-  showToast(wasPublished ? 'Assignment hidden from students' : 'Assignment published!', 'success');
+  showToast(shouldHide ? 'Assignment hidden from students' : 'Assignment visible to students', 'success');
 }
 
 function toggleQuizVisibility(quizId) {
@@ -8305,12 +8466,15 @@ window.openModal = openModal;
 window.closeModal = closeModal;
 window.openImportContentModal = openImportContentModal;
 window.executeImportContent = executeImportContent;
+window.openLinkedFile = openLinkedFile;
 
 // Course management
 window.createCourse = createCourse;
 window.joinCourse = joinCourse;
 window.updateCourse = updateCourse;
 window.switchCourse = switchCourse;
+window.showInactiveCoursesSection = showInactiveCoursesSection;
+window.hideInactiveCoursesSection = hideInactiveCoursesSection;
 
 // Start Here section
 window.addStartHereLink = addStartHereLink;
@@ -8500,13 +8664,7 @@ window.updatePeopleSearch = updatePeopleSearch;
 window.handleFilesDrop = handleFilesDrop;
 window.viewFile = viewFile;
 window.updateFileUploadPreview = updateFileUploadPreview;
-
-// Syllabus parsing
-window.onSyllabusFileSelected = onSyllabusFileSelected;
-window.clearSyllabusUpload = clearSyllabusUpload;
-window.handleSyllabusParserDrop = handleSyllabusParserDrop;
-window.onSyllabusParserFileSelected = onSyllabusParserFileSelected;
-window.clearSyllabusParserUpload = clearSyllabusParserUpload;
+window.openModuleFile = openModuleFile;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZ TIME OVERRIDES (per-student time limits)
@@ -8728,7 +8886,7 @@ window.debugAuthState = debugAuthState;
 window.viewSubmissionHistory = viewSubmissionHistory;
 window.scrollAiThreadToBottom = scrollAiThreadToBottom;
 window.updateAiActionField = updateAiActionField;
-window.rejectAiAction = rejectAiAction;
+window.rejectAiAction = rejectAiActionFromModule;
 
 // Grade settings
 window.openGradeSettingsModal = openGradeSettingsModal;

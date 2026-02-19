@@ -91,6 +91,9 @@ export function initFileHandlingModule(deps) {
   window.uploadFile = uploadFile;
   window.deleteFile = deleteFile;
   window.convertPlaceholderToFile = convertPlaceholderToFile;
+  window.updateFileContent = updateFileContent;
+  window.handlePlaceholderFileDrop = handlePlaceholderFileDrop;
+  window.renameFile = renameFile;
   window.convertPlaceholderToLink = convertPlaceholderToLink;
   window.toggleFileVisibility = toggleFileVisibility;
   window.convertYouTubeUrl = convertYouTubeUrl;
@@ -115,6 +118,13 @@ export function setStudentViewMode(mode) {
  */
 export function getCourseCreationSyllabusData() {
   return courseCreationSyllabusData;
+}
+
+/**
+ * Get selected syllabus file for course creation
+ */
+export function getCourseCreationSyllabusFile() {
+  return courseCreationSyllabusFile;
 }
 
 /**
@@ -164,7 +174,7 @@ export function handleSyllabusDrop(e) {
   const files = e.dataTransfer.files;
   if (files.length > 0) {
     const file = files[0];
-    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
+    const validTypes = ['.pdf', '.doc', '.docx', '.txt', '.tex'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!validTypes.includes(ext)) {
       showToast('Please upload a PDF, DOC, or TXT file', 'error');
@@ -210,7 +220,7 @@ export function clearSyllabusUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
     `;
   }
   const status = document.getElementById('courseCreationSyllabusStatus');
@@ -356,7 +366,7 @@ export function handleSyllabusParserDrop(e) {
   const files = e.dataTransfer.files;
   if (files.length > 0) {
     const file = files[0];
-    const validTypes = ['.pdf', '.doc', '.docx', '.txt'];
+    const validTypes = ['.pdf', '.doc', '.docx', '.txt', '.tex'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!validTypes.includes(ext)) {
       showToast('Please upload a PDF, DOC, or TXT file', 'error');
@@ -399,7 +409,7 @@ export function clearSyllabusParserUpload() {
       <div style="margin-bottom:8px;">📄</div>
       <div style="font-weight:500;">Drag & drop syllabus here</div>
       <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusParserFileSelected()">
+      <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusParserFileSelected()">
     `;
   }
 }
@@ -864,7 +874,7 @@ export async function viewFile(fileId) {
   }
 
   const ext = (file.name || '').split('.').pop().toLowerCase();
-  const viewableExts = ['pdf', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+  const viewableExts = ['pdf', 'txt', 'tex', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
   const googleViewerExts = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'];
 
   // Build viewer modal
@@ -872,7 +882,7 @@ export async function viewFile(fileId) {
   if (viewableExts.includes(ext)) {
     if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
       viewerContent = `<img src="${escapeHtml(fileUrl)}" alt="${escapeHtml(file.name)}" style="max-width:100%; max-height:75vh; object-fit:contain; display:block; margin:0 auto;">`;
-    } else if (ext === 'txt') {
+    } else if (ext === 'txt' || ext === 'tex') {
       // Load text inline
       viewerContent = `<div id="fileViewerTextContent" style="padding:16px; font-family:monospace; white-space:pre-wrap; max-height:70vh; overflow-y:auto; background:var(--bg-color); border-radius:var(--radius);">Loading…</div>`;
     } else {
@@ -916,7 +926,7 @@ export async function viewFile(fileId) {
   document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', modalHtml);
 
   // Load TXT content
-  if (ext === 'txt') {
+  if (ext === 'txt' || ext === 'tex') {
     try {
       const resp = await fetch(fileUrl);
       const text = await resp.text();
@@ -1013,15 +1023,30 @@ export function renderFiles() {
     const isHidden = f.hidden;
 
     // Visibility badge for staff
-    const visibilityText = isHidden ? 'Hidden' : 'Hide from Students';
-    const visibilityBadge = effectiveStaff
-      ? `<button class="btn btn-secondary btn-sm" onclick="toggleFileVisibility('${f.id}')" style="padding:2px 8px; margin-left:8px;">${visibilityText}</button>`
+    const visibilityText = isHidden ? 'Make Visible' : 'Hide from Students';
+    const visibilityBadge = isHidden
+      ? `<span style="padding:2px 8px; margin-left:8px; border-radius:4px; background:var(--danger-light); color:var(--danger); font-size:0.75rem; font-weight:600;">Hidden</span>`
       : '';
 
     const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '📄';
+    const menuButton = effectiveStaff ? `
+      <details style="position:relative;" onclick="event.stopPropagation();">
+        <summary class="btn btn-secondary btn-sm" style="list-style:none; cursor:pointer;">☰</summary>
+        <div style="position:absolute; right:0; top:32px; min-width:180px; z-index:5000; background:var(--card-bg); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); renameFile('${f.id}')">Rename</button>
+          ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); updateFileContent('${f.id}')">Replace File</button>` : ''}
+          ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteFile('${f.id}')">Delete</button>
+        </div>
+      </details>
+    ` : '';
 
     return `
-      <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}">
+      <div class="card"
+           style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''} ${(!isPlaceholder && !isExternal) ? 'cursor:pointer;' : ''}"
+           ${(!isPlaceholder && !isExternal) ? `onclick="window.viewFile('${f.id}')"` : ''}
+           ${isPlaceholder && effectiveStaff ? `ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border-color)'" ondrop="handlePlaceholderFileDrop(event, '${f.id}'); this.style.borderColor='var(--border-color)'"` : ''}>
         <div class="card-header">
           <div style="flex:1;">
             <div class="card-title">${icon} ${escapeHtml(f.name)} ${visibilityBadge}</div>
@@ -1035,14 +1060,9 @@ export function renderFiles() {
               <a href="${escapeHtml(f.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
                 ${f.isYouTube ? '▶ Watch' : '🔗 Open'}
               </a>
-            ` : !isPlaceholder && f.storagePath ? `
-              <button class="btn btn-primary btn-sm" onclick="window.viewFile('${f.id}')">View / Download</button>
             ` : ''}
-            ${effectiveStaff && isPlaceholder ? `
-              <button class="btn btn-secondary btn-sm" onclick="convertPlaceholderToFile('${f.id}')">📎 Upload File</button>
-              <button class="btn btn-secondary btn-sm" onclick="convertPlaceholderToLink('${f.id}')">🔗 Add Link</button>
-            ` : ''}
-            ${effectiveStaff ? `<button class="btn btn-secondary btn-sm" onclick="deleteFile('${f.id}')">Delete</button>` : ''}
+            ${effectiveStaff && isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToFile('${f.id}')">📎 Upload File</button>` : ''}
+            ${menuButton}
           </div>
         </div>
         ${isExternal && f.isYouTube ? `
@@ -1203,9 +1223,21 @@ export async function uploadFile() {
 }
 
 export function deleteFile(id) {
+  console.log('[deleteFile] Request received for file:', id);
+  if (typeof confirm !== 'function') {
+    console.error('[deleteFile] Confirm helper is not initialized');
+    showToast('Confirmation dialog not available', 'error');
+    return;
+  }
+
   confirm('Delete this file?', async () => {
+    console.log('[deleteFile] Confirmed delete for file:', id);
     // Delete from Supabase
-    await supabaseDeleteFile(id);
+    const deleted = await supabaseDeleteFile(id);
+    if (!deleted) {
+      console.warn('[deleteFile] Backend delete failed for file:', id);
+      return;
+    }
 
     appData.files = appData.files.filter(f => f.id !== id);
 
@@ -1249,20 +1281,105 @@ export function convertPlaceholderToFile(fileId) {
   input.onchange = async (e) => {
     const uploadedFile = e.target.files[0];
     if (uploadedFile) {
-      file.name = uploadedFile.name;
-      file.type = uploadedFile.name.split('.').pop();
-      file.size = uploadedFile.size;
-      file.isPlaceholder = false;
-      file.hidden = false;
-      // Persist to Supabase
-      await supabaseUpdateFile(file);
-
-      renderFiles();
-      if (renderModulesCallback) renderModulesCallback();
-      showToast('File uploaded!', 'success');
+      await replaceFileContent(file, uploadedFile, { publish: true });
     }
   };
   input.click();
+}
+
+export async function renameFile(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  const newName = prompt('Enter new file name:', file.name || '');
+  if (!newName || !newName.trim() || newName.trim() === file.name) return;
+
+  const originalName = file.name;
+  file.name = newName.trim();
+  const result = await supabaseUpdateFile(file);
+  if (!result) {
+    file.name = originalName;
+    showToast('Failed to rename file', 'error');
+    return;
+  }
+
+  renderFiles();
+  if (renderModulesCallback) renderModulesCallback();
+  showToast('File renamed', 'success');
+}
+
+export async function updateFileContent(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.onchange = async (e) => {
+    const uploadedFile = e.target.files[0];
+    if (uploadedFile) {
+      await replaceFileContent(file, uploadedFile, { publish: !file.hidden });
+    }
+  };
+  input.click();
+}
+
+export async function handlePlaceholderFileDrop(e, fileId) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const file = appData.files.find(f => f.id === fileId);
+  const droppedFile = e.dataTransfer?.files?.[0];
+  if (!file || !droppedFile) return;
+
+  await replaceFileContent(file, droppedFile, { publish: true });
+}
+
+async function replaceFileContent(fileRecord, uploadedFile, { publish = true } = {}) {
+  if (!supabaseClient) {
+    showToast('Database not connected', 'error');
+    return;
+  }
+
+  const newStoragePath = `courses/${fileRecord.courseId}/${fileRecord.id}_${uploadedFile.name}`;
+
+  const { data: uploadData, error: uploadError } = await supabaseClient.storage
+    .from('course-files')
+    .upload(newStoragePath, uploadedFile, { cacheControl: '3600', upsert: true });
+
+  if (uploadError || !uploadData?.path) {
+    console.error('[replaceFileContent] Storage upload error:', uploadError);
+    showToast('Failed to upload file content', 'error');
+    return;
+  }
+
+  const previousStoragePath = fileRecord.storagePath;
+  fileRecord.name = uploadedFile.name;
+  fileRecord.type = uploadedFile.name.split('.').pop().toLowerCase();
+  fileRecord.size = uploadedFile.size;
+  fileRecord.storagePath = uploadData.path;
+  fileRecord.isPlaceholder = false;
+  fileRecord.hidden = !publish;
+  fileRecord.externalUrl = null;
+  fileRecord.isYouTube = false;
+
+  let result = await supabaseUpdateFile(fileRecord);
+  if (!result) {
+    // Fallback for rows that were never persisted previously
+    result = await supabaseCreateFile(fileRecord);
+  }
+
+  if (!result) {
+    showToast('Failed to save file metadata', 'error');
+    return;
+  }
+
+  if (previousStoragePath && previousStoragePath !== uploadData.path) {
+    await supabaseClient.storage.from('course-files').remove([previousStoragePath]);
+  }
+
+  renderFiles();
+  if (renderModulesCallback) renderModulesCallback();
+  showToast('File updated!', 'success');
 }
 
 export async function convertPlaceholderToLink(fileId) {

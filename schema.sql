@@ -226,9 +226,12 @@ CREATE TABLE IF NOT EXISTS "public"."assignments" (
     "points" integer DEFAULT 100,
     "status" "public"."content_status" DEFAULT 'draft'::"public"."content_status",
     "due_date" timestamp with time zone,
+    "available_from" timestamp with time zone,
+    "available_until" timestamp with time zone,
     "allow_late_submissions" boolean DEFAULT true,
     "late_deduction" integer DEFAULT 10,
     "allow_resubmission" boolean DEFAULT true,
+    "hidden" boolean DEFAULT false,
     "category" "text" DEFAULT 'homework'::"text",
     "created_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"(),
@@ -1781,7 +1784,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
-
 
 
 
