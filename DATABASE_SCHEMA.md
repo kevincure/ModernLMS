@@ -1072,10 +1072,10 @@ CREATE OR REPLACE VIEW oneroster_enrollments AS
     id::text                                        AS "sourcedId",
     oneroster_status                                AS "status",
     date_last_modified                              AS "dateLastModified",
-    CASE role
+    CASE role::text
       WHEN 'instructor' THEN 'teacher'
       WHEN 'ta'         THEN 'teaching assistant'
-      ELSE role
+      ELSE role::text
     END                                             AS "role",
     course_id::text                                 AS "classSourcedId",
     user_id::text                                   AS "userSourcedId"
