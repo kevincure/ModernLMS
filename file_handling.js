@@ -36,6 +36,7 @@ let confirm = null;
 let filesSearch = '';
 let filesSort = 'date-desc';
 let courseCreationSyllabusData = null;
+let courseCreationSyllabusFile = null; // saved File reference (survives dropzone HTML replacement)
 let parsedSyllabusData = null;
 let pendingUploadFiles = [];
 
@@ -182,6 +183,7 @@ export function onSyllabusFileSelected() {
   const input = document.getElementById('courseCreationSyllabus');
   if (input.files.length > 0) {
     const file = input.files[0];
+    courseCreationSyllabusFile = file; // save before innerHTML wipes the input element
     const dropZone = document.getElementById('syllabusDropZone');
     if (dropZone) {
       dropZone.innerHTML = `
@@ -214,41 +216,53 @@ export function clearSyllabusUpload() {
   const status = document.getElementById('courseCreationSyllabusStatus');
   if (status) status.innerHTML = '';
   courseCreationSyllabusData = null;
+  courseCreationSyllabusFile = null;
 }
 
 export async function parseCourseSyllabus() {
   const fileInput = document.getElementById('courseCreationSyllabus');
-  if (!fileInput.files.length) {
-    showToast('Please select a syllabus file', 'error');
+  const file = fileInput?.files?.[0] || courseCreationSyllabusFile;
+  if (!file) {
+    showToast('Please select a syllabus file first', 'error');
     return;
   }
 
   const statusEl = document.getElementById('courseCreationSyllabusStatus');
-  statusEl.innerHTML = '<div class="ai-spinner" style="display:inline-block; width:16px; height:16px; margin-right:8px;"></div> Parsing syllabus...';
-
-  const file = fileInput.files[0];
+  if (statusEl) statusEl.innerHTML = '<div class="ai-spinner" style="display:inline-block; width:16px; height:16px; margin-right:8px;"></div> Parsing syllabus with AI…';
   try {
     const base64Data = await fileToBase64(file);
     const mimeType = file.type || 'application/octet-stream';
 
-    const systemPrompt = `You are analyzing a course syllabus. Extract course information and all assignments, modules/units, readings. Return ONLY valid JSON:
+    const systemPrompt = `You are analyzing a course syllabus. Extract everything needed to set up this course in an LMS. Return ONLY valid JSON with this exact shape:
 {
   "courseInfo": {
-    "name": "Course name",
-    "code": "Course code (e.g., ECON 101)",
-    "instructor": "Instructor name if found",
-    "description": "Course description if found"
+    "name": "Full course name (e.g. Introduction to Economics)",
+    "code": "Course code (e.g. ECON 101)",
+    "instructor": "Instructor/professor name if mentioned",
+    "description": "2-4 sentence course description from the syllabus"
   },
   "modules": [
     {
-      "name": "Module/Week/Unit name",
+      "name": "Module/Week/Unit name (e.g. Week 1: Supply and Demand)",
       "items": [
-        { "type": "assignment" | "quiz" | "reading", "title": "Item title", "description": "Brief description", "dueDate": "ISO date or null", "points": 100 }
+        {
+          "type": "assignment",
+          "title": "Item title",
+          "description": "What students need to do",
+          "dueDate": "YYYY-MM-DDThh:mm:ss.000Z or null",
+          "points": 100
+        }
       ]
     }
   ]
 }
-Extract EACH reading/chapter as a SEPARATE item. For exams/quizzes use type "quiz". For homework/essays use "assignment".`;
+Rules:
+- type must be "assignment" (homework/essays/projects), "quiz" (tests/quizzes/exams/midterms/finals), or "reading" (chapters/readings/lectures)
+- Create a module for each week, unit, topic section, or logical grouping
+- Create an item for every graded activity and every assigned reading
+- If no due date is found, use null
+- If no points are specified, estimate based on weight (e.g. 30% of 100pts course = 30pts)
+- Extract the description field even if it requires summarizing the syllabus`;
 
     const contents = [{
       parts: [
@@ -257,50 +271,71 @@ Extract EACH reading/chapter as a SEPARATE item. For exams/quizzes use type "qui
       ]
     }];
 
-    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: "application/json", temperature: 0.2 });
+    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: 'application/json', temperature: 0.2 });
     if (data.error) throw new Error(data.error.message);
 
     const text = data.candidates[0].content.parts[0].text;
     const parsed = parseAiJsonResponse(text);
     courseCreationSyllabusData = parsed;
 
-    // Auto-fill course info
+    // Auto-fill course info fields (only if empty)
     if (parsed.courseInfo) {
-      if (parsed.courseInfo.name && !document.getElementById('courseName').value) {
-        document.getElementById('courseName').value = parsed.courseInfo.name;
-      }
-      if (parsed.courseInfo.code && !document.getElementById('courseCode').value) {
-        document.getElementById('courseCode').value = parsed.courseInfo.code;
-      }
-      if (parsed.courseInfo.description && !document.getElementById('courseDescription').value) {
-        document.getElementById('courseDescription').value = parsed.courseInfo.description;
-      }
+      const nameEl = document.getElementById('courseName');
+      const codeEl = document.getElementById('courseCode');
+      const descEl = document.getElementById('courseDescription');
+      if (parsed.courseInfo.name && nameEl && !nameEl.value)
+        nameEl.value = parsed.courseInfo.name;
+      if (parsed.courseInfo.code && codeEl && !codeEl.value)
+        codeEl.value = parsed.courseInfo.code;
+      if (parsed.courseInfo.description && descEl && !descEl.value)
+        descEl.value = parsed.courseInfo.description;
     }
 
-    // Show modules preview
+    // Show module/item preview with checkboxes
+    const previewEl = document.getElementById('courseCreationModulesPreview');
+    const listEl = document.getElementById('courseCreationModulesList');
     if (parsed.modules && parsed.modules.length > 0) {
-      let totalItems = 0;
-      parsed.modules.forEach(m => totalItems += (m.items || []).length);
+      let totalAssignments = 0, totalQuizzes = 0, totalReadings = 0;
+      parsed.modules.forEach(m => (m.items || []).forEach(it => {
+        if (it.type === 'quiz') totalQuizzes++;
+        else if (it.type === 'reading') totalReadings++;
+        else totalAssignments++;
+      }));
+      const totalItems = totalAssignments + totalQuizzes + totalReadings;
 
-      const previewEl = document.getElementById('courseCreationModulesPreview');
-      const listEl = document.getElementById('courseCreationModulesList');
-      previewEl.style.display = 'block';
+      if (previewEl) previewEl.style.display = 'block';
+      if (listEl) listEl.innerHTML = parsed.modules.map((mod, idx) => {
+        const counts = (mod.items || []).reduce((acc, it) => {
+          acc[it.type] = (acc[it.type] || 0) + 1;
+          return acc;
+        }, {});
+        const countParts = [];
+        if (counts.assignment) countParts.push(`${counts.assignment} assignment${counts.assignment > 1 ? 's' : ''}`);
+        if (counts.quiz) countParts.push(`${counts.quiz} quiz/exam${counts.quiz > 1 ? 's' : ''}`);
+        if (counts.reading) countParts.push(`${counts.reading} reading${counts.reading > 1 ? 's' : ''}`);
+        return `
+          <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+            <input type="checkbox" checked class="course-creation-module-check" data-index="${idx}">
+            <span>${escapeHtml(mod.name)}</span>
+            <span class="muted" style="font-size:0.8rem;">${countParts.join(', ') || 'no items'}</span>
+          </label>
+        `;
+      }).join('');
 
-      listEl.innerHTML = parsed.modules.map((mod, idx) => `
-        <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
-          <input type="checkbox" checked class="course-creation-module-check" data-index="${idx}">
-          <span>${escapeHtml(mod.name)} <span class="muted">(${(mod.items || []).length} items)</span></span>
-        </label>
-      `).join('');
-
-      statusEl.innerHTML = `<span style="color:var(--success);">✓ Found ${parsed.modules.length} modules, ${totalItems} items</span>`;
+      const summaryParts = [];
+      if (totalAssignments) summaryParts.push(`${totalAssignments} assignments`);
+      if (totalQuizzes) summaryParts.push(`${totalQuizzes} quizzes/exams`);
+      if (totalReadings) summaryParts.push(`${totalReadings} readings`);
+      const instructorNote = parsed.courseInfo?.instructor ? ` · Instructor: ${parsed.courseInfo.instructor}` : '';
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--success);">✓ Parsed ${parsed.modules.length} modules, ${totalItems} items (${summaryParts.join(', ')})${instructorNote}</span>`;
     } else {
-      statusEl.innerHTML = '<span style="color:var(--warning);">No modules found in syllabus</span>';
+      if (previewEl) previewEl.style.display = 'none';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--warning);">No modules found — course info was extracted above</span>';
     }
 
   } catch (err) {
     console.error('Syllabus parsing error:', err);
-    statusEl.innerHTML = `<span style="color:var(--error);">Error: ${err.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--error);">Parsing error: ${escapeHtml(err.message)}</span>`;
     courseCreationSyllabusData = null;
   }
 }
@@ -804,6 +839,13 @@ export async function viewFile(fileId) {
       .createSignedUrl(file.storagePath, 3600);
     if (!error && data?.signedUrl) {
       fileUrl = data.signedUrl;
+    } else if (error?.message?.toLowerCase().includes('bucket not found') ||
+               error?.error?.toLowerCase?.()?.includes('bucket not found')) {
+      // Supabase returns "Bucket not found" both for missing buckets AND for RLS
+      // policy denials on storage.objects — check the SELECT policy on course-files.
+      console.error('[viewFile] Storage access denied (RLS or missing bucket):', error);
+      showToast('File access denied — check the SELECT policy on the "course-files" storage bucket in Supabase', 'error');
+      return;
     } else {
       // Fallback: try public URL (works if bucket is public)
       const { data: pubData } = supabaseClient.storage
@@ -1107,11 +1149,8 @@ export async function uploadFiles() {
 
       if (uploadError) {
         console.error('[uploadFiles] Storage upload error:', uploadError);
-        // Skip entirely for real upload failures (not bucket-missing edge case)
-        if (!uploadError.message?.includes('Bucket not found') && uploadError.statusCode !== '404') {
-          errorCount++;
-          continue;
-        }
+        errorCount++;
+        continue; // never create a DB record without a valid storagePath
       }
 
       const fileData = {

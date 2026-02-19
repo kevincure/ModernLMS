@@ -340,6 +340,30 @@ Track these to measure if the LMS is working:
 
 ## Pending Integrations (Added)
 
+### OneRoster 1.2 ✅ (CSV export implemented)
+Client-side OneRoster 1.2 CSV export is implemented in `generateOneRosterExport` /
+`downloadOneRosterExport` (`database_interactions.js`). Accessible via **Settings → Export OneRoster CSVs**.
+Produces 6 files: `orgs.csv`, `academicSessions.csv`, `users.csv`, `courses.csv`, `classes.csv`, `enrollments.csv`.
+
+**Gaps vs. full server certification** (see `DATABASE_SCHEMA.md` → OneRoster section):
+- No persistent `orgs` / `academicSessions` tables (synthetic for export)
+- `profiles` schema lacks `givenName`/`familyName`/`status`/`dateLastModified` columns
+- Role values stored as `instructor`/`ta` (mapped on export; DB stores legacy values)
+- No OAuth 2.0 REST API endpoints (required for certified OneRoster server)
+
+**Required to complete:**
+1. Run SQL migrations in `DATABASE_SCHEMA.md` to add OneRoster columns to `profiles`, `courses`, `enrollments`
+2. Add persistent `orgs` and `academic_sessions` tables
+3. Implement edge functions for OneRoster REST API endpoints
+
+### Caliper Analytics 1.2 ✅ (client-side sensor implemented)
+Lightweight 1EdTech Caliper 1.2 sensor implemented in `database_interactions.js`.
+Configure endpoint URL in **Settings → Caliper Analytics Endpoint**.
+
+**Metric profiles covered:** Session, Reading (ViewEvent), Assignable, Grading, Assessment.
+**Instrumented events:** login, page navigation, assignment submission, grade posting, quiz start/complete.
+**Full spec details, envelope format, and future work:** see `DATABASE_SCHEMA.md` → Caliper Analytics section.
+
 ### Pangram AI / Turnitin
 Integrate with Pangram AI or Turnitin for AI-generated content detection and plagiarism analysis on student submissions. Hook into the submission flow so results appear alongside the grade panel in `gradeSubmission()`.
 

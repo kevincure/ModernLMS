@@ -69,7 +69,15 @@ import {
   supabaseDeleteQuizTimeOverride,
   supabaseUpsertGradeSettings,
   callGeminiAPI,
-  callGeminiAPIWithRetry
+  callGeminiAPIWithRetry,
+  downloadOneRosterExport,
+  initCaliperSensor,
+  caliperSessionLogin,
+  caliperViewPage,
+  caliperAssignmentSubmit,
+  caliperGradePosted,
+  caliperQuizStart,
+  caliperQuizComplete
 } from './database_interactions.js';
 
 // UI Helpers - DOM manipulation, formatting, markdown
@@ -1086,6 +1094,16 @@ function initApp() {
 
   console.log('[App] Initializing app for user:', appData.currentUser.email);
 
+  // Restore Caliper sensor config from localStorage
+  const savedCaliperEndpoint = localStorage.getItem('caliperEndpoint');
+  const savedCaliperSensorId = localStorage.getItem('caliperSensorId') || 'campus-lms';
+  if (savedCaliperEndpoint) {
+    initCaliperSensor(savedCaliperSensorId, savedCaliperEndpoint);
+  }
+
+  // Caliper: emit SessionEvent/LoggedIn (no-ops if sensor not configured)
+  caliperSessionLogin(appData.currentUser);
+
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appContainer').setAttribute('aria-hidden', 'false');
 
@@ -1252,58 +1270,88 @@ function navigateTo(page) {
     };
     if (pageRenders[page]) pageRenders[page]();
   }
+
+  // Caliper: emit ViewEvent for the page being navigated to
+  if (appData.currentUser) {
+    const pageNames = { home: 'Home', assignments: 'Assignments', gradebook: 'Gradebook',
+      modules: 'Modules', files: 'Files', people: 'People', discussion: 'Discussion',
+      updates: 'Announcements', calendar: 'Calendar', courses: 'Courses' };
+    if (pageNames[page]) caliperViewPage(appData.currentUser, page, pageNames[page]);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COURSES PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let showInactiveCourses = false;
+
 function renderCourses() {
   const allCourses = getUserCourses(appData.currentUser.id);
-  // Filter out inactive courses
-  const courses = allCourses.filter(c => c.active !== false);
-  
+  const activeCourses = allCourses.filter(c => c.active !== false);
+  const inactiveCourses = allCourses.filter(c => c.active === false);
+
   const actionsHTML = `
     <button class="btn btn-primary" onclick="openModal('createCourseModal')">Create Course</button>
     <button class="btn btn-secondary" onclick="openModal('joinCourseModal')">Join Course</button>
   `;
   setHTML('coursesActions', actionsHTML);
-  
-  if (courses.length === 0) {
-    setHTML('coursesList', '<div class="empty-state"><div class="empty-state-title">No courses yet</div><div class="empty-state-text">Create a course or join one with an invite code</div></div>');
-    return;
-  }
-  
-  const html = courses.map(c => {
-    // Format role label
-    const roleLabels = {
-      'instructor': 'You are the instructor',
-      'ta': 'You are a TA',
-      'student': 'You are a student'
-    };
-    const roleLabel = roleLabels[c.role] || c.role;
 
-    const isActive = c.id === activeCourseId;
+  const courseCard = (c, dimmed) => {
+    const roleLabels = { instructor: 'Instructor', ta: 'Teaching Assistant', student: 'Student' };
+    const roleLabel = roleLabels[c.role] || c.role;
+    const isActiveCourse = c.id === activeCourseId;
     return `
-      <div class="card" style="${isActive ? 'border:1.5px solid var(--primary);' : ''}">
+      <div class="card" style="${isActiveCourse ? 'border:1.5px solid var(--primary);' : ''}${dimmed ? 'opacity:0.65;' : ''}">
         <div class="card-header">
           <div>
-            <div class="card-title">${c.name}${isActive ? ' <span style="font-size:0.7rem; font-weight:700; background:var(--primary); color:#fff; padding:2px 7px; border-radius:10px; vertical-align:middle; letter-spacing:0.05em;">ACTIVE</span>' : ''}</div>
-            <div class="muted">${c.code} · ${roleLabel}</div>
+            <div class="card-title">
+              ${escapeHtml(c.name)}
+              ${isActiveCourse ? ' <span style="font-size:0.7rem; font-weight:700; background:var(--primary); color:#fff; padding:2px 7px; border-radius:10px; vertical-align:middle;">ACTIVE</span>' : ''}
+              ${dimmed ? ' <span style="font-size:0.7rem; font-weight:600; background:var(--border-color); color:var(--text-muted); padding:2px 7px; border-radius:10px; vertical-align:middle;">INACTIVE</span>' : ''}
+            </div>
+            <div class="muted">${escapeHtml(c.code)} · ${roleLabel}</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center;">
-            ${isActive ? '' : `<button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>`}
+            ${isActiveCourse ? '' : `<button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>`}
             ${c.role === 'instructor' ? `
               <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="openCloneCourseModal('${c.id}')">Clone</button>
             ` : ''}
           </div>
         </div>
-        ${c.description ? `<div style="margin-top:8px;" class="muted">${c.description}</div>` : ''}
+        ${c.description ? `<div style="margin-top:8px;" class="muted">${escapeHtml(c.description)}</div>` : ''}
       </div>
     `;
-  }).join('');
-  
+  };
+
+  let html = '';
+
+  if (activeCourses.length === 0 && !showInactiveCourses) {
+    html = '<div class="empty-state"><div class="empty-state-title">No active courses</div><div class="empty-state-text">Create a course or join one with an invite code</div></div>';
+  } else {
+    html = activeCourses.map(c => courseCard(c, false)).join('');
+  }
+
+  // Inactive courses section
+  if (inactiveCourses.length > 0) {
+    if (showInactiveCourses) {
+      html += `<div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border-color);">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+          <span class="muted" style="font-size:0.9rem; font-weight:600;">Inactive / Archived Courses (${inactiveCourses.length})</span>
+          <button class="btn btn-secondary btn-sm" onclick="showInactiveCourses=false; renderCourses();">Hide</button>
+        </div>
+        ${inactiveCourses.map(c => courseCard(c, true)).join('')}
+      </div>`;
+    } else {
+      html += `<div style="margin-top:16px; text-align:center;">
+        <button class="btn btn-secondary btn-sm" onclick="showInactiveCourses=true; renderCourses();">
+          Show ${inactiveCourses.length} inactive course${inactiveCourses.length > 1 ? 's' : ''}
+        </button>
+      </div>`;
+    }
+  }
+
   setHTML('coursesList', html);
 }
 
@@ -1495,22 +1543,30 @@ async function cloneCourse() {
 
 function onSyllabusFileSelected() {
   const input = document.getElementById('courseCreationSyllabus');
-  if (input.files.length > 0) {
-    const file = input.files[0];
-    const dropZone = document.getElementById('syllabusDropZone');
-    if (dropZone) {
-      dropZone.innerHTML = `
-        <div style="display:flex; align-items:center; justify-content:center; gap:12px;">
-          <span style="font-size:1.5rem;">📄</span>
-          <div style="text-align:left;">
-            <div style="font-weight:500;">${escapeHtml(file.name)}</div>
-            <div class="muted" style="font-size:0.8rem;">${(file.size / 1024).toFixed(1)} KB</div>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
+  if (!input || !input.files.length) return;
+  const file = input.files[0];
+  const dropZone = document.getElementById('syllabusDropZone');
+  if (dropZone) {
+    // Keep the file input in the DOM so parseCourseSyllabus can read files
+    dropZone.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap;">
+        <span style="font-size:1.5rem;">📄</span>
+        <div style="text-align:left;">
+          <div style="font-weight:500;">${escapeHtml(file.name)}</div>
+          <div class="muted" style="font-size:0.8rem;">${(file.size / 1024).toFixed(1)} KB · Click Parse to extract course info &amp; modules</div>
         </div>
-      `;
-    }
+        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
+        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
+      </div>
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+    `;
+    // Re-attach the selected file to the new hidden input via DataTransfer
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const newInput = document.getElementById('courseCreationSyllabus');
+      if (newInput) newInput.files = dt.files;
+    } catch (_) { /* DataTransfer unavailable in some environments */ }
   }
 }
 
@@ -3599,11 +3655,12 @@ function saveSubmission() {
   }
   
   appData.submissions.push(submission);
+  // Caliper: AssignableEvent/Submitted
+  caliperAssignmentSubmit(appData.currentUser, assignment);
 
-  
   closeModal('submitModal');
   renderAssignments();
-  
+
   const lateDeduction = calculateLateDeduction(assignment, submission.submittedAt);
   if (lateDeduction > 0) {
     showToast(`Submission saved! Note: ${lateDeduction}% late penalty applies`, 'success');
@@ -3898,6 +3955,12 @@ async function saveGrade(submissionId) {
   await supabaseUpsertGrade(gradeObj);
 
   appData.grades.push(gradeObj);
+  // Caliper: GradeEvent/Graded
+  const gradedAssignment = appData.assignments.find(a => {
+    const sub = appData.submissions.find(s => s.id === submissionId);
+    return sub && a.id === sub.assignmentId;
+  });
+  if (gradedAssignment) caliperGradePosted(appData.currentUser, gradedAssignment, score, gradedAssignment.points);
   closeModal('gradeModal');
   closeModal('submissionsModal');
   renderGradebook();
@@ -6569,7 +6632,15 @@ document.addEventListener('keydown', function(e) {
 });
 
 function saveSettings() {
-  // AI settings are now configured server-side via Supabase Edge Function
+  // Caliper sensor configuration
+  const caliperEndpoint = document.getElementById('settingsCaliperEndpoint')?.value?.trim() || '';
+  const caliperSensorId = document.getElementById('settingsCaliperSensorId')?.value?.trim() || 'campus-lms';
+  localStorage.setItem('caliperEndpoint', caliperEndpoint);
+  localStorage.setItem('caliperSensorId', caliperSensorId);
+  if (caliperEndpoint) {
+    initCaliperSensor(caliperSensorId, caliperEndpoint);
+  }
+
   closeModal('settingsModal');
   showToast('Settings saved!', 'success');
 }
@@ -7902,15 +7973,21 @@ function closeDiscussionThread() {
   renderDiscussion();
 }
 
+function closeDiscussionThreadModal() {
+  document.getElementById('discussionThreadModal')?.remove();
+}
+
 function openCreateDiscussionThreadModal() {
   if (!activeCourseId) return;
+  // Remove any stale copy before inserting a fresh one
+  closeDiscussionThreadModal();
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
   const modalHtml = `
     <div class="modal-overlay" id="discussionThreadModal" style="display:flex;">
       <div class="modal" style="max-width:600px;">
         <div class="modal-header">
           <h2 class="modal-title">New Discussion Thread</h2>
-          <button class="modal-close" onclick="closeModal('discussionThreadModal')">&times;</button>
+          <button class="modal-close" onclick="closeDiscussionThreadModal()">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -7929,7 +8006,7 @@ function openCreateDiscussionThreadModal() {
           </div>` : ''}
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('discussionThreadModal')">Cancel</button>
+          <button class="btn btn-secondary" onclick="closeDiscussionThreadModal()">Cancel</button>
           <button class="btn btn-primary" onclick="createDiscussionThread()">Create Thread</button>
         </div>
       </div>
@@ -7961,7 +8038,7 @@ function createDiscussionThread() {
   // Optimistic update — don't block UI on Supabase
   if (!appData.discussionThreads) appData.discussionThreads = [];
   appData.discussionThreads.unshift(thread);
-  closeModal('discussionThreadModal');
+  closeDiscussionThreadModal();
   openDiscussionThread(thread.id);
   showToast('Thread created!', 'success');
   supabaseCreateDiscussionThread(thread); // fire and don't await
@@ -8097,24 +8174,26 @@ async function toggleDiscussionHide(threadId) {
   if (ok) renderDiscussion();
 }
 
-async function deleteDiscussionThread(threadId) {
-  if (!await showConfirmDialog('Delete this thread and all its replies?')) return;
-  // Optimistic update
-  appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
-  if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
-  renderDiscussion();
-  showToast('Thread deleted', 'success');
-  supabaseDeleteDiscussionThread(threadId); // fire and don't await
+function deleteDiscussionThread(threadId) {
+  ensureModalsRendered();
+  showConfirmDialog('Delete this thread and all its replies?', () => {
+    appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
+    if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
+    renderDiscussion();
+    showToast('Thread deleted', 'success');
+    supabaseDeleteDiscussionThread(threadId);
+  });
 }
 
-async function deleteDiscussionReply(replyId, threadId) {
-  if (!await showConfirmDialog('Delete this reply?')) return;
-  // Optimistic update
-  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
-  if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
-  renderDiscussion();
-  showToast('Reply deleted', 'success');
-  supabaseDeleteDiscussionReply(replyId); // fire and don't await
+function deleteDiscussionReply(replyId, threadId) {
+  ensureModalsRendered();
+  showConfirmDialog('Delete this reply?', () => {
+    const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+    if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
+    renderDiscussion();
+    showToast('Reply deleted', 'success');
+    supabaseDeleteDiscussionReply(replyId);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -8359,6 +8438,8 @@ window.revokeInvite = revokeInvite;
 // Settings
 window.saveSettings = saveSettings;
 window.openEditCourseModal = openEditCourseModal;
+window.downloadOneRosterExport = downloadOneRosterExport;
+window._appData = appData; // reference for modal inline handlers (e.g. OneRoster export)
 
 // Clone course
 window.openCloneCourseModal = openCloneCourseModal;
@@ -8667,6 +8748,7 @@ window.removeDeadlineOverride = removeDeadlineOverride;
 window.openDiscussionThread = openDiscussionThread;
 window.closeDiscussionThread = closeDiscussionThread;
 window.openCreateDiscussionThreadModal = openCreateDiscussionThreadModal;
+window.closeDiscussionThreadModal = closeDiscussionThreadModal;
 window.createDiscussionThread = createDiscussionThread;
 window.postDiscussionReply = postDiscussionReply;
 window.postDiscussionAiReply = postDiscussionAiReply;
