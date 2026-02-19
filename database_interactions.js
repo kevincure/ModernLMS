@@ -1811,3 +1811,341 @@ export async function supabaseUpsertGradeSettings(settings) {
   if (error) { console.error('[Supabase] Upsert grade settings error:', error); showToast('Failed to save grade settings', 'error'); return null; }
   return data;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ONEROSTER 1.2 EXPORT  (CSV — Rostering Service)
+// Generates OneRoster-compliant CSV files from appData.
+// Fields follow the OneRoster 1.2 Information Model.
+// Required SQL before use: see DATABASE_SCHEMA.md § OneRoster Compliance.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Convert an array of objects to a CSV string.
+ * @param {string[]} headers
+ * @param {Object[]} rows  Each row's values are taken in header order.
+ */
+function toCsv(headers, rows) {
+  const escape = v => {
+    const s = (v === null || v === undefined) ? '' : String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n')
+      ? '"' + s.replace(/"/g, '""') + '"'
+      : s;
+  };
+  const lines = [headers.join(',')];
+  rows.forEach(row => lines.push(headers.map(h => escape(row[h])).join(',')));
+  return lines.join('\r\n');
+}
+
+/**
+ * Split a display name into givenName / familyName best-effort.
+ * OneRoster 1.2 requires these as separate fields.
+ */
+function splitName(fullName) {
+  const parts = (fullName || '').trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return { givenName: parts[0], familyName: parts.slice(1).join(' ') };
+  }
+  return { givenName: fullName || '', familyName: '' };
+}
+
+/** Map our role labels to OneRoster 1.2 role enum values. */
+function toOneRosterRole(role) {
+  return { instructor: 'teacher', ta: 'teaching assistant', student: 'student' }[role] || role;
+}
+
+/**
+ * Generate all OneRoster 1.2 CSV files and trigger browser downloads.
+ * Returns an object of { filename: csvString } for programmatic use.
+ *
+ * Schema gaps — these are defaulted/synthesised until the required SQL
+ * migrations (see DATABASE_SCHEMA.md) add the actual columns:
+ *   - status → always 'active'  (add status column to profiles/courses/enrollments)
+ *   - dateLastModified → ISO 8601 now() stub  (add updated_at to enrollments & courses)
+ *   - org/academicSession → single synthetic entry
+ */
+export function generateOneRosterExport(appDataRef) {
+  const now = new Date().toISOString();
+
+  // ── Org (synthetic — represents this LMS instance) ──────────────────────
+  const ORG_ID = 'org-campus-lms';
+  const orgsRows = [{
+    sourcedId:        ORG_ID,
+    status:           'active',
+    dateLastModified: now,
+    name:             'Campus LMS',
+    type:             'school',
+    identifier:       'campus-lms',
+    parentSourcedId:  ''
+  }];
+
+  // ── AcademicSession (synthetic — current year) ───────────────────────────
+  const year = new Date().getFullYear();
+  const SESSION_ID = `session-${year}`;
+  const academicSessionsRows = [{
+    sourcedId:        SESSION_ID,
+    status:           'active',
+    dateLastModified: now,
+    title:            `${year}–${year + 1} Academic Year`,
+    type:             'schoolYear',
+    startDate:        `${year}-08-01`,
+    endDate:          `${year + 1}-05-31`,
+    schoolYear:       `${year}`
+  }];
+
+  // ── Users (profiles) ─────────────────────────────────────────────────────
+  const usersRows = (appDataRef.users || []).map(u => {
+    const { givenName, familyName } = splitName(u.name);
+    // Determine the user's primary role across all enrollments
+    const roles = [...new Set(
+      (appDataRef.enrollments || [])
+        .filter(e => e.userId === u.id)
+        .map(e => toOneRosterRole(e.role))
+    )];
+    return {
+      sourcedId:        u.id,
+      status:           u.status || 'active',
+      dateLastModified: u.updatedAt || now,
+      enabledUser:      'true',
+      givenName,
+      familyName,
+      middleName:       '',
+      identifier:       u.email,
+      email:            u.email,
+      username:         u.email,
+      role:             roles.length === 1 ? roles[0] : (roles.includes('teacher') ? 'teacher' : 'student'),
+      orgSourcedIds:    ORG_ID,
+      grades:           ''
+    };
+  });
+
+  // ── Courses (OneRoster Course = curriculum definition) ───────────────────
+  const coursesRows = (appDataRef.courses || []).map(c => ({
+    sourcedId:        c.id,
+    status:           c.active === false ? 'tobedeleted' : 'active',
+    dateLastModified: c.updatedAt || now,
+    schoolYear:       SESSION_ID,
+    title:            c.name,
+    courseCode:       c.code,
+    grades:           '',
+    orgSourcedId:     ORG_ID
+  }));
+
+  // ── Classes (OneRoster Class = a section/offering of a Course) ───────────
+  // We treat each Course as also its own Class (1-section-per-course model).
+  const classesRows = (appDataRef.courses || []).map(c => ({
+    sourcedId:        `class-${c.id}`,
+    status:           c.active === false ? 'tobedeleted' : 'active',
+    dateLastModified: c.updatedAt || now,
+    title:            c.name,
+    grade:            '',
+    courseSourcedId:  c.id,
+    classCode:        c.code,
+    classType:        'scheduled',
+    location:         '',
+    schoolSourcedId:  ORG_ID,
+    termSourcedIds:   SESSION_ID,
+    subjectCodes:     '',
+    periods:          ''
+  }));
+
+  // ── Enrollments ───────────────────────────────────────────────────────────
+  let enrollmentCounter = 0;
+  const enrollmentsRows = (appDataRef.enrollments || []).map(e => {
+    enrollmentCounter++;
+    return {
+      sourcedId:        e.id || `enroll-${e.userId}-${e.courseId}`,
+      status:           'active',
+      dateLastModified: e.updatedAt || now,
+      classSourcedId:   `class-${e.courseId}`,
+      schoolSourcedId:  ORG_ID,
+      userSourcedId:    e.userId,
+      role:             toOneRosterRole(e.role),
+      primary:          e.role === 'instructor' ? 'true' : 'false',
+      beginDate:        '',
+      endDate:          ''
+    };
+  });
+
+  return {
+    'orgs.csv':             toCsv(['sourcedId','status','dateLastModified','name','type','identifier','parentSourcedId'], orgsRows),
+    'academicSessions.csv': toCsv(['sourcedId','status','dateLastModified','title','type','startDate','endDate','schoolYear'], academicSessionsRows),
+    'users.csv':            toCsv(['sourcedId','status','dateLastModified','enabledUser','givenName','familyName','middleName','identifier','email','username','role','orgSourcedIds','grades'], usersRows),
+    'courses.csv':          toCsv(['sourcedId','status','dateLastModified','schoolYear','title','courseCode','grades','orgSourcedId'], coursesRows),
+    'classes.csv':          toCsv(['sourcedId','status','dateLastModified','title','grade','courseSourcedId','classCode','classType','location','schoolSourcedId','termSourcedIds','subjectCodes','periods'], classesRows),
+    'enrollments.csv':      toCsv(['sourcedId','status','dateLastModified','classSourcedId','schoolSourcedId','userSourcedId','role','primary','beginDate','endDate'], enrollmentsRows),
+  };
+}
+
+/**
+ * Trigger browser download of all OneRoster CSVs as individual files.
+ */
+export function downloadOneRosterExport(appDataRef) {
+  const files = generateOneRosterExport(appDataRef);
+  Object.entries(files).forEach(([filename, csv]) => {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `oneroster_${filename}`; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CALIPER ANALYTICS 1.1  (IMS Global Sensor API)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let _caliperSensorId = null;
+let _caliperEndpoint = null;
+let _caliperDataVersion = 'http://purl.imsglobal.org/ctx/caliper/v1p1';
+
+/**
+ * Configure the Caliper sensor.  Call once after app init.
+ * @param {string} sensorId  - URI identifying this LMS instance
+ * @param {string} endpoint  - Caliper event store URL (POST endpoint)
+ */
+export function initCaliperSensor(sensorId, endpoint) {
+  _caliperSensorId = sensorId;
+  _caliperEndpoint = endpoint;
+}
+
+/**
+ * Build and send a Caliper 1.1 event to the configured endpoint.
+ * Silently no-ops if sensor is not configured.
+ * @param {string} type    - Event type, e.g. 'SessionEvent'
+ * @param {string} action  - Action verb, e.g. 'LoggedIn'
+ * @param {Object} actor   - Caliper Person entity
+ * @param {Object} object  - Entity being acted upon
+ * @param {Object} [extra] - Additional event properties (generated, target, …)
+ */
+export async function emitCaliperEvent(type, action, actor, object, extra = {}) {
+  if (!_caliperSensorId || !_caliperEndpoint) return;
+  const event = {
+    '@context': _caliperDataVersion,
+    id: `urn:uuid:${crypto.randomUUID()}`,
+    type,
+    actor,
+    action,
+    object,
+    eventTime: new Date().toISOString(),
+    ...extra
+  };
+  const envelope = {
+    sensor:      _caliperSensorId,
+    sendTime:    new Date().toISOString(),
+    dataVersion: _caliperDataVersion,
+    data:        [event]
+  };
+  try {
+    await fetch(_caliperEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope)
+    });
+  } catch (e) {
+    console.warn('[Caliper] Failed to send event:', e.message);
+  }
+}
+
+/** Build a Caliper Person entity from a user object. */
+export function caliperPerson(user) {
+  return { id: `urn:lms:user:${user.id}`, type: 'Person', name: user.name, email: user.email };
+}
+
+/** Build a Caliper SoftwareApplication entity (the LMS itself). */
+export function caliperApp() {
+  return { id: _caliperSensorId || 'urn:lms:app', type: 'SoftwareApplication', name: 'Campus LMS' };
+}
+
+/** Build a Caliper CourseSection entity from a course object. */
+export function caliperCourse(course) {
+  return { id: `urn:lms:course:${course.id}`, type: 'CourseSection', name: course.name, courseNumber: course.code };
+}
+
+/** Build a Caliper AssignableDigitalResource entity from an assignment. */
+export function caliperAssignment(assignment) {
+  return {
+    id: `urn:lms:assignment:${assignment.id}`,
+    type: 'AssignableDigitalResource',
+    name: assignment.title,
+    maxScore: assignment.points,
+    dateToSubmit: assignment.dueDate
+  };
+}
+
+/** Build a Caliper Assessment entity from a quiz. */
+export function caliperAssessment(quiz) {
+  return {
+    id: `urn:lms:quiz:${quiz.id}`,
+    type: 'Assessment',
+    name: quiz.title,
+    maxScore: quiz.points,
+    maxAttempts: quiz.attempts || 1
+  };
+}
+
+// ─── Convenience emitters ────────────────────────────────────────────────────
+
+/** Emit SessionEvent/LoggedIn — call after successful authentication. */
+export function caliperSessionLogin(user) {
+  return emitCaliperEvent('SessionEvent', 'LoggedIn', caliperPerson(user), caliperApp());
+}
+
+/** Emit ViewEvent/Viewed — call on page/resource navigation. */
+export function caliperViewPage(user, pageId, pageName) {
+  return emitCaliperEvent('ViewEvent', 'Viewed', caliperPerson(user), {
+    id: `urn:lms:page:${pageId}`, type: 'WebPage', name: pageName
+  });
+}
+
+/** Emit AssignableEvent/Submitted — call when student submits an assignment. */
+export function caliperAssignmentSubmit(user, assignment) {
+  const actor = caliperPerson(user);
+  const object = caliperAssignment(assignment);
+  return emitCaliperEvent('AssignableEvent', 'Submitted', actor, object, {
+    generated: {
+      id: `urn:lms:attempt:${user.id}:${assignment.id}`,
+      type: 'Attempt',
+      assignee: actor,
+      assignable: object,
+      submittedAtTime: new Date().toISOString()
+    }
+  });
+}
+
+/** Emit GradeEvent/Graded — call when a grade is posted. */
+export function caliperGradePosted(grader, assignment, scoreGiven, scoreMax) {
+  return emitCaliperEvent('GradeEvent', 'Graded',
+    grader ? caliperPerson(grader) : caliperApp(),
+    caliperAssignment(assignment),
+    {
+      generated: {
+        id: `urn:lms:score:${assignment.id}:${Date.now()}`,
+        type: 'Score',
+        scoreGiven,
+        scoreMaximum: scoreMax
+      }
+    }
+  );
+}
+
+/** Emit AssessmentEvent/Started — call when student begins a quiz. */
+export function caliperQuizStart(user, quiz) {
+  return emitCaliperEvent('AssessmentEvent', 'Started', caliperPerson(user), caliperAssessment(quiz));
+}
+
+/** Emit AssessmentEvent/Completed — call when student submits a quiz. */
+export function caliperQuizComplete(user, quiz, scoreGiven) {
+  const actor = caliperPerson(user);
+  const object = caliperAssessment(quiz);
+  return emitCaliperEvent('AssessmentEvent', 'Completed', actor, object, {
+    generated: {
+      id: `urn:lms:attempt:quiz:${user.id}:${quiz.id}`,
+      type: 'Attempt',
+      assignee: actor,
+      assignable: object,
+      submittedAtTime: new Date().toISOString(),
+      ...(scoreGiven !== undefined ? { score: { type: 'Score', scoreGiven, scoreMaximum: quiz.points } } : {})
+    }
+  });
+}
