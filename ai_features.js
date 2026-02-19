@@ -1305,7 +1305,14 @@ export function rejectAiAction(idx) {
   if (!msg || msg.role !== 'action' || msg.confirmed || msg.rejected) return;
   msg.rejected = true;
   aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
-  renderAiThread();
+  try {
+    renderAiThread();
+  } catch (e) {
+    console.error('[rejectAiAction] renderAiThread failed:', e);
+    // Force a minimal re-render so the cancel is at least reflected
+    const el = document.getElementById('aiThread');
+    if (el) el.innerHTML = '<div class="muted" style="padding:20px; text-align:center;">Action cancelled. Refresh AI panel to continue.</div>';
+  }
 }
 
 /**

@@ -993,3 +993,194 @@ USING (
   )
 )
 ```
+
+---
+
+## OneRoster 1.2 Compliance
+
+### Current Status
+
+The app generates a **client-side OneRoster 1.2 CSV export** (see `generateOneRosterExport` /
+`downloadOneRosterExport` in `database_interactions.js`). The export produces 6 CSV files:
+
+| File | OneRoster Entity | Notes |
+|------|-----------------|-------|
+| `orgs.csv` | Org | Synthetic single-org (`org-campus-lms`) |
+| `academicSessions.csv` | AcademicSession | Single session for current school year |
+| `users.csv` | User | All `profiles` rows; name split into givenName/familyName |
+| `courses.csv` | Course | Maps `courses` table |
+| `classes.csv` | Class | 1-section-per-course model |
+| `enrollments.csv` | Enrollment | Maps `enrollments`; role enum mapped to OneRoster values |
+
+### Gaps vs. Full OneRoster 1.2 Spec
+
+The following gaps exist between the current schema and full OneRoster 1.2 server compliance.
+They do **not** block CSV export but would be required for a certified OneRoster REST API.
+
+#### REST API Architecture (not yet implemented)
+OneRoster 1.2 defines **three independent services**, each with a separate base path:
+- **Rostering Service** — `GET /ims/oneroster/rostering/v1p2/...`
+- **Gradebook Service** — `GET /ims/oneroster/gradebook/v1p2/...`
+- **Resources Service** — `GET /ims/oneroster/resources/v1p2/...`
+
+Conformance requires **22 core Rostering endpoints** (Table 4.1 of the conformance guide).
+
+#### Data Model Gaps
+
+| Gap | Current | OneRoster 1.2 Required |
+|-----|---------|------------------------|
+| `sourcedId` | `id` (UUID) | Explicit `sourcedId` field |
+| `status` on all entities | Not stored | `'active'` or `'tobedeleted'` |
+| `dateLastModified` on all entities | Not stored | ISO-8601 timestamp |
+| User `givenName` / `familyName` | Single `name` string | Separate given/family (split on export) |
+| User `userMasterIdentifier` | Not stored | New in 1.2: canonical universal ID (optional) |
+| User preferred names | Not stored | `preferredFirstName`, `preferredLastName` (optional, new in 1.2) |
+| `orgs` table | None (synthetic) | Persistent `orgs` table with `sourcedId` |
+| `academicSessions` table | None (synthetic) | Persistent `academicSessions` table |
+| Class `periods` | Not stored | New in 1.2, optional |
+| Class `subjectCodes` | Not stored | New in 1.2, optional |
+| Role enum | `instructor`, `ta`, `student` | `teacher`, `teaching assistant`, `student` |
+| REST API | Not implemented | OAuth 2.0 Bearer-token endpoints |
+
+### Required SQL Migrations (for full server compliance)
+
+```sql
+-- Add OneRoster metadata columns to profiles
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS sourced_id TEXT GENERATED ALWAYS AS (id::text) STORED;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS given_name TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS family_name TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS oneroster_status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS date_last_modified TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- Auto-populate given/family name from existing `name` column (one-time backfill)
+UPDATE profiles
+  SET given_name  = split_part(name, ' ', 1),
+      family_name = TRIM(SUBSTR(name, STRPOS(name, ' ')))
+  WHERE given_name IS NULL;
+
+-- Add metadata to courses
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS oneroster_status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS date_last_modified TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- Add metadata to enrollments
+ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS oneroster_status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS date_last_modified TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- Normalize role values for OneRoster (view for export)
+CREATE OR REPLACE VIEW oneroster_enrollments AS
+  SELECT
+    id::text                                        AS "sourcedId",
+    oneroster_status                                AS "status",
+    date_last_modified                              AS "dateLastModified",
+    CASE role::text
+      WHEN 'instructor' THEN 'teacher'
+      WHEN 'ta'         THEN 'teaching assistant'
+      ELSE role::text
+    END                                             AS "role",
+    course_id::text                                 AS "classSourcedId",
+    user_id::text                                   AS "userSourcedId"
+  FROM enrollments;
+
+-- Persistent orgs table
+CREATE TABLE IF NOT EXISTS orgs (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sourced_id  TEXT GENERATED ALWAYS AS (id::text) STORED,
+  name        TEXT NOT NULL,
+  type        TEXT NOT NULL DEFAULT 'school', -- school | district | local | state | national
+  identifier  TEXT,
+  parent_id   UUID REFERENCES orgs(id),
+  status      TEXT NOT NULL DEFAULT 'active',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Persistent academicSessions table
+CREATE TABLE IF NOT EXISTS academic_sessions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title       TEXT NOT NULL,
+  type        TEXT NOT NULL DEFAULT 'schoolYear', -- schoolYear | semester | gradingPeriod | term
+  start_date  DATE NOT NULL,
+  end_date    DATE NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'active',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Role Mapping
+
+| App role | OneRoster `role` value |
+|----------|------------------------|
+| `instructor` | `teacher` |
+| `ta` | `teaching assistant` |
+| `student` | `student` |
+
+---
+
+## Caliper Analytics 1.2
+
+### Overview
+
+Caliper support is implemented in `database_interactions.js` as a lightweight client-side
+sensor targeting the **IMS Global / 1EdTech Caliper Analytics 1.2** specification.
+When a Caliper endpoint URL is configured (Settings → Caliper Analytics Endpoint),
+events are `POST`ed as JSON envelopes to the LRS via `POST /send`.
+
+### Metric Profiles Implemented
+
+| Profile | Events emitted |
+|---------|---------------|
+| Session Profile | `SessionEvent / LoggedIn` |
+| Reading Profile | `ViewEvent / Viewed` (page navigation) |
+| Assignable Profile | `AssignableEvent / Submitted` |
+| Grading Profile | `GradeEvent / Graded` |
+| Assessment Profile | `AssessmentEvent / Started`, `AssessmentEvent / Completed` |
+
+### Configuration
+
+Set in **Settings modal** and persisted in `localStorage`:
+- `caliperEndpoint` — LRS endpoint URL (e.g. `https://lrs.example.com/caliper/v1p2/send`)
+- `caliperSensorId` — Sensor identifier string (default: `campus-lms`)
+
+The sensor is initialized on app start if a saved endpoint is found.
+
+### Instrumented Events
+
+| Lifecycle point | Profile | Caliper event type | Action |
+|---|---|---|---|
+| User login | Session | `SessionEvent` | `LoggedIn` |
+| Page navigation | Reading | `ViewEvent` | `Viewed` |
+| Assignment submission | Assignable | `AssignableEvent` | `Submitted` |
+| Grade posted | Grading | `GradeEvent` | `Graded` |
+| Quiz started | Assessment | `AssessmentEvent` | `Started` |
+| Quiz completed | Assessment | `AssessmentEvent` | `Completed` |
+
+### Envelope Format (Caliper 1.2)
+
+```json
+{
+  "sensor": "campus-lms",
+  "sendTime": "2026-02-18T12:00:00.000Z",
+  "dataVersion": "http://purl.imsglobal.org/ctx/caliper/v1p2",
+  "data": [
+    {
+      "@context": "http://purl.imsglobal.org/ctx/caliper/v1p2",
+      "id": "urn:uuid:<uuid>",
+      "type": "AssessmentEvent",
+      "actor": { "id": "urn:campus-lms:user:<userId>", "type": "Person" },
+      "action": "Started",
+      "object": { "id": "urn:campus-lms:quiz:<quizId>", "type": "Assessment", "name": "..." },
+      "eventTime": "2026-02-18T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Future Work (for certified Caliper 1.2 compliance)
+
+- Add `membership` (course enrollment context) to all events
+- Add `session` object referencing the active `SessionEvent`
+- Support `federatedSession` for LTI contexts
+- Add `Authorization: Bearer <token>` header support in `emitCaliperEvent`
+- Implement `NavigationEvent` with `navigatedFrom` for page transitions
+- Persist events locally when offline and flush on reconnect
+- Emit `Forum/Posted` events for discussion board posts
+- Emit `ToolUseEvent` for AI chat interactions
