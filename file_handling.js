@@ -181,23 +181,32 @@ export function handleSyllabusDrop(e) {
 
 export function onSyllabusFileSelected() {
   const input = document.getElementById('courseCreationSyllabus');
-  if (input.files.length > 0) {
-    const file = input.files[0];
-    courseCreationSyllabusFile = file; // save before innerHTML wipes the input element
-    const dropZone = document.getElementById('syllabusDropZone');
-    if (dropZone) {
-      dropZone.innerHTML = `
-        <div style="display:flex; align-items:center; justify-content:center; gap:12px;">
-          <span style="font-size:1.5rem;">📄</span>
-          <div style="text-align:left;">
-            <div style="font-weight:500;">${escapeHtml(file.name)}</div>
-            <div class="muted" style="font-size:0.8rem;">${(file.size / 1024).toFixed(1)} KB</div>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
+  if (!input || !input.files.length) return;
+  const file = input.files[0];
+  courseCreationSyllabusFile = file; // save before innerHTML wipes the input element
+  const dropZone = document.getElementById('syllabusDropZone');
+  if (dropZone) {
+    dropZone.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap;">
+        <span style="font-size:1.5rem;">📄</span>
+        <div style="text-align:left;">
+          <div style="font-weight:500;">${escapeHtml(file.name)}</div>
+          <div class="muted" style="font-size:0.8rem;">${(file.size / 1024).toFixed(1)} KB · Click Parse to extract course info &amp; modules</div>
         </div>
-      `;
-    }
+        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); parseCourseSyllabus();">Parse</button>
+        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); clearSyllabusUpload();">✕</button>
+      </div>
+      <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+    `;
+    // Re-attach the selected file to the new hidden input via DataTransfer so
+    // parseCourseSyllabus can read input.files directly; courseCreationSyllabusFile
+    // is the fallback when this assignment isn't supported by the browser.
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const newInput = document.getElementById('courseCreationSyllabus');
+      if (newInput) newInput.files = dt.files;
+    } catch (_) { /* DataTransfer unavailable in some environments */ }
   }
 }
 
@@ -863,6 +872,26 @@ export async function viewFile(fileId) {
     return;
   }
 
+  // Validate the URL is reachable before loading it in the viewer.
+  // createSignedUrl sometimes succeeds even when the bucket doesn't exist;
+  // without this check the viewer iframe would show raw Supabase JSON errors.
+  try {
+    const headRes = await fetch(fileUrl, { method: 'HEAD' });
+    if (!headRes.ok) {
+      if (headRes.status === 404) {
+        showToast(
+          'File not found in storage. Ensure the "course-files" bucket exists in Supabase and the file was uploaded correctly.',
+          'error'
+        );
+      } else {
+        showToast(`Storage access error (${headRes.status}). Check your Supabase storage permissions.`, 'error');
+      }
+      return;
+    }
+  } catch (_) {
+    // Network / CORS error — fall through and let the browser attempt to load
+  }
+
   const ext = (file.name || '').split('.').pop().toLowerCase();
   const viewableExts = ['pdf', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
   const googleViewerExts = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'];
@@ -1204,7 +1233,18 @@ export async function uploadFile() {
 
 export function deleteFile(id) {
   confirm('Delete this file?', async () => {
-    // Delete from Supabase
+    // Remove from storage bucket first (if there is a stored file)
+    const file = appData.files.find(f => f.id === id);
+    if (file?.storagePath && supabaseClient) {
+      const { error: storageError } = await supabaseClient.storage
+        .from('course-files')
+        .remove([file.storagePath]);
+      if (storageError) {
+        console.warn('[deleteFile] Storage removal error (continuing with DB delete):', storageError);
+      }
+    }
+
+    // Delete metadata from database
     await supabaseDeleteFile(id);
 
     appData.files = appData.files.filter(f => f.id !== id);

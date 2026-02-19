@@ -309,7 +309,7 @@ function initModules() {
     closeModal,
     setText,
     setHTML,
-    confirm,
+    confirm: showConfirmDialog,
     getCourseById,
     getUserById,
     isStaff,
@@ -8501,9 +8501,8 @@ window.handleFilesDrop = handleFilesDrop;
 window.viewFile = viewFile;
 window.updateFileUploadPreview = updateFileUploadPreview;
 
-// Syllabus parsing
-window.onSyllabusFileSelected = onSyllabusFileSelected;
-window.clearSyllabusUpload = clearSyllabusUpload;
+// Syllabus parsing (onSyllabusFileSelected and clearSyllabusUpload are registered
+// by initFileHandlingModule — do NOT re-register here with the local stubs)
 window.handleSyllabusParserDrop = handleSyllabusParserDrop;
 window.onSyllabusParserFileSelected = onSyllabusParserFileSelected;
 window.clearSyllabusParserUpload = clearSyllabusParserUpload;
@@ -8728,7 +8727,8 @@ window.debugAuthState = debugAuthState;
 window.viewSubmissionHistory = viewSubmissionHistory;
 window.scrollAiThreadToBottom = scrollAiThreadToBottom;
 window.updateAiActionField = updateAiActionField;
-window.rejectAiAction = rejectAiAction;
+// rejectAiAction is registered by ai_features.js on window — do NOT override here
+// with the local stub that uses app.js's separate aiThread variable
 
 // Grade settings
 window.openGradeSettingsModal = openGradeSettingsModal;

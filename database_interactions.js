@@ -1272,7 +1272,8 @@ export async function supabaseCreateFile(file) {
     name: file.name,
     mime_type: file.mimeType || file.type || null,
     size_bytes: file.sizeBytes ?? file.size ?? null,
-    storage_path: file.storagePath || null,
+    // storage_path is NOT NULL in the schema; use '' for external/placeholder files
+    storage_path: file.storagePath || '',
     uploaded_by: file.uploadedBy,
     uploaded_at: file.uploadedAt,
     external_url: file.externalUrl,
@@ -1354,7 +1355,8 @@ export async function supabaseUpdateFile(file) {
     name: file.name,
     mime_type: file.mimeType || file.type || null,
     size_bytes: file.sizeBytes ?? file.size ?? null,
-    storage_path: file.storagePath || null,
+    // storage_path is NOT NULL in the schema; use '' for external/placeholder files
+    storage_path: file.storagePath || '',
     external_url: file.externalUrl,
     description: file.description,
     is_placeholder: file.isPlaceholder,
