@@ -841,7 +841,10 @@ export async function viewFile(fileId) {
       fileUrl = data.signedUrl;
     } else if (error?.message?.toLowerCase().includes('bucket not found') ||
                error?.error?.toLowerCase?.()?.includes('bucket not found')) {
-      showToast('Storage bucket "course-files" not found — create it in your Supabase Storage dashboard', 'error');
+      // Supabase returns "Bucket not found" both for missing buckets AND for RLS
+      // policy denials on storage.objects — check the SELECT policy on course-files.
+      console.error('[viewFile] Storage access denied (RLS or missing bucket):', error);
+      showToast('File access denied — check the SELECT policy on the "course-files" storage bucket in Supabase', 'error');
       return;
     } else {
       // Fallback: try public URL (works if bucket is public)
@@ -1146,11 +1149,8 @@ export async function uploadFiles() {
 
       if (uploadError) {
         console.error('[uploadFiles] Storage upload error:', uploadError);
-        // Skip entirely for real upload failures (not bucket-missing edge case)
-        if (!uploadError.message?.includes('Bucket not found') && uploadError.statusCode !== '404') {
-          errorCount++;
-          continue;
-        }
+        errorCount++;
+        continue; // never create a DB record without a valid storagePath
       }
 
       const fileData = {
