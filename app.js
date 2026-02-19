@@ -5474,7 +5474,7 @@ function renderStudentGradebook() {
   setHTML('gradebookActions', '');
   
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && a.status === 'published')
+    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
     .sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
   
   if (assignments.length === 0) {
@@ -5561,7 +5561,7 @@ function renderStaffGradebook() {
   `);
 
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId)
+    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
   let students = appData.enrollments
@@ -5914,7 +5914,7 @@ async function saveManualGrade() {
 
 function exportGradebook() {
   const assignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId)
+    .filter(a => a.courseId === activeCourseId && (a.status === 'published' || a.status === 'closed'))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
   
   const students = appData.enrollments
@@ -7738,6 +7738,12 @@ function toggleStudentView() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let activeDiscussionThreadId = null; // null = thread list; string = thread detail
+let discussionAiDraft = null; // { threadId, text, originalText } — pending AI reply draft
+// Expose draft so inline oninput handler can mutate it
+Object.defineProperty(window, 'discussionAiDraft', {
+  get() { return discussionAiDraft; },
+  set(v) { discussionAiDraft = v; }
+});
 
 function renderDiscussion() {
   if (!activeCourseId) {
@@ -7819,12 +7825,13 @@ function renderDiscussionThread(isStaffUser, course) {
   const repliesHtml = (thread.replies || []).map(r => {
     const rAuthor = getUserById(r.authorId);
     const canDelete = isStaffUser || r.authorId === appData.currentUser.id;
+    const aiLabel = r.isAi ? (r.aiEdited ? 'AI · Edited' : 'AI') : null;
     return `
       <div class="card" style="margin-bottom:8px; ${r.isAi ? 'border-color:var(--primary); background:var(--primary-light);' : ''}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
           <div>
-            <strong>${escapeHtml(r.isAi ? 'AI Assistant' : (rAuthor?.name || 'Unknown'))}</strong>
-            ${r.isAi ? '<span style="font-size:0.75rem; background:var(--primary); color:#fff; padding:1px 6px; border-radius:8px; margin-left:6px;">AI</span>' : ''}
+            <strong>${escapeHtml(rAuthor?.name || 'Unknown')}</strong>
+            ${r.isAi ? `<span style="font-size:0.75rem; background:var(--primary); color:#fff; padding:1px 6px; border-radius:8px; margin-left:6px;">${aiLabel}</span>` : ''}
             <span class="muted" style="font-size:0.85rem; margin-left:8px;">${formatDate(r.createdAt)}</span>
           </div>
           ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteDiscussionReply('${r.id}', '${thread.id}')">Delete</button>` : ''}
@@ -7834,7 +7841,22 @@ function renderDiscussionThread(isStaffUser, course) {
     `;
   }).join('') || '<div class="muted" style="padding:12px 0;">No replies yet. Be the first to reply!</div>';
 
-  const isStudent = !isStaffUser;
+  // AI draft preview (shown after Ask AI, before the user posts)
+  const draft = discussionAiDraft && discussionAiDraft.threadId === thread.id ? discussionAiDraft : null;
+  const aiDraftHtml = draft ? `
+    <div class="card" style="margin-bottom:16px; border-color:var(--primary); background:var(--primary-light);">
+      <div style="font-weight:600; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+        🤖 AI Suggested Reply
+        <span style="font-size:0.75rem; background:var(--primary); color:#fff; padding:1px 8px; border-radius:8px;">Review &amp; edit before posting</span>
+      </div>
+      <textarea class="form-textarea" id="aiDraftTextarea" rows="6" oninput="discussionAiDraft.text=this.value">${escapeHtml(draft.text)}</textarea>
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button class="btn btn-primary" onclick="postAiDraftReply('${thread.id}')">Post</button>
+        <button class="btn btn-secondary" onclick="dismissAiDraft()">Don't post</button>
+      </div>
+    </div>
+  ` : '';
+
   setHTML('discussionContent', `
     <div class="card" style="margin-bottom:16px;">
       <div style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -7857,12 +7879,14 @@ function renderDiscussionThread(isStaffUser, course) {
       ${repliesHtml}
     </div>
 
+    ${aiDraftHtml}
+
     <div class="card">
       <div style="font-weight:600; margin-bottom:8px;">Add Reply</div>
-      <textarea class="form-textarea" id="discussionReplyInput" rows="4" placeholder="Write your reply…"></textarea>
+      <textarea class="form-textarea" id="discussionReplyInput" rows="4" placeholder="Write your reply… or use Ask AI to draft one"></textarea>
       <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="postDiscussionReply('${thread.id}')">Post Reply</button>
-        ${isStudent ? `<button class="btn btn-secondary" onclick="postDiscussionAiReply('${thread.id}')">Ask AI</button>` : ''}
+        <button class="btn btn-secondary" id="discussionAiBtn" onclick="postDiscussionAiReply('${thread.id}')">Ask AI</button>
       </div>
     </div>
   `);
@@ -7916,7 +7940,7 @@ function openCreateDiscussionThreadModal() {
   setTimeout(() => document.getElementById('newThreadTitle')?.focus(), 50);
 }
 
-async function createDiscussionThread() {
+function createDiscussionThread() {
   const title = document.getElementById('newThreadTitle')?.value.trim();
   if (!title) { showToast('Thread title required', 'error'); return; }
   const content = document.getElementById('newThreadContent')?.value.trim();
@@ -7934,17 +7958,16 @@ async function createDiscussionThread() {
     replies: []
   };
 
-  const result = await supabaseCreateDiscussionThread(thread);
-  if (!result) return;
-
+  // Optimistic update — don't block UI on Supabase
   if (!appData.discussionThreads) appData.discussionThreads = [];
   appData.discussionThreads.unshift(thread);
   closeModal('discussionThreadModal');
   openDiscussionThread(thread.id);
   showToast('Thread created!', 'success');
+  supabaseCreateDiscussionThread(thread); // fire and don't await
 }
 
-async function postDiscussionReply(threadId) {
+function postDiscussionReply(threadId) {
   const input = document.getElementById('discussionReplyInput');
   const content = input?.value.trim();
   if (!content) { showToast('Reply cannot be empty', 'error'); return; }
@@ -7958,16 +7981,16 @@ async function postDiscussionReply(threadId) {
     createdAt: new Date().toISOString()
   };
 
-  const result = await supabaseCreateDiscussionReply(reply);
-  if (!result) return;
-
+  // Optimistic update
   const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
   if (thread) {
     if (!thread.replies) thread.replies = [];
     thread.replies.push(reply);
   }
+  if (input) input.value = '';
   renderDiscussion();
   showToast('Reply posted!', 'success');
+  supabaseCreateDiscussionReply(reply); // fire and don't await
 }
 
 async function postDiscussionAiReply(threadId) {
@@ -7976,38 +7999,86 @@ async function postDiscussionAiReply(threadId) {
 
   const questionInput = document.getElementById('discussionReplyInput');
   const question = questionInput?.value.trim();
-  if (!question) { showToast('Please type your question to ask the AI', 'error'); return; }
+  if (!question) { showToast('Type your question or context first, then click Ask AI', 'error'); return; }
 
-  const btn = document.querySelector('[onclick*="postDiscussionAiReply"]');
+  const btn = document.getElementById('discussionAiBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Thinking…'; }
 
   try {
     const course = getCourseById(activeCourseId);
-    const systemPrompt = `You are a helpful academic assistant for the course "${course?.name || 'this course'}". Answer the student's question clearly and concisely. Keep your response focused and educational.`;
-    const threadContext = `Discussion thread: "${thread.title}"\n${thread.content ? 'Thread content: ' + thread.content + '\n' : ''}Student question: ${question}`;
+    // Build full course context: professor, TAs, course info
+    const enrollments = (appData.enrollments || []).filter(e => e.courseId === activeCourseId);
+    const instructorEnrollment = enrollments.find(e => e.role === 'instructor');
+    const instructorUser = instructorEnrollment ? getUserById(instructorEnrollment.userId) : null;
+    const taUsers = enrollments
+      .filter(e => e.role === 'ta')
+      .map(e => getUserById(e.userId))
+      .filter(Boolean);
+
+    const isCurrentUserStaff = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+    const roleNote = isCurrentUserStaff
+      ? 'The user is an instructor or TA.'
+      : 'The user is a student.';
+
+    const systemPrompt = [
+      `You are a helpful academic assistant for the course "${course?.name || 'this course'}".`,
+      instructorUser ? `Professor: ${instructorUser.name}.` : '',
+      taUsers.length ? `Teaching Assistants: ${taUsers.map(t => t.name).join(', ')}.` : '',
+      course?.description ? `Course description: ${course.description}` : '',
+      roleNote,
+      'Write a reply that stands alone and would make sense posted directly in the discussion thread.',
+      'Be clear, concise, and helpful. Do not mention that you are an AI in the reply body itself.'
+    ].filter(Boolean).join(' ');
+
+    const threadContext = `Discussion thread: "${thread.title}"\n${thread.content ? 'Thread content: ' + thread.content + '\n' : ''}User input/question: ${question}`;
 
     const contents = [{ role: 'user', parts: [{ text: systemPrompt + '\n\n' + threadContext }] }];
     const response = await callGeminiAPIWithRetry(contents);
     const aiText = response?.candidates?.[0]?.content?.parts?.[0]?.text || 'I was unable to generate a response.';
 
-    const aiReply = {
-      id: generateId(),
-      threadId,
-      content: aiText,
-      authorId: appData.currentUser.id,
-      isAi: true,
-      createdAt: new Date().toISOString()
-    };
-    await supabaseCreateDiscussionReply(aiReply);
-    if (thread.replies) thread.replies.push(aiReply);
+    // Show draft for review — don't post immediately
+    discussionAiDraft = { threadId, text: aiText, originalText: aiText };
     if (questionInput) questionInput.value = '';
     renderDiscussion();
-    showToast('AI response posted!', 'success');
   } catch (err) {
     showToast('Failed to get AI response', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Ask AI'; }
   }
+}
+
+function postAiDraftReply(threadId) {
+  const textarea = document.getElementById('aiDraftTextarea');
+  const text = textarea?.value?.trim() || discussionAiDraft?.text?.trim();
+  if (!text) return;
+
+  const wasEdited = discussionAiDraft && text !== discussionAiDraft.originalText;
+
+  const reply = {
+    id: generateId(),
+    threadId,
+    content: text,
+    authorId: appData.currentUser.id,
+    isAi: true,
+    aiEdited: wasEdited,
+    createdAt: new Date().toISOString()
+  };
+
+  // Optimistic update
+  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+  if (thread) {
+    if (!thread.replies) thread.replies = [];
+    thread.replies.push(reply);
+  }
+  discussionAiDraft = null;
+  renderDiscussion();
+  showToast(wasEdited ? 'Edited AI reply posted!' : 'AI reply posted!', 'success');
+  supabaseCreateDiscussionReply(reply); // fire and don't await
+}
+
+function dismissAiDraft() {
+  discussionAiDraft = null;
+  renderDiscussion();
 }
 
 async function toggleDiscussionPin(threadId) {
@@ -8028,24 +8099,22 @@ async function toggleDiscussionHide(threadId) {
 
 async function deleteDiscussionThread(threadId) {
   if (!await showConfirmDialog('Delete this thread and all its replies?')) return;
-  const ok = await supabaseDeleteDiscussionThread(threadId);
-  if (ok) {
-    appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
-    if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
-    renderDiscussion();
-    showToast('Thread deleted', 'success');
-  }
+  // Optimistic update
+  appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
+  if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
+  renderDiscussion();
+  showToast('Thread deleted', 'success');
+  supabaseDeleteDiscussionThread(threadId); // fire and don't await
 }
 
 async function deleteDiscussionReply(replyId, threadId) {
   if (!await showConfirmDialog('Delete this reply?')) return;
-  const ok = await supabaseDeleteDiscussionReply(replyId);
-  if (ok) {
-    const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
-    if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
-    renderDiscussion();
-    showToast('Reply deleted', 'success');
-  }
+  // Optimistic update
+  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+  if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
+  renderDiscussion();
+  showToast('Reply deleted', 'success');
+  supabaseDeleteDiscussionReply(replyId); // fire and don't await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -8601,6 +8670,8 @@ window.openCreateDiscussionThreadModal = openCreateDiscussionThreadModal;
 window.createDiscussionThread = createDiscussionThread;
 window.postDiscussionReply = postDiscussionReply;
 window.postDiscussionAiReply = postDiscussionAiReply;
+window.postAiDraftReply = postAiDraftReply;
+window.dismissAiDraft = dismissAiDraft;
 window.toggleDiscussionPin = toggleDiscussionPin;
 window.toggleDiscussionHide = toggleDiscussionHide;
 window.deleteDiscussionThread = deleteDiscussionThread;

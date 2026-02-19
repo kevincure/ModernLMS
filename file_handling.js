@@ -796,18 +796,28 @@ export async function viewFile(fileId) {
   }
 
   // Get a signed URL from Supabase Storage (60 min)
+  // Falls back to public URL if signing fails (e.g. file not in storage)
   let fileUrl;
   try {
     const { data, error } = await supabaseClient.storage
       .from('course-files')
       .createSignedUrl(file.storagePath, 3600);
-    if (error || !data?.signedUrl) {
-      showToast('Could not retrieve file link', 'error');
-      return;
+    if (!error && data?.signedUrl) {
+      fileUrl = data.signedUrl;
+    } else {
+      // Fallback: try public URL (works if bucket is public)
+      const { data: pubData } = supabaseClient.storage
+        .from('course-files')
+        .getPublicUrl(file.storagePath);
+      if (pubData?.publicUrl) {
+        fileUrl = pubData.publicUrl;
+      } else {
+        showToast('File not available — it may need to be re-uploaded', 'error');
+        return;
+      }
     }
-    fileUrl = data.signedUrl;
   } catch (err) {
-    showToast('Error accessing file', 'error');
+    showToast('Error accessing file — it may need to be re-uploaded', 'error');
     return;
   }
 
@@ -1097,8 +1107,8 @@ export async function uploadFiles() {
 
       if (uploadError) {
         console.error('[uploadFiles] Storage upload error:', uploadError);
-        // If storage bucket doesn't exist, just save metadata
-        if (!uploadError.message.includes('Bucket not found') && uploadError.statusCode !== '404') {
+        // Skip entirely for real upload failures (not bucket-missing edge case)
+        if (!uploadError.message?.includes('Bucket not found') && uploadError.statusCode !== '404') {
           errorCount++;
           continue;
         }
@@ -1110,7 +1120,8 @@ export async function uploadFiles() {
         name: file.name,
         type: file.name.split('.').pop(),
         size: file.size,
-        storagePath: uploadData?.path || storagePath,
+        // Only store storagePath when upload actually succeeded
+        storagePath: (!uploadError && uploadData?.path) ? uploadData.path : null,
         uploadedBy: appData.currentUser.id,
         uploadedAt: new Date().toISOString()
       };
