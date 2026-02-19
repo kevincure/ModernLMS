@@ -118,6 +118,13 @@ export function getCourseCreationSyllabusData() {
 }
 
 /**
+ * Get selected syllabus file for course creation
+ */
+export function getCourseCreationSyllabusFile() {
+  return courseCreationSyllabusFile;
+}
+
+/**
  * Clear course creation syllabus data
  */
 export function clearCourseCreationSyllabusData() {
@@ -1205,7 +1212,8 @@ export async function uploadFile() {
 export function deleteFile(id) {
   confirm('Delete this file?', async () => {
     // Delete from Supabase
-    await supabaseDeleteFile(id);
+    const deleted = await supabaseDeleteFile(id);
+    if (!deleted) return;
 
     appData.files = appData.files.filter(f => f.id !== id);
 

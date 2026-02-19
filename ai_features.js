@@ -1304,6 +1304,7 @@ export function rejectAiAction(idx) {
   }
   if (!msg || msg.role !== 'action' || msg.confirmed || msg.rejected) return;
   msg.rejected = true;
+  msg.hidden = true;
   aiThread.push({ role: 'assistant', content: 'No problem! Let me know if you need anything else.' });
   try {
     renderAiThread();
@@ -1363,6 +1364,8 @@ export function updateAiProcessingState() {
  */
 export function renderAiThread() {
   const html = aiThread.map((msg, idx) => {
+    if (msg.hidden) return "";
+
     const isLatest = idx === aiThread.length - 1 ||
       (msg.role === 'action' && !msg.confirmed && !msg.rejected);
 
