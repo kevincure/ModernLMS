@@ -182,7 +182,7 @@ export function generateModals() {
               <div style="margin-bottom:8px;">📄</div>
               <div style="font-weight:500;">Drag & drop syllabus here</div>
               <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-              <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusFileSelected()">
+              <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
             </div>
             <div id="courseCreationSyllabusStatus" style="margin-top:8px;"></div>
           </div>
@@ -540,7 +540,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               <div style="font-weight:500; margin-bottom:4px;">Drag and drop files here</div>
               <div class="muted">or click to browse</div>
             </div>
-            <input type="file" class="form-input" id="fileUpload" multiple style="display:none;" onchange="updateFileUploadPreview()">
+            <input type="file" class="form-input" id="fileUpload" accept=".pdf,.doc,.docx,.txt,.tex,.png,.jpg,.jpeg,.gif,.webp,.svg,.ppt,.pptx,.xls,.xlsx,.zip" multiple style="display:none;" onchange="updateFileUploadPreview()">
             <div id="fileUploadPreview" style="margin-top:12px;"></div>
           </div>
         </div>
@@ -975,7 +975,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
               <div style="margin-bottom:8px;">📄</div>
               <div style="font-weight:500;">Drag & drop syllabus here</div>
               <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-              <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt" style="display:none;" onchange="onSyllabusParserFileSelected()">
+              <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusParserFileSelected()">
             </div>
           </div>
           <div class="form-group">
@@ -1210,11 +1210,11 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
             <div class="form-group">
               <label class="form-label">Available From</label>
-              <input type="date" class="form-input" id="newAssignmentAvailableFrom">
+              <input type="datetime-local" class="form-input" id="newAssignmentAvailableFrom">
             </div>
             <div class="form-group">
               <label class="form-label">Available Until</label>
-              <input type="date" class="form-input" id="newAssignmentAvailableUntil">
+              <input type="datetime-local" class="form-input" id="newAssignmentAvailableUntil">
             </div>
           </div>
 
