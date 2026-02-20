@@ -4199,27 +4199,45 @@ function populateQuestionBankDropdown() {
 
 // CC 1.4 assignment type selector — highlight active tab + show/hide sections
 function setAssignmentType(type) {
-  const types = ['essay', 'quiz', 'no_submission'];
-  types.forEach(t => {
-    const lbl = document.getElementById(`atype-${t.replace('_','-')}-label`);
+  // Label ID map (no_submission uses 'no-submission' not 'nosub')
+  const labelIds = { essay: 'atype-essay-label', quiz: 'atype-quiz-label', no_submission: 'atype-no-submission-label' };
+  const radioIds = { essay: 'newAssignmentTypeEssay', quiz: 'newAssignmentTypeQuiz', no_submission: 'newAssignmentTypeNoSub' };
+
+  ['essay', 'quiz', 'no_submission'].forEach(t => {
+    const lbl = document.getElementById(labelIds[t]);
     if (lbl) {
       lbl.style.background = t === type ? 'var(--primary)' : 'var(--bg-card)';
       lbl.style.color = t === type ? '#fff' : 'var(--text)';
     }
-    const radio = document.getElementById(
-      t === 'essay' ? 'newAssignmentTypeEssay' :
-      t === 'quiz'  ? 'newAssignmentTypeQuiz'  : 'newAssignmentTypeNoSub'
-    );
+    const radio = document.getElementById(radioIds[t]);
     if (radio) radio.checked = t === type;
   });
-  document.getElementById('essaySection').style.display  = type === 'essay'         ? 'block' : 'none';
-  document.getElementById('quizSection').style.display   = type === 'quiz'          ? 'block' : 'none';
-  document.getElementById('noSubSection').style.display  = type === 'no_submission' ? 'block' : 'none';
-  // Late submissions only apply to essay/quiz types
+
+  const isNoSub = type === 'no_submission';
+
+  document.getElementById('essaySection').style.display  = type === 'essay' ? 'block' : 'none';
+  document.getElementById('quizSection').style.display   = type === 'quiz'  ? 'block' : 'none';
+  document.getElementById('noSubSection').style.display  = isNoSub          ? 'block' : 'none';
+
+  // Dates, availability window — hidden for no_submission
+  const datesSection = document.getElementById('assignmentDatesSection');
+  if (datesSection) datesSection.style.display = isNoSub ? 'none' : 'block';
+
+  // Status selector vs always-draft notice
+  const statusSection = document.getElementById('assignmentStatusSection');
+  const noSubStatusNotice = document.getElementById('noSubStatusNotice');
+  if (statusSection) statusSection.style.display = isNoSub ? 'none' : 'block';
+  if (noSubStatusNotice) noSubStatusNotice.style.display = isNoSub ? 'block' : 'none';
+
+  // Late submissions only apply to essay/quiz
   const lateGroup = document.getElementById('lateSubmissionToggleGroup');
-  if (lateGroup) lateGroup.style.display = type === 'no_submission' ? 'none' : 'block';
+  if (lateGroup) lateGroup.style.display = isNoSub ? 'none' : 'block';
   const lateSection = document.getElementById('latePenaltySection');
-  if (lateSection) lateSection.style.display = type === 'no_submission' ? 'none' : 'block';
+  if (lateSection) lateSection.style.display = isNoSub ? 'none' : 'block';
+
+  // Grading notes only relevant for essay/quiz
+  const gradingNotesGroup = document.querySelector('#newAssignmentGradingNotes')?.closest('.form-group');
+  if (gradingNotesGroup) gradingNotesGroup.style.display = isNoSub ? 'none' : 'block';
 }
 window.setAssignmentType = setAssignmentType;
 
@@ -4435,26 +4453,32 @@ async function saveNewAssignment() {
     showToast('Please enter a title', 'error');
     return;
   }
-  if (!dueDate) {
-    showToast('Please set a due date', 'error');
-    return;
-  }
-  if (availableFrom && availableUntil && new Date(availableFrom) > new Date(availableUntil)) {
-    showToast('Available From cannot be after Available To', 'error');
-    return;
-  }
-  if (availableUntil && new Date(dueDate) > new Date(availableUntil)) {
-    showToast('Due date cannot be after Available To', 'error');
-    return;
-  }
-  if (availableFrom && new Date(availableFrom) > new Date(dueDate)) {
-    showToast('Available From cannot be after the due date', 'error');
-    return;
+  // No-submission assignments don't need a due date
+  if (assignmentType !== 'no_submission') {
+    if (!dueDate) {
+      showToast('Please set a due date', 'error');
+      return;
+    }
+    if (availableFrom && availableUntil && new Date(availableFrom) > new Date(availableUntil)) {
+      showToast('Available From cannot be after Available To', 'error');
+      return;
+    }
+    if (availableUntil && new Date(dueDate) > new Date(availableUntil)) {
+      showToast('Due date cannot be after Available To', 'error');
+      return;
+    }
+    if (availableFrom && new Date(availableFrom) > new Date(dueDate)) {
+      showToast('Available From cannot be after the due date', 'error');
+      return;
+    }
   }
 
   // Map assignmentType to legacy category for gradebook compatibility
   const legacyCategory = assignmentType === 'quiz' ? 'quiz' :
                          assignmentType === 'no_submission' ? 'participation' : 'essay';
+
+  // No-submission assignments are always draft/hidden — no dates needed
+  const effectiveStatus = assignmentType === 'no_submission' ? 'draft' : status;
 
   const fields = {
     title, description, points,
@@ -4469,11 +4493,11 @@ async function saveNewAssignment() {
     questionBankId,
     timeLimit,
     randomizeQuestions,
-    availableFrom: availableFrom ? new Date(availableFrom).toISOString() : null,
-    availableUntil: availableUntil ? new Date(availableUntil).toISOString() : null,
-    dueDate: new Date(dueDate).toISOString(),
-    status,
-    hidden: status !== 'published',
+    availableFrom: (assignmentType !== 'no_submission' && availableFrom) ? new Date(availableFrom).toISOString() : null,
+    availableUntil: (assignmentType !== 'no_submission' && availableUntil) ? new Date(availableUntil).toISOString() : null,
+    dueDate: (assignmentType !== 'no_submission' && dueDate) ? new Date(dueDate).toISOString() : null,
+    status: effectiveStatus,
+    hidden: effectiveStatus !== 'published',
     allowLateSubmissions: allowLate,
     latePenaltyType,
     lateDeduction: latePenalty,
