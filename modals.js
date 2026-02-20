@@ -1213,18 +1213,13 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Due Date &amp; Time</label>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <input type="date" class="form-input" id="newAssignmentDueDate" style="flex:1; min-width:140px;"
-                onchange="syncAvailableUntilToDueDate()">
-              <input type="time" class="form-input" id="newAssignmentDueTime" value="23:59" style="width:110px;"
-                onchange="syncAvailableUntilToDueDate()">
-            </div>
-            <div class="hint" style="margin-top:4px;">Default time is 11:59 PM. Click the time field to change.</div>
+            <label class="form-label">Due Date &amp; Time <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
+            <input type="datetime-local" class="form-input" id="newAssignmentDueDate"
+              onchange="syncAvailableUntilToDueDate()">
           </div>
 
           <div class="form-group">
-            <label class="form-label" style="margin-bottom:4px;">Availability Window</label>
+            <label class="form-label" style="margin-bottom:4px;">Availability Window <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
             <div class="hint" style="margin-bottom:8px;">Leave blank to use smart defaults (from now until due date, or always open if late submissions allowed).</div>
             <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
               <div>

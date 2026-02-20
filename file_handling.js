@@ -1042,12 +1042,11 @@ export function renderFiles() {
 
     return `
       <div class="card"
-           style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''} ${(!isPlaceholder && !isExternal) ? 'cursor:pointer;' : ''}"
-           ${(!isPlaceholder && !isExternal) ? `onclick="window.viewFile('${f.id}')"` : ''}
+           style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}"
            ${isPlaceholder && effectiveStaff ? `ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border-color)'" ondrop="handlePlaceholderFileDrop(event, '${f.id}'); this.style.borderColor='var(--border-color)'"` : ''}>
         <div class="card-header">
           <div style="flex:1;">
-            <div class="card-title">${icon ? icon + ' ' : ''}${escapeHtml(f.name)} ${visibilityBadge}</div>
+            <div class="card-title" ${(!isPlaceholder && !isExternal) ? `onclick="window.viewFile('${f.id}')" style="cursor:pointer;"` : ''}>${icon ? icon + ' ' : ''}${escapeHtml(f.name)} ${visibilityBadge}</div>
             <div class="muted">
               ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
               · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}

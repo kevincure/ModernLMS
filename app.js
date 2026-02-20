@@ -390,16 +390,14 @@ function toggleMenu(event, menuId) {
   const btn = event.currentTarget;
   const rect = btn.getBoundingClientRect();
 
-  // Horizontal: right-align to button, but clamp to viewport
+  // Horizontal: left-align to button's left edge; right-align to button if it would overflow viewport
   const menuWidth = Math.max(menu.offsetWidth || 190, 180);
-  const rightSpace = window.innerWidth - rect.right;
-  if (rightSpace < menuWidth - rect.width && rect.left >= menuWidth) {
-    menu.style.right = 'auto';
-    menu.style.left = `${Math.max(8, rect.left)}px`;
-  } else {
-    menu.style.left = 'auto';
-    menu.style.right = `${Math.max(8, rightSpace)}px`;
+  let left = rect.left;
+  if (left + menuWidth > window.innerWidth - 8) {
+    left = rect.right - menuWidth;
   }
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.right = 'auto';
 
   // Vertical: below button unless near bottom of viewport
   const estimatedMenuHeight = (menu.children.length || 4) * 38 + 12;
@@ -3586,7 +3584,7 @@ function openNewAssignmentModal(assignmentId = null) {
     };
     document.getElementById('newAssignmentAvailableFrom').value = toLocalDtInput(assignment.availableFrom);
     document.getElementById('newAssignmentAvailableUntil').value = toLocalDtInput(assignment.availableUntil);
-    setDateTimeInputs('newAssignmentDueDate', 'newAssignmentDueTime', assignment.dueDate);
+    document.getElementById('newAssignmentDueDate').value = toLocalDtInput(assignment.dueDate);
 
     handleNewAssignmentTypeChange();
   } else {
@@ -3609,13 +3607,15 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentDescription').value = '';
   document.getElementById('newAssignmentIntroNotes').value = '';
   document.getElementById('newAssignmentPoints').value = '100';
-  // Default availableFrom = now (local time)
+  // Default availableFrom = now, due = 1 week from now at 23:59 (local time)
   const pad = n => String(n).padStart(2, '0');
   const now = new Date();
   const nowDtLocal = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
   document.getElementById('newAssignmentAvailableFrom').value = nowDtLocal;
   document.getElementById('newAssignmentAvailableUntil').value = '';
-  setDateTimeInputs('newAssignmentDueDate', 'newAssignmentDueTime', null);
+  const due = new Date();
+  due.setDate(due.getDate() + 7);
+  document.getElementById('newAssignmentDueDate').value = `${due.getFullYear()}-${pad(due.getMonth()+1)}-${pad(due.getDate())}T23:59`;
   document.getElementById('newAssignmentStatus').value = 'draft';
   document.getElementById('newAssignmentAllowLate').checked = true;
   document.getElementById('newAssignmentLatePenaltyType').value = 'per_day';
@@ -3666,11 +3666,9 @@ function syncAvailableUntilToDueDate() {
     untilEl.value = '';
     return;
   }
-  const dateEl = document.getElementById('newAssignmentDueDate');
-  const timeEl = document.getElementById('newAssignmentDueTime');
-  if (!dateEl || !dateEl.value) return;
-  const timeVal = (timeEl && timeEl.value) ? timeEl.value : '23:59';
-  untilEl.value = `${dateEl.value}T${timeVal}`;
+  const dueDtEl = document.getElementById('newAssignmentDueDate');
+  if (!dueDtEl || !dueDtEl.value) return;
+  untilEl.value = dueDtEl.value;
 }
 window.syncAvailableUntilToDueDate = syncAvailableUntilToDueDate;
 
@@ -3682,7 +3680,7 @@ async function saveNewAssignment() {
   const points = parseInt(document.getElementById('newAssignmentPoints').value) || 100;
   const availableFrom = document.getElementById('newAssignmentAvailableFrom').value;
   const availableUntil = document.getElementById('newAssignmentAvailableUntil').value;
-  const dueDate = getDateTimeFromInputs('newAssignmentDueDate', 'newAssignmentDueTime');
+  const dueDate = document.getElementById('newAssignmentDueDate').value || null;
   const status = normalizeContentStatus(document.getElementById('newAssignmentStatus').value);
   const allowLate = document.getElementById('newAssignmentAllowLate').checked;
   const latePenaltyType = document.getElementById('newAssignmentLatePenaltyType').value;
@@ -3717,6 +3715,20 @@ async function saveNewAssignment() {
 
   if (!dueDate) {
     showToast('Please set a due date', 'error');
+    return;
+  }
+
+  // Date validation
+  if (availableFrom && availableUntil && new Date(availableFrom) > new Date(availableUntil)) {
+    showToast('Available from cannot be after available until', 'error');
+    return;
+  }
+  if (availableUntil && new Date(dueDate) > new Date(availableUntil)) {
+    showToast('Due date cannot be after available until', 'error');
+    return;
+  }
+  if (availableFrom && new Date(availableFrom) > new Date(dueDate)) {
+    showToast('Available from cannot be after the due date', 'error');
     return;
   }
 
@@ -8679,6 +8691,7 @@ window.deleteAssignment = deleteAssignment;
 window.saveAssignmentChanges = saveAssignmentChanges;
 window.saveNewAssignment = saveNewAssignment;
 window.openNewAssignmentModal = openNewAssignmentModal;
+window.resetNewAssignmentModal = resetNewAssignmentModal;
 window.openDeadlineOverridesFromModal = openDeadlineOverridesFromModal;
 window.handleNewAssignmentTypeChange = handleNewAssignmentTypeChange;
 window.openAssignmentModal = openAssignmentModal;
