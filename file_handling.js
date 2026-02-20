@@ -1048,7 +1048,6 @@ function renderFileCard(f, effectiveStaff) {
     </div>
   `;
 }
-}
 
 export function renderFiles() {
   if (!activeCourseId) {
