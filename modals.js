@@ -1240,22 +1240,15 @@ student3@example.com, 92, Well done" rows="10"></textarea>
               </div>
             </div>
 
-            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
-              <div class="form-group">
-                <label class="form-label">Submission Attempts</label>
-                <div style="display:flex; gap:8px; align-items:center;">
-                  <input type="number" class="form-input" id="newAssignmentAttempts" value="" min="1" placeholder="e.g. 3" style="flex:1;">
-                  <label style="display:flex; align-items:center; gap:4px; white-space:nowrap; font-size:0.85rem; cursor:pointer;">
-                    <input type="checkbox" id="newAssignmentUnlimitedAttempts" onchange="toggleUnlimitedAttempts('newAssignmentAttempts', this)"> Unlimited
-                  </label>
-                </div>
-              </div>
-              <div class="form-group">
-                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; padding-top:28px;">
-                  <input type="checkbox" id="newAssignmentAllowResubmit" checked>
-                  <span>Allow resubmission</span>
-                </label>
-              </div>
+            <div class="form-group">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; flex-wrap:wrap;">
+                <input type="checkbox" id="newAssignmentAllowResubmit" checked onchange="toggleResubmitOptions(this)">
+                <span style="font-size:0.85rem;">Allow resubmissions</span>
+                <span id="resubmitLimitGroup" style="display:flex; align-items:center; gap:6px;">
+                  <input type="number" class="form-input" id="newAssignmentAttempts" value="" min="1" placeholder="∞" style="width:60px; padding:3px 6px; font-size:0.85rem;" title="Leave blank for unlimited">
+                  <span style="font-size:0.8rem; color:var(--text-muted);">attempts (blank = unlimited)</span>
+                </span>
+              </label>
             </div>
           </div>
 
