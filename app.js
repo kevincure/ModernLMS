@@ -2691,19 +2691,76 @@ function renderAssignments() {
       </div>
     ` : '';
 
+    // Determine the CC 1.4 assignment type
+    const atype = a.assignmentType || (
+      (a.category === 'quiz' || a.category === 'exam') ? 'quiz' : 'essay'
+    );
+
+    // Points/grading type display
+    let pointsDisplay = '';
+    if (atype === 'no_submission') {
+      if (a.gradingType === 'complete_incomplete') pointsDisplay = 'Complete / Incomplete';
+      else if (a.gradingType === 'letter_grade') pointsDisplay = 'Letter Grade';
+      else pointsDisplay = `${a.points ?? 0} points`;
+    } else if (atype === 'quiz') {
+      pointsDisplay = `${a.points ?? 0} pts (auto-graded)`;
+    } else {
+      if (a.gradingType === 'complete_incomplete') pointsDisplay = 'Complete / Incomplete';
+      else if (a.gradingType === 'letter_grade') pointsDisplay = 'Letter Grade';
+      else pointsDisplay = `${a.points ?? 100} points`;
+    }
+
+    // Type badge for staff
+    const typeBadge = effectiveStaff ? `<span style="font-size:0.7rem; background:var(--surface); border:1px solid var(--border); padding:1px 6px; border-radius:4px; margin-left:6px;">${atype === 'quiz' ? 'Quiz/Exam' : atype === 'no_submission' ? 'No Submission' : 'Essay'}</span>` : '';
+
+    // Student action buttons
+    let studentAction = '';
+    if (!effectiveStaff) {
+      const isAvailable = a.status === 'published' &&
+        (!a.availableFrom || new Date() >= new Date(a.availableFrom)) &&
+        (!a.availableUntil || new Date() <= new Date(a.availableUntil) || a.allowLateSubmissions);
+
+      if (atype === 'quiz') {
+        // Check quiz submissions for this assignment
+        const myQuizSubs = (appData.quizSubmissions || []).filter(s =>
+          (s.assignmentId === a.id || (a.questionBankId && s.bankId === a.questionBankId && s.userId === appData.currentUser.id))
+          && s.userId === appData.currentUser.id
+        );
+        const attemptsAllowed = a.submissionAttempts || null;
+        const attemptsLeft = attemptsAllowed ? Math.max(attemptsAllowed - myQuizSubs.length, 0) : null;
+        const latestSub = myQuizSubs.sort((x, y) => new Date(y.submittedAt) - new Date(x.submittedAt))[0];
+        if (latestSub) {
+          studentAction = `<button class="btn btn-secondary btn-sm" onclick="viewAssignmentQuizResult('${a.id}')">View Results</button>`;
+          if (isAvailable && (!attemptsAllowed || attemptsLeft > 0)) {
+            studentAction += ` <button class="btn btn-primary btn-sm" onclick="startAssignmentQuiz('${a.id}')">Retake</button>`;
+          }
+        } else if (isAvailable) {
+          studentAction = `<button class="btn btn-primary btn-sm" onclick="startAssignmentQuiz('${a.id}')">Start Quiz</button>`;
+        }
+      } else if (atype === 'no_submission') {
+        studentAction = ''; // No action — instructor grades manually
+      } else {
+        // Essay / Free Text
+        if (mySubmission) {
+          studentAction = `<button class="btn btn-secondary btn-sm" onclick="viewMySubmission('${a.id}')">View Submission</button>`;
+          if (isAvailable && a.allowResubmission) {
+            studentAction += ` <button class="btn btn-secondary btn-sm" onclick="submitAssignment('${a.id}')">Resubmit</button>`;
+          }
+        } else if (isAvailable) {
+          studentAction = `<button class="btn btn-primary btn-sm" onclick="submitAssignment('${a.id}')">Submit</button>`;
+        }
+      }
+    }
+
     return `
       <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHiddenAssignment ? 'opacity:0.7; border-style:dashed;' : ''}">
         <div class="card-header">
           <div>
-            <div class="card-title">${escapeHtml(a.title)} ${visibilityBadge}</div>
-            <div class="muted">${formatDueDate(a.dueDate)} · ${a.points} points${a.externalUrl ? ' · External Link' : ''}${notYetAvail ? ` · Opens ${availFrom.toLocaleDateString()}` : ''}${availEnded ? ` · Closed ${availUntil.toLocaleDateString()}` : ''}</div>
+            <div class="card-title">${escapeHtml(a.title)}${typeBadge} ${visibilityBadge}</div>
+            <div class="muted">${formatDueDate(a.dueDate)} · ${pointsDisplay}${a.externalUrl ? ' · External Link' : ''}${notYetAvail ? ` · Opens ${availFrom.toLocaleDateString()}` : ''}${availEnded ? ` · Closed ${availUntil.toLocaleDateString()}` : ''}</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center;">
-            ${effectiveStaff ? assignmentMenu : mySubmission ? `
-              <button class="btn btn-secondary btn-sm" onclick="viewMySubmission('${a.id}')">View Submission</button>
-            ` : a.status === 'published' && !isPast ? `
-              <button class="btn btn-primary btn-sm" onclick="submitAssignment('${a.id}')">Submit</button>
-            ` : ''}
+            ${effectiveStaff ? assignmentMenu : studentAction}
           </div>
         </div>
         <div class="markdown-content">${renderMarkdownWithLinkedFiles(a.description)}</div>
@@ -3210,6 +3267,8 @@ function openCreateQuestionBankForm() {
   document.getElementById('questionBankEditTitle').textContent = 'New Question Bank';
   document.getElementById('questionBankName').value = '';
   document.getElementById('questionBankDescription').value = '';
+  document.getElementById('questionBankDefaultPoints').value = '1';
+  document.getElementById('questionBankRandomize').checked = false;
   document.getElementById('questionBankSaveBtn').textContent = 'Create Bank';
 
   renderQuestionBankQuestions();
@@ -3227,6 +3286,8 @@ function editQuestionBank(bankId) {
   document.getElementById('questionBankEditTitle').textContent = 'Edit Question Bank';
   document.getElementById('questionBankName').value = bank.name;
   document.getElementById('questionBankDescription').value = bank.description || '';
+  document.getElementById('questionBankDefaultPoints').value = bank.defaultPointsPerQuestion || 1;
+  document.getElementById('questionBankRandomize').checked = bank.randomize || false;
   document.getElementById('questionBankSaveBtn').textContent = 'Save Changes';
 
   renderQuestionBankQuestions();
@@ -3248,34 +3309,66 @@ function deleteQuestionBank(bankId) {
   });
 }
 
+const QTI_TYPE_LABELS = {
+  mc_single: 'MC Single', mc_multi: 'MC Multi', multiple_choice: 'Multiple Choice',
+  true_false: 'True/False', short_answer: 'Short Answer',
+  essay: 'Essay', written: 'Essay', matching: 'Matching', ordering: 'Ordering'
+};
+
 function renderQuestionBankQuestions() {
   const container = document.getElementById('questionBankQuestionsContainer');
   if (!container) return;
 
+  // Update total points display
+  const totalPts = questionBankDraftQuestions.reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
+  const totEl = document.getElementById('questionBankPointsTotal');
+  if (totEl) totEl.textContent = questionBankDraftQuestions.length
+    ? `· ${questionBankDraftQuestions.length} question${questionBankDraftQuestions.length !== 1 ? 's' : ''}, ${totalPts} pts total`
+    : '';
+
   if (questionBankDraftQuestions.length === 0) {
-    container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-secondary); border:1px dashed var(--border); border-radius:var(--radius);">No questions yet. Click "Add Question" to create one.</div>';
+    container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-secondary); border:1px dashed var(--border); border-radius:var(--radius);">No questions yet. Click "+ Add Question" to create one.</div>';
     return;
   }
 
   let html = '';
   questionBankDraftQuestions.forEach((q, index) => {
-    const typeLabel = q.type === 'true_false' ? 'True/False' : q.type === 'multiple_choice' ? 'Multiple Choice' : 'Written/Rubric';
+    const typeLabel = QTI_TYPE_LABELS[q.type] || q.type;
+    const pts = parseFloat(q.points) || 1;
+    let preview = '';
+    if ((q.type === 'mc_single' || q.type === 'multiple_choice') && q.options) {
+      preview = `${q.options.length} options, correct: option ${(q.correctAnswer ?? 0) + 1}`;
+    } else if (q.type === 'mc_multi' && q.options) {
+      const correct = Array.isArray(q.correctAnswer) ? q.correctAnswer.map(i => i+1).join(', ') : '?';
+      preview = `${q.options.length} options, correct: [${correct}]`;
+    } else if (q.type === 'true_false') {
+      preview = `Correct: ${q.correctAnswer === true || q.correctAnswer === 'true' ? 'True' : 'False'}`;
+    } else if (q.type === 'short_answer' && q.correctAnswer) {
+      const ans = Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : String(q.correctAnswer);
+      preview = `Accepted: ${escapeHtml(ans.substring(0, 60))}`;
+    } else if (q.type === 'matching' && q.options) {
+      preview = `${q.options.length} pair${q.options.length !== 1 ? 's' : ''}`;
+    } else if (q.type === 'ordering' && q.options) {
+      preview = `${q.options.length} item${q.options.length !== 1 ? 's' : ''}`;
+    }
+
     html += `
       <div class="card" style="padding:12px; margin-bottom:8px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
-          <div>
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <span style="font-size:0.75rem; background:var(--primary-light); color:var(--primary); padding:2px 8px; border-radius:999px;">${typeLabel}</span>
-            <span style="margin-left:8px; font-weight:500;">${q.points || 1} pt${(q.points || 1) !== 1 ? 's' : ''}</span>
+            <span style="font-weight:500; font-size:0.9rem;">${pts} pt${pts !== 1 ? 's' : ''}</span>
+            ${q.timDependent ? '<span style="font-size:0.75rem; color:var(--warning);">timed</span>' : ''}
           </div>
           <div style="display:flex; gap:4px;">
             <button class="btn btn-secondary btn-sm" onclick="editQuestionInBank(${index})">Edit</button>
             <button class="btn btn-secondary btn-sm" onclick="removeQuestionFromBank(${index})">Remove</button>
           </div>
         </div>
-        <div style="font-size:0.9rem;">${escapeHtml(q.prompt || q.question || 'No question text')}</div>
-        ${q.type === 'multiple_choice' && q.options ? `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Options: ${q.options.length}, Correct: ${q.correctAnswer || 'Not set'}</div>` : ''}
-        ${q.type === 'true_false' ? `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Correct: ${q.correctAnswer === true || q.correctAnswer === 'true' ? 'True' : 'False'}</div>` : ''}
-        ${q.gradingNotes ? `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Grading notes: ${escapeHtml(q.gradingNotes.substring(0, 50))}${q.gradingNotes.length > 50 ? '...' : ''}</div>` : ''}
+        <div style="font-size:0.9rem; margin-bottom:${preview ? '4px' : '0'};">${escapeHtml((q.prompt || '').substring(0, 120))}${(q.prompt || '').length > 120 ? '…' : ''}</div>
+        ${preview ? `<div style="font-size:0.8rem; color:var(--text-secondary);">${preview}</div>` : ''}
+        ${q.hint ? `<div style="font-size:0.8rem; color:var(--success); margin-top:2px;">Has hint</div>` : ''}
+        ${(q.curriculumAlignment || []).length > 0 ? `<div style="font-size:0.8rem; color:var(--text-secondary);">Aligned: ${q.curriculumAlignment.join(', ')}</div>` : ''}
       </div>
     `;
   });
@@ -3284,15 +3377,26 @@ function renderQuestionBankQuestions() {
 }
 
 function addQuestionToBankForm() {
+  const defaultPts = parseFloat(document.getElementById('questionBankDefaultPoints')?.value) || 1;
   const newQuestion = {
     id: generateId(),
-    type: 'multiple_choice',
+    type: 'mc_single',
     prompt: '',
     options: ['', '', '', ''],
     correctAnswer: 0,
-    points: 1,
-    introNotes: '',
-    gradingNotes: ''
+    points: defaultPts,
+    timDependent: false,
+    timeLimit: null,
+    feedbackGeneral: '',
+    feedbackCorrect: '',
+    feedbackIncorrect: '',
+    hint: '',
+    altTextRequired: false,
+    curriculumAlignment: [],
+    shuffleOptions: false,
+    partialCredit: 'all_or_nothing',
+    caseSensitive: false,
+    expectedLength: null
   };
   questionBankDraftQuestions.push(newQuestion);
   openQuestionEditor(questionBankDraftQuestions.length - 1);
@@ -3311,79 +3415,272 @@ let currentEditQuestionIndex = null;
 
 function openQuestionEditor(index) {
   currentEditQuestionIndex = index;
-  const question = questionBankDraftQuestions[index];
-
-  // Build a simple inline editor form
+  const q = questionBankDraftQuestions[index];
+  const type = q.type || 'mc_single';
   const container = document.getElementById('questionBankQuestionsContainer');
 
-  let optionsHtml = '';
-  if (question.type === 'multiple_choice') {
-    const options = question.options || ['', '', '', ''];
-    optionsHtml = `
+  // ── type-specific fields HTML ──────────────────────────────────────────────
+  let typeSpecificHtml = '';
+
+  if (type === 'mc_single' || type === 'multiple_choice') {
+    const opts = q.options || ['', '', '', ''];
+    typeSpecificHtml = `
       <div class="form-group">
-        <label class="form-label">Answer Options</label>
-        ${options.map((opt, i) => `
-          <div style="display:flex; gap:8px; margin-bottom:4px; align-items:center;">
-            <input type="radio" name="correctAnswer" value="${i}" ${question.correctAnswer === i ? 'checked' : ''}>
-            <input type="text" class="form-input" id="questionOption${i}" value="${escapeHtml(opt)}" placeholder="Option ${i + 1}">
+        <label class="form-label">Answer Options <span class="muted" style="font-size:0.8rem;">— radio = correct answer</span></label>
+        ${opts.map((opt, i) => `
+          <div style="display:flex; gap:6px; margin-bottom:4px; align-items:center;">
+            <input type="radio" name="qCorrect" value="${i}" ${q.correctAnswer === i ? 'checked' : ''} title="Mark as correct">
+            <input type="text" class="form-input" id="qOpt${i}" value="${escapeHtml(opt)}" placeholder="Option ${String.fromCharCode(65+i)}">
             ${i >= 2 ? `<button class="btn btn-secondary btn-sm" onclick="removeQuestionOption(${i})">×</button>` : ''}
           </div>
         `).join('')}
         <button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="addQuestionOption()">+ Add Option</button>
-        <div class="hint" style="margin-top:4px;">Select the radio button next to the correct answer</div>
       </div>
-    `;
-  } else if (question.type === 'true_false') {
-    optionsHtml = `
+      <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" id="qShuffle" ${q.shuffleOptions ? 'checked' : ''}>
+            <span>Shuffle options per student</span>
+          </label>
+        </div>
+      </div>`;
+
+  } else if (type === 'mc_multi') {
+    const opts = q.options || ['', '', ''];
+    const correct = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+    typeSpecificHtml = `
+      <div class="form-group">
+        <label class="form-label">Answer Options <span class="muted" style="font-size:0.8rem;">— checkboxes = all correct answers</span></label>
+        ${opts.map((opt, i) => `
+          <div style="display:flex; gap:6px; margin-bottom:4px; align-items:center;">
+            <input type="checkbox" name="qCorrectMulti" value="${i}" ${correct.includes(i) ? 'checked' : ''}>
+            <input type="text" class="form-input" id="qOpt${i}" value="${escapeHtml(opt)}" placeholder="Option ${String.fromCharCode(65+i)}">
+            ${i >= 2 ? `<button class="btn btn-secondary btn-sm" onclick="removeQuestionOption(${i})">×</button>` : ''}
+          </div>
+        `).join('')}
+        <button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="addQuestionOption()">+ Add Option</button>
+      </div>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label" style="font-size:0.85rem;">Partial Credit Scoring</label>
+          <select class="form-select" id="qPartialCredit">
+            <option value="all_or_nothing" ${q.partialCredit === 'all_or_nothing' ? 'selected' : ''}>All-or-Nothing</option>
+            <option value="per_correct" ${q.partialCredit === 'per_correct' ? 'selected' : ''}>Equal weight per correct</option>
+            <option value="penalize_incorrect" ${q.partialCredit === 'penalize_incorrect' ? 'selected' : ''}>Penalize incorrect guesses</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:22px;">
+            <input type="checkbox" id="qShuffle" ${q.shuffleOptions ? 'checked' : ''}>
+            <span>Shuffle options per student</span>
+          </label>
+        </div>
+      </div>`;
+
+  } else if (type === 'true_false') {
+    const val = q.correctAnswer === true || q.correctAnswer === 'true';
+    typeSpecificHtml = `
       <div class="form-group">
         <label class="form-label">Correct Answer</label>
-        <select class="form-select" id="questionCorrectTF">
-          <option value="true" ${question.correctAnswer === true || question.correctAnswer === 'true' ? 'selected' : ''}>True</option>
-          <option value="false" ${question.correctAnswer === false || question.correctAnswer === 'false' ? 'selected' : ''}>False</option>
+        <select class="form-select" id="qCorrectTF" style="width:200px;">
+          <option value="true" ${val ? 'selected' : ''}>True</option>
+          <option value="false" ${!val ? 'selected' : ''}>False</option>
         </select>
-      </div>
-    `;
-  } else {
-    // Written/rubric type
-    optionsHtml = `
+      </div>`;
+
+  } else if (type === 'short_answer') {
+    const ans = Array.isArray(q.correctAnswer) ? q.correctAnswer : (q.correctAnswer ? [q.correctAnswer] : ['']);
+    typeSpecificHtml = `
       <div class="form-group">
-        <label class="form-label">Rubric / Grading Criteria</label>
-        <textarea class="form-textarea" id="questionRubric" rows="3" placeholder="Describe how this question should be graded...">${escapeHtml(question.rubric || '')}</textarea>
+        <label class="form-label">Accepted Answers <span class="muted" style="font-size:0.8rem;">(auto-grader accepts any match)</span></label>
+        <div id="qShortAnswerList">
+          ${ans.map((a, i) => `
+            <div style="display:flex; gap:6px; margin-bottom:4px;">
+              <input type="text" class="form-input" id="qSA${i}" value="${escapeHtml(a)}" placeholder="Accepted answer ${i+1}">
+              ${i >= 1 ? `<button class="btn btn-secondary btn-sm" onclick="removeShortAnswer(${i})">×</button>` : ''}
+            </div>
+          `).join('')}
+        </div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="addShortAnswer()">+ Add Accepted Answer</button>
       </div>
-    `;
+      <div class="form-group" style="margin-bottom:0;">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" id="qCaseSensitive" ${q.caseSensitive ? 'checked' : ''}>
+          <span>Case sensitive matching</span>
+        </label>
+      </div>`;
+
+  } else if (type === 'essay' || type === 'written') {
+    typeSpecificHtml = `
+      <div class="form-group">
+        <label class="form-label">Expected Response Length (lines, optional)</label>
+        <input type="number" class="form-input" id="qExpectedLength" value="${q.expectedLength || ''}" min="1" max="200" placeholder="e.g. 10" style="width:120px;">
+        <div class="hint">Sets the height of the text box shown to students</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <div class="muted" style="font-size:0.85rem;">Essay questions are flagged for manual grading.</div>
+      </div>`;
+
+  } else if (type === 'matching') {
+    const pairs = Array.isArray(q.options) && q.options.length > 0 && typeof q.options[0] === 'object'
+      ? q.options
+      : [{ source: '', target: '' }, { source: '', target: '' }, { source: '', target: '' }];
+    typeSpecificHtml = `
+      <div class="form-group">
+        <label class="form-label">Matching Pairs <span class="muted" style="font-size:0.8rem;">(targets will be scrambled for students)</span></label>
+        <div style="display:grid; grid-template-columns:1fr 1fr 32px; gap:4px; margin-bottom:4px;">
+          <span class="muted" style="font-size:0.8rem; padding:2px 4px;">Source (prompt)</span>
+          <span class="muted" style="font-size:0.8rem; padding:2px 4px;">Target (answer)</span>
+          <span></span>
+        </div>
+        <div id="qMatchPairs">
+          ${pairs.map((p, i) => `
+            <div style="display:grid; grid-template-columns:1fr 1fr 32px; gap:4px; margin-bottom:4px;">
+              <input type="text" class="form-input" id="qMatchSrc${i}" value="${escapeHtml(p.source || '')}" placeholder="Source ${i+1}">
+              <input type="text" class="form-input" id="qMatchTgt${i}" value="${escapeHtml(p.target || '')}" placeholder="Target ${i+1}">
+              ${i >= 2 ? `<button class="btn btn-secondary btn-sm" onclick="removeMatchPair(${i})" style="padding:4px 6px;">×</button>` : '<span></span>'}
+            </div>
+          `).join('')}
+        </div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="addMatchPair()">+ Add Pair</button>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label class="form-label" style="font-size:0.85rem;">Partial Credit Scoring</label>
+        <select class="form-select" id="qPartialCredit" style="width:250px;">
+          <option value="all_or_nothing" ${q.partialCredit === 'all_or_nothing' ? 'selected' : ''}>All-or-Nothing</option>
+          <option value="per_correct" ${q.partialCredit === 'per_correct' ? 'selected' : ''}>Equal weight per correct match</option>
+        </select>
+      </div>`;
+
+  } else if (type === 'ordering') {
+    const items = Array.isArray(q.options) ? q.options : ['', '', ''];
+    typeSpecificHtml = `
+      <div class="form-group">
+        <label class="form-label">Sequence Items <span class="muted" style="font-size:0.8rem;">(enter in correct order; will be scrambled for students)</span></label>
+        <div id="qOrderItems">
+          ${items.map((it, i) => `
+            <div style="display:flex; gap:6px; margin-bottom:4px; align-items:center;">
+              <span class="muted" style="font-size:0.85rem; min-width:24px;">${i+1}.</span>
+              <input type="text" class="form-input" id="qOrd${i}" value="${escapeHtml(it)}" placeholder="Item ${i+1}">
+              ${i >= 2 ? `<button class="btn btn-secondary btn-sm" onclick="removeOrderItem(${i})">×</button>` : ''}
+            </div>
+          `).join('')}
+        </div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="addOrderItem()">+ Add Item</button>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label class="form-label" style="font-size:0.85rem;">Partial Credit Scoring</label>
+        <select class="form-select" id="qPartialCredit" style="width:250px;">
+          <option value="all_or_nothing" ${q.partialCredit === 'all_or_nothing' ? 'selected' : ''}>All-or-Nothing</option>
+          <option value="per_correct" ${q.partialCredit === 'per_correct' ? 'selected' : ''}>Points for correct relative position</option>
+        </select>
+      </div>`;
   }
 
   container.innerHTML = `
     <div class="card" style="padding:16px; background:var(--surface);">
-      <h4 style="margin-bottom:12px;">Edit Question</h4>
-      <div class="form-group">
-        <label class="form-label">Question Type</label>
-        <select class="form-select" id="questionType" onchange="changeQuestionType()">
-          <option value="multiple_choice" ${question.type === 'multiple_choice' ? 'selected' : ''}>Multiple Choice</option>
-          <option value="true_false" ${question.type === 'true_false' ? 'selected' : ''}>True/False</option>
-          <option value="written" ${question.type === 'written' ? 'selected' : ''}>Written/Rubric</option>
-        </select>
+      <h4 style="margin-bottom:14px;">Edit Question</h4>
+
+      <!-- ── Core ── -->
+      <div class="form-grid" style="grid-template-columns:2fr 1fr; gap:12px;">
+        <div class="form-group">
+          <label class="form-label">Question Type *</label>
+          <select class="form-select" id="questionType" onchange="changeQuestionType()">
+            <option value="mc_single"    ${type==='mc_single'||type==='multiple_choice'?'selected':''}>Multiple Choice (Single Correct)</option>
+            <option value="mc_multi"     ${type==='mc_multi'?'selected':''}>Multiple Choice (Multiple Correct)</option>
+            <option value="true_false"   ${type==='true_false'?'selected':''}>True / False</option>
+            <option value="short_answer" ${type==='short_answer'?'selected':''}>Short Answer (Fill-in-the-blank)</option>
+            <option value="essay"        ${type==='essay'||type==='written'?'selected':''}>Essay (Extended Text)</option>
+            <option value="matching"     ${type==='matching'?'selected':''}>Matching</option>
+            <option value="ordering"     ${type==='ordering'?'selected':''}>Ordering / Sequence</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Points Possible *</label>
+          <input type="number" class="form-input" id="questionPoints" value="${parseFloat(q.points) || 1}" min="0" step="0.5">
+        </div>
       </div>
+
       <div class="form-group">
-        <label class="form-label">Question Text</label>
-        <textarea class="form-textarea" id="questionPrompt" rows="2" placeholder="Enter the question...">${escapeHtml(question.prompt || question.question || '')}</textarea>
+        <label class="form-label">Question Title / ID <span class="muted" style="font-size:0.8rem;">(optional internal label)</span></label>
+        <input type="text" class="form-input" id="questionTitle" value="${escapeHtml(q.title || '')}" placeholder="e.g. Q-Chapter1-01">
       </div>
+
       <div class="form-group">
-        <label class="form-label">Points</label>
-        <input type="number" class="form-input" id="questionPoints" value="${question.points || 1}" min="1" style="width:100px;">
+        <label class="form-label">Question Prompt *</label>
+        <textarea class="form-textarea" id="questionPrompt" rows="3" placeholder="Enter the question text... (supports Markdown)">${escapeHtml(q.prompt || '')}</textarea>
       </div>
+
+      <!-- ── Type-specific ── -->
       <div id="questionTypeSpecificFields">
-        ${optionsHtml}
+        ${typeSpecificHtml}
       </div>
-      <div class="form-group">
-        <label class="form-label">Intro Notes (shown to students)</label>
-        <textarea class="form-textarea" id="questionIntroNotes" rows="2" placeholder="Optional context or hints for students...">${escapeHtml(question.introNotes || '')}</textarea>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Grading Notes (private - for instructors only)</label>
-        <textarea class="form-textarea" id="questionGradingNotes" rows="2" placeholder="Notes for graders...">${escapeHtml(question.gradingNotes || '')}</textarea>
-      </div>
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+
+      <!-- ── Feedback (QTI 3.0 standard) ── -->
+      <details style="margin-top:16px;">
+        <summary style="cursor:pointer; font-weight:600; font-size:0.9rem; margin-bottom:8px;">Feedback (QTI 3.0)</summary>
+        <div style="padding:12px 0 0;">
+          <div class="form-group">
+            <label class="form-label" style="font-size:0.85rem;">General Feedback <span class="muted">(shown after submitting, regardless of score)</span></label>
+            <textarea class="form-textarea" id="qFeedbackGeneral" rows="2">${escapeHtml(q.feedbackGeneral || '')}</textarea>
+          </div>
+          <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label" style="font-size:0.85rem;">Correct Feedback <span class="muted">(full credit)</span></label>
+              <textarea class="form-textarea" id="qFeedbackCorrect" rows="2">${escapeHtml(q.feedbackCorrect || '')}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label" style="font-size:0.85rem;">Incorrect Feedback <span class="muted">(misses any points)</span></label>
+              <textarea class="form-textarea" id="qFeedbackIncorrect" rows="2">${escapeHtml(q.feedbackIncorrect || '')}</textarea>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:12px; margin-bottom:0;">
+            <label class="form-label" style="font-size:0.85rem;">Hint <span class="muted">(student can reveal before answering)</span></label>
+            <textarea class="form-textarea" id="qHint" rows="2">${escapeHtml(q.hint || '')}</textarea>
+          </div>
+        </div>
+      </details>
+
+      <!-- ── Accessibility & Metadata (QTI 3.0) ── -->
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer; font-weight:600; font-size:0.9rem; margin-bottom:8px;">Accessibility & Curriculum Alignment</summary>
+        <div style="padding:12px 0 0;">
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="qAltTextRequired" ${q.altTextRequired ? 'checked' : ''}>
+              <span style="font-size:0.9rem;">Require Alt-Text on any inserted image</span>
+            </label>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:0.85rem;">Curriculum Alignment (CASE GUIDs / State Standards)</label>
+            <input type="text" class="form-input" id="qCurriculumAlignment"
+              value="${escapeHtml((q.curriculumAlignment || []).join(', '))}"
+              placeholder="e.g. CCSS.MATH.6.RP.A.1, TX-TEKS.Math.6.4A">
+            <div class="hint">Comma-separated standard identifiers</div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ── Time ── -->
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer; font-weight:600; font-size:0.9rem; margin-bottom:8px;">Time Settings (QTI 3.0)</summary>
+        <div style="padding:12px 0 0;">
+          <div class="form-group" style="margin-bottom:8px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="qTimeDependent" ${q.timDependent ? 'checked' : ''} onchange="document.getElementById('qTimeLimitGroup').style.display=this.checked?'block':'none'">
+              <span style="font-size:0.9rem;">This question is time-dependent (has its own time limit)</span>
+            </label>
+          </div>
+          <div id="qTimeLimitGroup" style="display:${q.timDependent ? 'block' : 'none'};">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label" style="font-size:0.85rem;">Per-Question Time Limit (seconds)</label>
+              <input type="number" class="form-input" id="qTimeLimit" value="${q.timeLimit || ''}" min="10" placeholder="e.g. 120" style="width:150px;">
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
         <button class="btn btn-secondary" onclick="cancelQuestionEdit()">Cancel</button>
         <button class="btn btn-primary" onclick="saveQuestionEdit()">Save Question</button>
       </div>
@@ -3391,16 +3688,147 @@ function openQuestionEditor(index) {
   `;
 }
 
+// Helper: read current options array from indexed input fields
+function readOptionsFromDOM(prefix, count) {
+  const opts = [];
+  for (let i = 0; i < count; i++) {
+    const el = document.getElementById(`${prefix}${i}`);
+    if (el) opts.push(el.value);
+  }
+  return opts;
+}
+
+function addShortAnswer() {
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  const current = [];
+  let i = 0;
+  while (document.getElementById(`qSA${i}`)) {
+    current.push(document.getElementById(`qSA${i}`).value);
+    i++;
+  }
+  q.correctAnswer = current;
+  q.correctAnswer.push('');
+  openQuestionEditor(currentEditQuestionIndex);
+}
+window.addShortAnswer = addShortAnswer;
+
+function removeShortAnswer(index) {
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  const current = [];
+  let i = 0;
+  while (document.getElementById(`qSA${i}`)) {
+    current.push(document.getElementById(`qSA${i}`).value);
+    i++;
+  }
+  q.correctAnswer = current;
+  q.correctAnswer.splice(index, 1);
+  openQuestionEditor(currentEditQuestionIndex);
+}
+window.removeShortAnswer = removeShortAnswer;
+
+function addMatchPair() {
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  const current = [];
+  let i = 0;
+  while (document.getElementById(`qMatchSrc${i}`)) {
+    current.push({
+      source: document.getElementById(`qMatchSrc${i}`).value,
+      target: document.getElementById(`qMatchTgt${i}`).value
+    });
+    i++;
+  }
+  q.options = current;
+  q.options.push({ source: '', target: '' });
+  openQuestionEditor(currentEditQuestionIndex);
+}
+window.addMatchPair = addMatchPair;
+
+function removeMatchPair(index) {
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  const current = [];
+  let i = 0;
+  while (document.getElementById(`qMatchSrc${i}`)) {
+    current.push({
+      source: document.getElementById(`qMatchSrc${i}`).value,
+      target: document.getElementById(`qMatchTgt${i}`).value
+    });
+    i++;
+  }
+  q.options = current;
+  q.options.splice(index, 1);
+  openQuestionEditor(currentEditQuestionIndex);
+}
+window.removeMatchPair = removeMatchPair;
+
+function addOrderItem() {
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  const current = [];
+  let i = 0;
+  while (document.getElementById(`qOrd${i}`)) {
+    current.push(document.getElementById(`qOrd${i}`).value);
+    i++;
+  }
+  q.options = current;
+  q.options.push('');
+  openQuestionEditor(currentEditQuestionIndex);
+}
+window.addOrderItem = addOrderItem;
+
+function removeOrderItem(index) {
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  const current = [];
+  let i = 0;
+  while (document.getElementById(`qOrd${i}`)) {
+    current.push(document.getElementById(`qOrd${i}`).value);
+    i++;
+  }
+  q.options = current;
+  q.options.splice(index, 1);
+  openQuestionEditor(currentEditQuestionIndex);
+}
+window.removeOrderItem = removeOrderItem;
+
 function changeQuestionType() {
   const type = document.getElementById('questionType').value;
-  questionBankDraftQuestions[currentEditQuestionIndex].type = type;
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
 
-  // Reset type-specific fields
-  if (type === 'multiple_choice') {
-    questionBankDraftQuestions[currentEditQuestionIndex].options = ['', '', '', ''];
-    questionBankDraftQuestions[currentEditQuestionIndex].correctAnswer = 0;
+  // Save prompt and points before resetting
+  const prompt = document.getElementById('questionPrompt')?.value || q.prompt;
+  const pts = parseFloat(document.getElementById('questionPoints')?.value) || q.points || 1;
+
+  q.type = type;
+  q.prompt = prompt;
+  q.points = pts;
+
+  // Reset type-specific data
+  if (type === 'mc_single' || type === 'multiple_choice') {
+    q.options = ['', '', '', ''];
+    q.correctAnswer = 0;
+    q.shuffleOptions = false;
+  } else if (type === 'mc_multi') {
+    q.options = ['', '', ''];
+    q.correctAnswer = [];
+    q.shuffleOptions = false;
+    q.partialCredit = 'all_or_nothing';
   } else if (type === 'true_false') {
-    questionBankDraftQuestions[currentEditQuestionIndex].correctAnswer = true;
+    q.options = undefined;
+    q.correctAnswer = true;
+  } else if (type === 'short_answer') {
+    q.options = undefined;
+    q.correctAnswer = [''];
+    q.caseSensitive = false;
+  } else if (type === 'essay' || type === 'written') {
+    q.options = undefined;
+    q.correctAnswer = null;
+    q.expectedLength = null;
+  } else if (type === 'matching') {
+    q.options = [{ source: '', target: '' }, { source: '', target: '' }, { source: '', target: '' }];
+    q.correctAnswer = null;
+    q.partialCredit = 'all_or_nothing';
+  } else if (type === 'ordering') {
+    q.options = ['', '', ''];
+    q.correctAnswer = null;
+    q.partialCredit = 'all_or_nothing';
   }
 
   openQuestionEditor(currentEditQuestionIndex);
@@ -3459,30 +3887,99 @@ function cancelQuestionEdit() {
 }
 
 function saveQuestionEdit() {
-  const question = questionBankDraftQuestions[currentEditQuestionIndex];
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  const type = document.getElementById('questionType').value;
 
-  question.prompt = document.getElementById('questionPrompt').value.trim();
-  question.points = parseInt(document.getElementById('questionPoints').value) || 1;
-  question.introNotes = document.getElementById('questionIntroNotes').value.trim();
-  question.gradingNotes = document.getElementById('questionGradingNotes').value.trim();
+  q.type = type;
+  q.prompt = document.getElementById('questionPrompt').value.trim();
+  q.title = document.getElementById('questionTitle').value.trim();
+  q.points = parseFloat(document.getElementById('questionPoints').value) || 1;
 
-  if (question.type === 'multiple_choice') {
-    const options = [];
+  // Universal feedback & accessibility
+  q.feedbackGeneral = document.getElementById('qFeedbackGeneral')?.value.trim() || '';
+  q.feedbackCorrect = document.getElementById('qFeedbackCorrect')?.value.trim() || '';
+  q.feedbackIncorrect = document.getElementById('qFeedbackIncorrect')?.value.trim() || '';
+  q.hint = document.getElementById('qHint')?.value.trim() || '';
+  q.altTextRequired = document.getElementById('qAltTextRequired')?.checked || false;
+  const alignRaw = document.getElementById('qCurriculumAlignment')?.value.trim() || '';
+  q.curriculumAlignment = alignRaw ? alignRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  q.timDependent = document.getElementById('qTimeDependent')?.checked || false;
+  q.timeLimit = q.timDependent ? (parseInt(document.getElementById('qTimeLimit')?.value) || null) : null;
+
+  // Type-specific fields
+  if (type === 'mc_single' || type === 'multiple_choice') {
+    const opts = [];
     let i = 0;
-    while (document.getElementById(`questionOption${i}`)) {
-      options.push(document.getElementById(`questionOption${i}`).value);
+    while (document.getElementById(`qOpt${i}`)) {
+      opts.push(document.getElementById(`qOpt${i}`).value);
       i++;
     }
-    question.options = options;
-    const selected = document.querySelector('input[name="correctAnswer"]:checked');
-    question.correctAnswer = selected ? parseInt(selected.value) : 0;
-  } else if (question.type === 'true_false') {
-    question.correctAnswer = document.getElementById('questionCorrectTF').value === 'true';
-  } else if (question.type === 'written') {
-    question.rubric = document.getElementById('questionRubric').value.trim();
+    q.options = opts;
+    const selected = document.querySelector('input[name="qCorrect"]:checked');
+    q.correctAnswer = selected ? parseInt(selected.value) : 0;
+    q.shuffleOptions = document.getElementById('qShuffle')?.checked || false;
+
+  } else if (type === 'mc_multi') {
+    const opts = [];
+    let i = 0;
+    while (document.getElementById(`qOpt${i}`)) {
+      opts.push(document.getElementById(`qOpt${i}`).value);
+      i++;
+    }
+    q.options = opts;
+    const checked = [...document.querySelectorAll('input[name="qCorrectMulti"]:checked')].map(el => parseInt(el.value));
+    q.correctAnswer = checked;
+    q.shuffleOptions = document.getElementById('qShuffle')?.checked || false;
+    q.partialCredit = document.getElementById('qPartialCredit')?.value || 'all_or_nothing';
+
+  } else if (type === 'true_false') {
+    q.correctAnswer = document.getElementById('qCorrectTF').value === 'true';
+    q.options = undefined;
+
+  } else if (type === 'short_answer') {
+    const answers = [];
+    let i = 0;
+    while (document.getElementById(`qSA${i}`)) {
+      const v = document.getElementById(`qSA${i}`).value.trim();
+      if (v) answers.push(v);
+      i++;
+    }
+    q.correctAnswer = answers;
+    q.caseSensitive = document.getElementById('qCaseSensitive')?.checked || false;
+    q.options = undefined;
+
+  } else if (type === 'essay' || type === 'written') {
+    q.correctAnswer = null;
+    q.options = undefined;
+    q.expectedLength = parseInt(document.getElementById('qExpectedLength')?.value) || null;
+
+  } else if (type === 'matching') {
+    const pairs = [];
+    let i = 0;
+    while (document.getElementById(`qMatchSrc${i}`)) {
+      pairs.push({
+        source: document.getElementById(`qMatchSrc${i}`).value,
+        target: document.getElementById(`qMatchTgt${i}`).value
+      });
+      i++;
+    }
+    q.options = pairs;
+    q.correctAnswer = null;
+    q.partialCredit = document.getElementById('qPartialCredit')?.value || 'all_or_nothing';
+
+  } else if (type === 'ordering') {
+    const items = [];
+    let i = 0;
+    while (document.getElementById(`qOrd${i}`)) {
+      items.push(document.getElementById(`qOrd${i}`).value);
+      i++;
+    }
+    q.options = items;
+    q.correctAnswer = null;
+    q.partialCredit = document.getElementById('qPartialCredit')?.value || 'all_or_nothing';
   }
 
-  if (!question.prompt) {
+  if (!q.prompt) {
     showToast('Please enter question text', 'error');
     return;
   }
@@ -3494,6 +3991,8 @@ function saveQuestionEdit() {
 async function saveQuestionBank() {
   const name = document.getElementById('questionBankName').value.trim();
   const description = document.getElementById('questionBankDescription').value.trim();
+  const defaultPts = parseFloat(document.getElementById('questionBankDefaultPoints')?.value) || 1;
+  const randomize = document.getElementById('questionBankRandomize')?.checked || false;
 
   if (!name) {
     showToast('Please enter a bank name', 'error');
@@ -3501,33 +4000,40 @@ async function saveQuestionBank() {
   }
 
   if (currentEditQuestionBankId) {
-    // Update existing bank
     const bank = appData.questionBanks.find(b => b.id === currentEditQuestionBankId);
     if (bank) {
       bank.name = name;
       bank.description = description;
+      bank.defaultPointsPerQuestion = defaultPts;
+      bank.randomize = randomize;
       bank.questions = questionBankDraftQuestions;
       await supabaseUpdateQuestionBank(bank);
+      // Refresh auto-calculated points for any quiz assignments using this bank
+      (appData.assignments || []).forEach(a => {
+        if (a.questionBankId === bank.id && a.assignmentType === 'quiz') {
+          a.points = (bank.questions || []).reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
+        }
+      });
     }
   } else {
-    // Create new bank
     const newBank = {
       id: generateId(),
       courseId: activeCourseId,
-      name: name,
-      description: description,
+      name,
+      description,
+      defaultPointsPerQuestion: defaultPts,
+      randomize,
       questions: questionBankDraftQuestions,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      createdBy: appData.currentUser?.id
     };
     appData.questionBanks.push(newBank);
     await supabaseCreateQuestionBank(newBank);
   }
 
-
   closeModal('questionBankEditModal');
   showToast(currentEditQuestionBankId ? 'Question bank updated' : 'Question bank created', 'success');
 
-  // Refresh the list if returning to it
   currentEditQuestionBankId = null;
   questionBankDraftQuestions = [];
   openQuestionBankModal();
@@ -3553,34 +4059,69 @@ function openNewAssignmentModal(assignmentId = null) {
 
     document.getElementById('newAssignmentModalTitle').textContent = 'Edit Assignment';
     document.getElementById('newAssignmentSubmitBtn').textContent = 'Save Changes';
-    document.getElementById('newAssignmentType').value = assignment.category || 'essay';
     document.getElementById('newAssignmentTitle').value = assignment.title || '';
     document.getElementById('newAssignmentDescription').value = assignment.description || '';
-    document.getElementById('newAssignmentIntroNotes').value = assignment.introNotes || '';
-    document.getElementById('newAssignmentPoints').value = assignment.points || 100;
     document.getElementById('newAssignmentStatus').value = normalizeContentStatus(assignment.status || 'draft');
     document.getElementById('newAssignmentAllowLate').checked = assignment.allowLateSubmissions !== false;
     document.getElementById('newAssignmentLatePenaltyType').value = assignment.latePenaltyType || 'per_day';
     document.getElementById('newAssignmentLatePenalty').value = assignment.lateDeduction || 10;
     document.getElementById('newAssignmentGradingNotes').value = assignment.gradingNotes || '';
     document.getElementById('newAssignmentAllowResubmit').checked = assignment.allowResubmission !== false;
-    const taEl = document.getElementById('newAssignmentTimeAllowed');
-    if (taEl) taEl.value = assignment.timeAllowed || '';
 
-    // Question bank settings
-    if (assignment.questionBankId) {
-      document.getElementById('newAssignmentQuestionBank').value = assignment.questionBankId;
+    // Determine assignment_type (new field) falling back to category mapping
+    const atype = assignment.assignmentType ||
+      (assignment.category === 'quiz' || assignment.category === 'exam' ? 'quiz' : 'essay');
+    setAssignmentType(atype);
+
+    if (atype === 'essay') {
+      const mods = assignment.submissionModalities || ['text'];
+      document.getElementById('newAssignmentModalityText').checked = mods.includes('text');
+      document.getElementById('newAssignmentModalityFile').checked = mods.includes('file');
+      handleModalityChange();
+      const fileTypes = Array.isArray(assignment.allowedFileTypes) ? assignment.allowedFileTypes.join(', ') : '';
+      document.getElementById('newAssignmentFileTypes').value = fileTypes;
+      document.getElementById('newAssignmentMaxFileSize').value = assignment.maxFileSizeMb || 50;
+      document.getElementById('essayGradingType').value = assignment.gradingType || 'points';
+      handleGradingTypeChange('essay');
+      document.getElementById('newAssignmentPoints').value = assignment.points || 100;
+      const attempts = assignment.submissionAttempts;
+      if (!attempts) {
+        document.getElementById('newAssignmentUnlimitedAttempts').checked = true;
+        document.getElementById('newAssignmentAttempts').value = '';
+        document.getElementById('newAssignmentAttempts').disabled = true;
+      } else {
+        document.getElementById('newAssignmentAttempts').value = attempts;
+      }
+    } else if (atype === 'quiz') {
+      if (assignment.questionBankId) {
+        document.getElementById('newAssignmentQuestionBank').value = assignment.questionBankId;
+        updateQuizPointsFromBank();
+      }
+      document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions || false;
+      const tl = assignment.timeLimit;
+      if (!tl) {
+        document.getElementById('newAssignmentUnlimitedTime').checked = true;
+        document.getElementById('newAssignmentTimeLimit').disabled = true;
+      } else {
+        document.getElementById('newAssignmentTimeLimit').value = tl;
+      }
+      const qa = assignment.submissionAttempts;
+      if (!qa) {
+        document.getElementById('newAssignmentUnlimitedQuizAttempts').checked = true;
+        document.getElementById('newAssignmentQuizAttempts').disabled = true;
+      } else {
+        document.getElementById('newAssignmentQuizAttempts').value = qa;
+      }
+    } else if (atype === 'no_submission') {
+      document.getElementById('noSubGradingType').value = assignment.gradingType || 'points';
+      handleGradingTypeChange('nosub');
+      document.getElementById('newAssignmentNoSubPoints').value = assignment.points || 100;
     }
-    document.getElementById('newAssignmentNumQuestions').value = assignment.numQuestions || '';
-    document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions !== false;
-    document.getElementById('newAssignmentRandomizeAnswers').checked = assignment.randomizeAnswers !== false;
 
     // Dates — load into date+time-select pairs
     setDateTimePair('newAssignmentAvailableFromDate', 'newAssignmentAvailableFromTime', assignment.availableFrom);
     setDateTimePair('newAssignmentAvailableUntilDate', 'newAssignmentAvailableUntilTime', assignment.availableUntil);
     setDateTimePair('newAssignmentDueDate', 'newAssignmentDueTime', assignment.dueDate);
-
-    handleNewAssignmentTypeChange();
   } else {
     resetNewAssignmentModal();
   }
@@ -3596,16 +4137,32 @@ function resetNewAssignmentModal() {
   currentNewAssignmentEditId = null;
   document.getElementById('newAssignmentModalTitle').textContent = 'New Assignment';
   document.getElementById('newAssignmentSubmitBtn').textContent = 'Create Assignment';
-  document.getElementById('newAssignmentType').value = 'essay';
   document.getElementById('newAssignmentTitle').value = '';
   document.getElementById('newAssignmentDescription').value = '';
-  document.getElementById('newAssignmentIntroNotes').value = '';
   document.getElementById('newAssignmentPoints').value = '100';
-  // Default: availableFrom = today, due = 1 week from now at 23:59
+  document.getElementById('newAssignmentNoSubPoints').value = '100';
+  document.getElementById('newAssignmentQuizPoints').value = '';
+  document.getElementById('newAssignmentQuizAttempts').value = '1';
+  document.getElementById('newAssignmentAttempts').value = '';
+  document.getElementById('newAssignmentUnlimitedAttempts').checked = false;
+  document.getElementById('newAssignmentUnlimitedQuizAttempts').checked = false;
+  document.getElementById('newAssignmentTimeLimit').value = '';
+  document.getElementById('newAssignmentUnlimitedTime').checked = false;
+  document.getElementById('newAssignmentRandomizeQuestions').checked = false;
+  document.getElementById('newAssignmentModalityText').checked = true;
+  document.getElementById('newAssignmentModalityFile').checked = false;
+  document.getElementById('newAssignmentFileTypes').value = '';
+  document.getElementById('newAssignmentMaxFileSize').value = '50';
+  document.getElementById('essayGradingType').value = 'points';
+  document.getElementById('noSubGradingType').value = 'points';
+  handleGradingTypeChange('essay');
+  handleGradingTypeChange('nosub');
+  handleModalityChange();
+
+  // Default dates: availableFrom = today, due = 1 week from now at 23:59
   const pad = n => String(n).padStart(2, '0');
   const now = new Date();
   document.getElementById('newAssignmentAvailableFromDate').value = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
-  // Round to nearest 30-min for the from-time
   const fromH = now.getMinutes() >= 30 ? (now.getHours() + 1) % 24 : now.getHours();
   const fromM = now.getMinutes() >= 30 ? '00' : '30';
   document.getElementById('newAssignmentAvailableFromTime').value = `${pad(fromH)}:${fromM}`;
@@ -3622,13 +4179,8 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentGradingNotes').value = '';
   document.getElementById('newAssignmentAllowResubmit').checked = true;
   document.getElementById('newAssignmentQuestionBank').value = '';
-  document.getElementById('newAssignmentNumQuestions').value = '';
-  document.getElementById('newAssignmentRandomizeQuestions').checked = true;
-  document.getElementById('newAssignmentRandomizeAnswers').checked = true;
-  const taEl = document.getElementById('newAssignmentTimeAllowed');
-  if (taEl) taEl.value = '';
 
-  handleNewAssignmentTypeChange();
+  setAssignmentType('essay');
 }
 
 function populateQuestionBankDropdown() {
@@ -3639,21 +4191,88 @@ function populateQuestionBankDropdown() {
   let html = '<option value="">-- Select a question bank --</option>';
   banks.forEach(bank => {
     const count = (bank.questions || []).length;
-    html += `<option value="${bank.id}">${escapeHtml(bank.name)} (${count} questions)</option>`;
+    const pts = (bank.questions || []).reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
+    html += `<option value="${bank.id}">${escapeHtml(bank.name)} (${count} questions, ${pts} pts)</option>`;
   });
   select.innerHTML = html;
 }
 
-function handleNewAssignmentTypeChange() {
-  const type = document.getElementById('newAssignmentType').value;
-  const questionBankSection = document.getElementById('questionBankSection');
-
-  if (type === 'quiz' || type === 'exam') {
-    questionBankSection.style.display = 'block';
-  } else {
-    questionBankSection.style.display = 'none';
-  }
+// CC 1.4 assignment type selector — highlight active tab + show/hide sections
+function setAssignmentType(type) {
+  const types = ['essay', 'quiz', 'no_submission'];
+  types.forEach(t => {
+    const lbl = document.getElementById(`atype-${t.replace('_','-')}-label`);
+    if (lbl) {
+      lbl.style.background = t === type ? 'var(--primary)' : 'var(--bg-card)';
+      lbl.style.color = t === type ? '#fff' : 'var(--text)';
+    }
+    const radio = document.getElementById(
+      t === 'essay' ? 'newAssignmentTypeEssay' :
+      t === 'quiz'  ? 'newAssignmentTypeQuiz'  : 'newAssignmentTypeNoSub'
+    );
+    if (radio) radio.checked = t === type;
+  });
+  document.getElementById('essaySection').style.display  = type === 'essay'         ? 'block' : 'none';
+  document.getElementById('quizSection').style.display   = type === 'quiz'          ? 'block' : 'none';
+  document.getElementById('noSubSection').style.display  = type === 'no_submission' ? 'block' : 'none';
+  // Late submissions only apply to essay/quiz types
+  const lateGroup = document.getElementById('lateSubmissionToggleGroup');
+  if (lateGroup) lateGroup.style.display = type === 'no_submission' ? 'none' : 'block';
+  const lateSection = document.getElementById('latePenaltySection');
+  if (lateSection) lateSection.style.display = type === 'no_submission' ? 'none' : 'block';
 }
+window.setAssignmentType = setAssignmentType;
+
+// Keep backward-compat alias used in places like AI forms
+function handleNewAssignmentTypeChange() {
+  const radio = document.querySelector('input[name="newAssignmentType"]:checked');
+  if (radio) setAssignmentType(radio.value);
+}
+
+function handleModalityChange() {
+  const fileChecked = document.getElementById('newAssignmentModalityFile')?.checked;
+  const fileSettings = document.getElementById('fileUploadSettings');
+  if (fileSettings) fileSettings.style.display = fileChecked ? 'block' : 'none';
+}
+window.handleModalityChange = handleModalityChange;
+
+function handleGradingTypeChange(context) {
+  const selectId = context === 'essay' ? 'essayGradingType' : 'noSubGradingType';
+  const groupId  = context === 'essay' ? 'essayPointsGroup' : 'noSubPointsGroup';
+  const val = document.getElementById(selectId)?.value;
+  const grp = document.getElementById(groupId);
+  if (grp) grp.style.display = val === 'points' ? 'block' : 'none';
+}
+window.handleGradingTypeChange = handleGradingTypeChange;
+
+function toggleUnlimitedAttempts(inputId, checkbox) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.disabled = checkbox.checked;
+  if (checkbox.checked) input.value = '';
+}
+window.toggleUnlimitedAttempts = toggleUnlimitedAttempts;
+
+function toggleUnlimitedTime(checkbox) {
+  const input = document.getElementById('newAssignmentTimeLimit');
+  if (!input) return;
+  input.disabled = checkbox.checked;
+  if (checkbox.checked) input.value = '';
+}
+window.toggleUnlimitedTime = toggleUnlimitedTime;
+
+// Auto-calculate quiz points when a bank is selected
+function updateQuizPointsFromBank() {
+  const bankId = document.getElementById('newAssignmentQuestionBank')?.value;
+  const ptsEl  = document.getElementById('newAssignmentQuizPoints');
+  if (!ptsEl) return;
+  if (!bankId) { ptsEl.value = ''; return; }
+  const bank = (appData.questionBanks || []).find(b => b.id === bankId);
+  if (!bank) { ptsEl.value = ''; return; }
+  const total = (bank.questions || []).reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
+  ptsEl.value = total;
+}
+window.updateQuizPointsFromBank = updateQuizPointsFromBank;
 
 // Read ISO UTC string from a date input + time select pair
 function getDateTimeFromPair(dateId, timeId) {
@@ -3746,139 +4365,144 @@ function syncAvailableUntilToDueDate() {
 window.syncAvailableUntilToDueDate = syncAvailableUntilToDueDate;
 
 async function saveNewAssignment() {
-  const type = document.getElementById('newAssignmentType').value;
+  // Determine which assignment type is selected
+  const radio = document.querySelector('input[name="newAssignmentType"]:checked');
+  const assignmentType = radio ? radio.value : 'essay';
+
   const title = document.getElementById('newAssignmentTitle').value.trim();
   const description = document.getElementById('newAssignmentDescription').value.trim();
-  const introNotes = document.getElementById('newAssignmentIntroNotes').value.trim();
-  const points = parseInt(document.getElementById('newAssignmentPoints').value) || 100;
   const availableFrom = getDateTimeFromPair('newAssignmentAvailableFromDate', 'newAssignmentAvailableFromTime');
   const availableUntil = getDateTimeFromPair('newAssignmentAvailableUntilDate', 'newAssignmentAvailableUntilTime');
   const dueDate = getDateTimeFromPair('newAssignmentDueDate', 'newAssignmentDueTime');
   const status = normalizeContentStatus(document.getElementById('newAssignmentStatus').value);
-  const allowLate = document.getElementById('newAssignmentAllowLate').checked;
+  const allowLate = assignmentType !== 'no_submission' && document.getElementById('newAssignmentAllowLate').checked;
   const latePenaltyType = document.getElementById('newAssignmentLatePenaltyType').value;
   const latePenalty = parseInt(document.getElementById('newAssignmentLatePenalty').value) || 0;
   const gradingNotes = document.getElementById('newAssignmentGradingNotes').value.trim();
-  const allowResubmit = document.getElementById('newAssignmentAllowResubmit').checked;
-  const taRaw = document.getElementById('newAssignmentTimeAllowed')?.value;
-  const timeAllowed = taRaw ? parseInt(taRaw) : null;
 
-  // Quiz/Exam specific
+  // Type-specific fields
+  let points = 100;
+  let gradingType = 'points';
+  let submissionModalities = ['text'];
+  let allowedFileTypes = [];
+  let maxFileSizeMb = 50;
+  let submissionAttempts = null;
+  let allowResubmit = false;
   let questionBankId = null;
-  let numQuestions = null;
-  let randomizeQuestions = true;
-  let randomizeAnswers = true;
+  let timeLimit = null;
+  let randomizeQuestions = false;
 
-  if (type === 'quiz' || type === 'exam') {
-    questionBankId = document.getElementById('newAssignmentQuestionBank').value;
-    numQuestions = parseInt(document.getElementById('newAssignmentNumQuestions').value) || 0;
-    randomizeQuestions = document.getElementById('newAssignmentRandomizeQuestions').checked;
-    randomizeAnswers = document.getElementById('newAssignmentRandomizeAnswers').checked;
-
-    if (!questionBankId) {
-      showToast('Please select a question bank for quiz/exam', 'error');
+  if (assignmentType === 'essay') {
+    gradingType = document.getElementById('essayGradingType').value;
+    points = gradingType === 'points' ? (parseFloat(document.getElementById('newAssignmentPoints').value) || 100) : 0;
+    const textChecked = document.getElementById('newAssignmentModalityText').checked;
+    const fileChecked = document.getElementById('newAssignmentModalityFile').checked;
+    if (!textChecked && !fileChecked) {
+      showToast('Please select at least one submission modality', 'error');
       return;
     }
+    submissionModalities = [...(textChecked ? ['text'] : []), ...(fileChecked ? ['file'] : [])];
+    if (fileChecked) {
+      const rawTypes = document.getElementById('newAssignmentFileTypes').value.trim();
+      allowedFileTypes = rawTypes ? rawTypes.split(',').map(t => t.trim()).filter(Boolean) : [];
+      maxFileSizeMb = parseInt(document.getElementById('newAssignmentMaxFileSize').value) || 50;
+    }
+    allowResubmit = document.getElementById('newAssignmentAllowResubmit').checked;
+    const unlimitedAttempts = document.getElementById('newAssignmentUnlimitedAttempts').checked;
+    submissionAttempts = unlimitedAttempts ? null : (parseInt(document.getElementById('newAssignmentAttempts').value) || null);
+
+  } else if (assignmentType === 'quiz') {
+    questionBankId = document.getElementById('newAssignmentQuestionBank').value;
+    if (!questionBankId) {
+      showToast('Please select a question bank for a Quiz/Exam assignment', 'error');
+      return;
+    }
+    const bank = (appData.questionBanks || []).find(b => b.id === questionBankId);
+    points = bank ? (bank.questions || []).reduce((s, q) => s + (parseFloat(q.points) || 1), 0) : 0;
+    randomizeQuestions = document.getElementById('newAssignmentRandomizeQuestions').checked;
+    const unlimitedTime = document.getElementById('newAssignmentUnlimitedTime').checked;
+    timeLimit = unlimitedTime ? null : (parseInt(document.getElementById('newAssignmentTimeLimit').value) || null);
+    const unlimitedAttempts = document.getElementById('newAssignmentUnlimitedQuizAttempts').checked;
+    submissionAttempts = unlimitedAttempts ? null : (parseInt(document.getElementById('newAssignmentQuizAttempts').value) || 1);
+    gradingType = 'points';
+
+  } else if (assignmentType === 'no_submission') {
+    gradingType = document.getElementById('noSubGradingType').value;
+    points = gradingType === 'points' ? (parseFloat(document.getElementById('newAssignmentNoSubPoints').value) || 0) : 0;
   }
 
   if (!title) {
     showToast('Please enter a title', 'error');
     return;
   }
-
   if (!dueDate) {
     showToast('Please set a due date', 'error');
     return;
   }
-
-  // Date validation
   if (availableFrom && availableUntil && new Date(availableFrom) > new Date(availableUntil)) {
-    showToast('Available from cannot be after available until', 'error');
+    showToast('Available From cannot be after Available To', 'error');
     return;
   }
   if (availableUntil && new Date(dueDate) > new Date(availableUntil)) {
-    showToast('Due date cannot be after available until', 'error');
+    showToast('Due date cannot be after Available To', 'error');
     return;
   }
   if (availableFrom && new Date(availableFrom) > new Date(dueDate)) {
-    showToast('Available from cannot be after the due date', 'error');
+    showToast('Available From cannot be after the due date', 'error');
     return;
   }
 
+  // Map assignmentType to legacy category for gradebook compatibility
+  const legacyCategory = assignmentType === 'quiz' ? 'quiz' :
+                         assignmentType === 'no_submission' ? 'participation' : 'essay';
+
+  const fields = {
+    title, description, points,
+    assignmentType,
+    category: legacyCategory,
+    gradingType,
+    submissionModalities,
+    allowedFileTypes,
+    maxFileSizeMb,
+    submissionAttempts,
+    allowResubmission: allowResubmit,
+    questionBankId,
+    timeLimit,
+    randomizeQuestions,
+    availableFrom: availableFrom ? new Date(availableFrom).toISOString() : null,
+    availableUntil: availableUntil ? new Date(availableUntil).toISOString() : null,
+    dueDate: new Date(dueDate).toISOString(),
+    status,
+    hidden: status !== 'published',
+    allowLateSubmissions: allowLate,
+    latePenaltyType,
+    lateDeduction: latePenalty,
+    gradingNotes
+  };
+
   if (currentNewAssignmentEditId) {
-    // Update existing assignment
     const assignment = appData.assignments.find(a => a.id === currentNewAssignmentEditId);
     if (!assignment) return;
-
     const original = { ...assignment };
-
-    assignment.title = title;
-    assignment.description = description;
-    assignment.category = type;
-    assignment.introNotes = introNotes;
-    assignment.points = points;
-    assignment.availableFrom = availableFrom ? new Date(availableFrom).toISOString() : null;
-    assignment.availableUntil = availableUntil ? new Date(availableUntil).toISOString() : null;
-    assignment.dueDate = new Date(dueDate).toISOString();
-    assignment.status = status;
-    assignment.hidden = status !== 'published';
-    assignment.allowLateSubmissions = allowLate;
-    assignment.latePenaltyType = latePenaltyType;
-    assignment.lateDeduction = latePenalty;
-    assignment.gradingNotes = gradingNotes;
-    assignment.allowResubmission = allowResubmit;
-    assignment.questionBankId = questionBankId;
-    assignment.numQuestions = numQuestions;
-    assignment.randomizeQuestions = randomizeQuestions;
-    assignment.randomizeAnswers = randomizeAnswers;
-    assignment.timeAllowed = timeAllowed;
-
+    Object.assign(assignment, fields);
     const result = await supabaseUpdateAssignment(assignment);
-    if (!result) {
-      Object.assign(assignment, original);
-      return;
-    }
-
-  
+    if (!result) { Object.assign(assignment, original); return; }
     closeModal('newAssignmentModal');
     resetNewAssignmentModal();
     renderAssignments();
     renderHome();
     showToast('Assignment updated!', 'success');
   } else {
-    // Create new assignment
     const newAssignment = {
       id: generateId(),
       courseId: activeCourseId,
-      title: title,
-      description: description,
-      category: type,
-      introNotes: introNotes,
-      points: points,
-      availableFrom: availableFrom ? new Date(availableFrom).toISOString() : null,
-      availableUntil: availableUntil ? new Date(availableUntil).toISOString() : null,
-      dueDate: new Date(dueDate).toISOString(),
-      status: status,
-      hidden: status !== 'published',
-      allowLateSubmissions: allowLate,
-      latePenaltyType: latePenaltyType,
-      lateDeduction: latePenalty,
-      gradingNotes: gradingNotes,
-      allowResubmission: allowResubmit,
-      questionBankId: questionBankId,
-      numQuestions: numQuestions,
-      randomizeQuestions: randomizeQuestions,
-      randomizeAnswers: randomizeAnswers,
-      timeAllowed: timeAllowed,
+      ...fields,
       createdAt: new Date().toISOString(),
       createdBy: appData.currentUser?.id
     };
-
     const result = await supabaseCreateAssignment(newAssignment);
     if (result) {
       appData.assignments.push(newAssignment);
-    
-
       closeModal('newAssignmentModal');
       resetNewAssignmentModal();
       renderAssignments();
@@ -3892,6 +4516,47 @@ function submitAssignment(assignmentId) {
   openModal('submitModal');
   document.getElementById('submitModalAssignmentId').value = assignmentId;
 }
+
+// ── Quiz-type Assignment: start quiz from a linked question bank ──────────────
+let currentAssignmentQuizId = null;  // tracks which assignment this quiz belongs to
+
+function startAssignmentQuiz(assignmentId) {
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment || !assignment.questionBankId) {
+    showToast('No question bank linked to this assignment', 'error');
+    return;
+  }
+  const bank = (appData.questionBanks || []).find(b => b.id === assignment.questionBankId);
+  if (!bank || !(bank.questions || []).length) {
+    showToast('Question bank is empty', 'error');
+    return;
+  }
+
+  // Build a virtual quiz object from the assignment + bank
+  const virtualQuiz = {
+    id: `assign_${assignmentId}`,
+    title: assignment.title,
+    dueDate: assignment.dueDate,
+    timeLimit: assignment.timeLimit,
+    attempts: assignment.submissionAttempts,
+    randomizeQuestions: assignment.randomizeQuestions || bank.randomize || false,
+    questions: bank.questions.map(q => ({ ...q }))  // deep-ish copy
+  };
+
+  currentAssignmentQuizId = assignmentId;
+  // Use the quiz module's render function
+  renderQuizTakeModal(virtualQuiz);
+  openModal('quizTakeModal');
+}
+window.startAssignmentQuiz = startAssignmentQuiz;
+window.viewAssignmentQuizResult = function(assignmentId) {
+  // Show the latest quiz submission for this assignment
+  const sub = (appData.quizSubmissions || [])
+    .filter(s => s.assignmentId === assignmentId && s.userId === appData.currentUser?.id)
+    .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))[0];
+  if (!sub) { showToast('No submission found', 'info'); return; }
+  viewQuizSubmission(sub.quizId || assignmentId, sub);
+};
 
 function saveSubmission() {
   const assignmentId = document.getElementById('submitModalAssignmentId').value;
@@ -6096,7 +6761,17 @@ function renderStaffGradebook() {
         <thead>
           <tr style="background:var(--bg-color); border-bottom:2px solid var(--border-color);">
             <th style="padding:12px; text-align:left; position:sticky; left:0; background:var(--bg-color);">Student</th>
-            ${assignments.map(a => `<th style="padding:12px; text-align:center; min-width:120px;">${a.title}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${a.points}pts)</span></th>`).join('')}
+            ${assignments.map(a => {
+              const gt = a.gradingType || 'points';
+              const atype = a.assignmentType || 'essay';
+              let ptLabel = '';
+              if (gt === 'complete_incomplete') ptLabel = 'Cmplt/Incmplt';
+              else if (gt === 'letter_grade') ptLabel = 'Letter Grade';
+              else if (atype === 'no_submission') ptLabel = `${a.points ?? 0}pts (manual)`;
+              else if (atype === 'quiz') ptLabel = `${a.points ?? 0}pts (auto)`;
+              else ptLabel = `${a.points ?? 0}pts`;
+              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span></th>`;
+            }).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>
             ${gradeSettings ? '<th style="padding:12px; text-align:center;">Grade</th>' : ''}
@@ -6123,9 +6798,20 @@ function renderStaffGradebook() {
                   const displayName = a.blindGrading ? `Student ${studentIdx + 1}` : student.name;
 
                   if (grade) {
-                    totalScore += grade.score;
-                    totalPoints += a.points;
-                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${grade.score} ${grade.released ? '' : '🔒'}</td>`;
+                    const gt = a.gradingType || 'points';
+                    let cellContent = '';
+                    if (gt === 'complete_incomplete') {
+                      cellContent = grade.score > 0 ? '<span style="color:var(--success);">✓ Complete</span>' : '<span style="color:var(--danger);">✗ Incomplete</span>';
+                      // Don't add to points-based total
+                    } else if (gt === 'letter_grade') {
+                      cellContent = `<span style="font-weight:700; color:${getGradeColor(grade.score)}">${grade.score}</span>`;
+                      // Score stored as letter — don't add to numeric total
+                    } else {
+                      totalScore += grade.score;
+                      totalPoints += a.points;
+                      cellContent = `${grade.score}`;
+                    }
+                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${cellContent} ${grade.released ? '' : '🔒'}</td>`;
                   }
                   return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
@@ -8841,6 +9527,13 @@ window.removeQuestionOption = removeQuestionOption;
 window.cancelQuestionEdit = cancelQuestionEdit;
 window.saveQuestionEdit = saveQuestionEdit;
 window.saveQuestionBank = saveQuestionBank;
+// QTI question type helpers
+window.addShortAnswer = addShortAnswer;
+window.removeShortAnswer = removeShortAnswer;
+window.addMatchPair = addMatchPair;
+window.removeMatchPair = removeMatchPair;
+window.addOrderItem = addOrderItem;
+window.removeOrderItem = removeOrderItem;
 
 // Quizzes
 window.toggleQuizPoolFields = toggleQuizPoolFields;

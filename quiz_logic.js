@@ -468,24 +468,49 @@ export function renderQuizTakeModal(quiz) {
 
   container.dataset.questions = JSON.stringify(questions);
   container.innerHTML = questions.map((q, index) => {
-    if (q.type === 'multiple_choice') {
+    const type = q.type || 'mc_single';
+    const pts = parseFloat(q.points) || 1;
+    const hintHtml = q.hint ? `<div class="quiz-hint" style="margin-top:4px;"><button class="btn btn-secondary btn-sm" style="font-size:0.8rem;" onclick="this.nextElementSibling.style.display='block';this.style.display='none';">Show Hint</button><div style="display:none; margin-top:4px; padding:8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(q.hint)}</div></div>` : '';
+
+    if (type === 'mc_single' || type === 'multiple_choice') {
+      let opts = q.options || [];
+      if (q.shuffleOptions) opts = [...opts].sort(() => Math.random() - 0.5);
       return `
         <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)}</div>
-          ${q.options.map((opt, optIndex) => `
+          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${hintHtml}
+          ${opts.map((opt, optIndex) => `
             <label class="quiz-answer-option">
               <input type="radio" name="quizQuestion${index}" value="${optIndex}">
-              <span>${escapeHtml(opt)}</span>
+              <span>${escapeHtml(typeof opt === 'object' ? opt.text || '' : opt)}</span>
             </label>
           `).join('')}
         </div>
       `;
     }
 
-    if (q.type === 'true_false') {
+    if (type === 'mc_multi') {
+      let opts = q.options || [];
+      if (q.shuffleOptions) opts = [...opts].sort(() => Math.random() - 0.5);
       return `
         <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)}</div>
+          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — select all that apply)</span></div>
+          ${hintHtml}
+          ${opts.map((opt, optIndex) => `
+            <label class="quiz-answer-option">
+              <input type="checkbox" name="quizQuestion${index}" value="${optIndex}">
+              <span>${escapeHtml(typeof opt === 'object' ? opt.text || '' : opt)}</span>
+            </label>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    if (type === 'true_false') {
+      return `
+        <div class="quiz-question-block">
+          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${hintHtml}
           ${['True', 'False'].map(option => `
             <label class="quiz-answer-option">
               <input type="radio" name="quizQuestion${index}" value="${option}">
@@ -496,10 +521,67 @@ export function renderQuizTakeModal(quiz) {
       `;
     }
 
+    if (type === 'short_answer') {
+      return `
+        <div class="quiz-question-block">
+          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${hintHtml}
+          <input type="text" class="form-input" id="quizAnswer${index}" placeholder="Type your answer here...">
+        </div>
+      `;
+    }
+
+    if (type === 'matching') {
+      const pairs = Array.isArray(q.options) && typeof q.options[0] === 'object' ? q.options : [];
+      const targets = [...pairs.map(p => p.target)].sort(() => Math.random() - 0.5);
+      return `
+        <div class="quiz-question-block">
+          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${hintHtml}
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+            <div style="font-size:0.8rem; color:var(--text-secondary); padding-bottom:4px;">Source</div>
+            <div style="font-size:0.8rem; color:var(--text-secondary); padding-bottom:4px;">Match</div>
+            ${pairs.map((p, pi) => `
+              <div style="padding:6px 0;">${escapeHtml(p.source)}</div>
+              <select class="form-select" id="quizMatch${index}_${pi}" style="margin:2px 0;">
+                <option value="">-- Select --</option>
+                ${targets.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+              </select>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (type === 'ordering') {
+      const items = Array.isArray(q.options) ? [...q.options] : [];
+      const shuffled = [...items].sort(() => Math.random() - 0.5);
+      return `
+        <div class="quiz-question-block">
+          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — drag to reorder or use dropdowns)</span></div>
+          ${hintHtml}
+          <div id="quizOrder${index}" style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
+            ${shuffled.map((item, si) => `
+              <div style="display:flex; gap:8px; align-items:center; padding:6px; background:var(--surface); border-radius:4px; border:1px solid var(--border);">
+                <span style="font-size:0.85rem; flex:1;">${escapeHtml(item)}</span>
+                <select class="form-select" id="quizOrdPos${index}_${si}" style="width:80px;">
+                  ${items.map((_, pi) => `<option value="${pi+1}" ${pi===si?'selected':''}>${pi+1}</option>`).join('')}
+                </select>
+              </div>
+            `).join('')}
+          </div>
+          <div class="hint" style="margin-top:4px;">Set the position number (1 = first) for each item</div>
+        </div>
+      `;
+    }
+
+    // Essay / Written (catch-all)
+    const rows = q.expectedLength || 4;
     return `
       <div class="quiz-question-block">
-        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)}</div>
-        <textarea class="form-textarea" rows="3" id="quizAnswer${index}" placeholder="Your answer..."></textarea>
+        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — manual grading)</span></div>
+        ${hintHtml}
+        <textarea class="form-textarea" rows="${Math.min(rows, 20)}" id="quizAnswer${index}" placeholder="Your answer..."></textarea>
       </div>
     `;
   }).join('');
