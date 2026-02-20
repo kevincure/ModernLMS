@@ -6430,11 +6430,18 @@ function exportGradebook() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let peopleSearch = '';
+const peopleSortDir = { instructor: 'asc', ta: 'asc', student: 'asc' };
 
 function updatePeopleSearch(value) {
   peopleSearch = value.toLowerCase();
   renderPeopleList();
 }
+
+function togglePeopleSort(role) {
+  peopleSortDir[role] = peopleSortDir[role] === 'asc' ? 'desc' : 'asc';
+  renderPeopleList();
+}
+window.togglePeopleSort = togglePeopleSort;
 
 function renderPeopleList() {
   if (!activeCourseId) return;
@@ -6513,16 +6520,29 @@ function renderPeopleList() {
   };
 
   // Helper function to render a section with invites at top
-  const renderSectionWithInvites = (title, members, invites) => {
+  const renderSectionWithInvites = (title, role, members, invites) => {
     const totalCount = members.length + invites.length;
     if (totalCount === 0) return '';
 
-    const allItems = [...invites.map(i => ({ ...i, isInvite: true })), ...members.map(m => ({ ...m, isInvite: false }))];
+    let sortedMembers = [...members];
+    if (members.length > 1) {
+      const dir = peopleSortDir[role] || 'asc';
+      sortedMembers.sort((a, b) => dir === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name));
+    }
+
+    const allItems = [...invites.map(i => ({ ...i, isInvite: true })), ...sortedMembers.map(m => ({ ...m, isInvite: false }))];
+
+    const sortBtn = members.length > 1 ? `
+      <button onclick="togglePeopleSort('${role}')" title="Sort alphabetically"
+        style="background:none; border:none; cursor:pointer; font-size:0.8rem; color:var(--text-muted); padding:0 6px; font-weight:normal;">
+        ${peopleSortDir[role] === 'asc' ? '▲ A–Z' : '▼ Z–A'}
+      </button>` : '';
 
     return `
       <div style="margin-bottom:32px;">
-        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color);">
-          ${title} (${members.length}${invites.length > 0 ? ` + ${invites.length} pending` : ''})
+        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color); display:flex; align-items:center; gap:8px;">
+          <span>${title} (${members.length}${invites.length > 0 ? ` + ${invites.length} pending` : ''})</span>
+          ${sortBtn}
         </h3>
         <div style="background:white; border:1px solid var(--border-light); border-radius:var(--radius); overflow:hidden;">
           ${allItems.map((item, idx) => renderPersonRow(item, idx, allItems.length, item.isInvite)).join('')}
@@ -6532,9 +6552,9 @@ function renderPeopleList() {
   };
 
   // Render in order: Instructors, TAs, Students - each with their pending invites at top
-  html += renderSectionWithInvites('Instructors', grouped.instructor, invitesByRole.instructor);
-  html += renderSectionWithInvites('Teaching Assistants', grouped.ta, invitesByRole.ta);
-  html += renderSectionWithInvites('Students', grouped.student, invitesByRole.student);
+  html += renderSectionWithInvites('Instructors', 'instructor', grouped.instructor, invitesByRole.instructor);
+  html += renderSectionWithInvites('Teaching Assistants', 'ta', grouped.ta, invitesByRole.ta);
+  html += renderSectionWithInvites('Students', 'student', grouped.student, invitesByRole.student);
 
   setHTML('peopleList', html || '<div class="empty-state-text">No people in this course</div>');
 }
@@ -6640,16 +6660,29 @@ function renderPeople() {
   };
 
   // Helper function to render a section with invites at top
-  const renderSectionWithInvites = (title, members, invites) => {
+  const renderSectionWithInvites = (title, role, members, invites) => {
     const totalCount = members.length + invites.length;
     if (totalCount === 0) return '';
 
-    const allItems = [...invites.map(i => ({ ...i, isInvite: true })), ...members.map(m => ({ ...m, isInvite: false }))];
+    let sortedMembers = [...members];
+    if (members.length > 1) {
+      const dir = peopleSortDir[role] || 'asc';
+      sortedMembers.sort((a, b) => dir === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name));
+    }
+
+    const allItems = [...invites.map(i => ({ ...i, isInvite: true })), ...sortedMembers.map(m => ({ ...m, isInvite: false }))];
+
+    const sortBtn = members.length > 1 ? `
+      <button onclick="togglePeopleSort('${role}')" title="Sort alphabetically"
+        style="background:none; border:none; cursor:pointer; font-size:0.8rem; color:var(--text-muted); padding:0 6px; font-weight:normal;">
+        ${peopleSortDir[role] === 'asc' ? '▲ A–Z' : '▼ Z–A'}
+      </button>` : '';
 
     return `
       <div style="margin-bottom:32px;">
-        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color);">
-          ${title} (${members.length}${invites.length > 0 ? ` + ${invites.length} pending` : ''})
+        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color); display:flex; align-items:center; gap:8px;">
+          <span>${title} (${members.length}${invites.length > 0 ? ` + ${invites.length} pending` : ''})</span>
+          ${sortBtn}
         </h3>
         <div style="background:white; border:1px solid var(--border-light); border-radius:var(--radius); overflow:hidden;">
           ${allItems.map((item, idx) => renderPersonRow(item, idx, allItems.length, item.isInvite)).join('')}
@@ -6659,9 +6692,9 @@ function renderPeople() {
   };
 
   // Render in order: Instructors, TAs, Students - each with their pending invites at top
-  html += renderSectionWithInvites('Instructors', grouped.instructor, invitesByRole.instructor);
-  html += renderSectionWithInvites('Teaching Assistants', grouped.ta, invitesByRole.ta);
-  html += renderSectionWithInvites('Students', grouped.student, invitesByRole.student);
+  html += renderSectionWithInvites('Instructors', 'instructor', grouped.instructor, invitesByRole.instructor);
+  html += renderSectionWithInvites('Teaching Assistants', 'ta', grouped.ta, invitesByRole.ta);
+  html += renderSectionWithInvites('Students', 'student', grouped.student, invitesByRole.student);
 
   setHTML('peopleList', html || '<div class="empty-state-text">No people in this course</div>');
 }

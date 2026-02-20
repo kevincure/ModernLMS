@@ -947,12 +947,107 @@ export async function viewFile(fileId) {
 
 export function updateFilesSearch(value) {
   filesSearch = value.toLowerCase();
-  renderFiles();
+  renderFilesList();
 }
 
 export function updateFilesSort(value) {
   filesSort = value;
-  renderFiles();
+  renderFilesList();
+}
+
+// Renders only the file list (used by search/sort to avoid rebuilding the search input)
+function renderFilesList() {
+  if (!activeCourseId) return;
+
+  const effectiveStaff = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+
+  let files = appData.files.filter(f => f.courseId === activeCourseId);
+
+  if (!effectiveStaff) {
+    files = files.filter(f => !f.hidden);
+  }
+
+  if (filesSearch) {
+    files = files.filter(f => f.name.toLowerCase().includes(filesSearch) ||
+      (f.externalUrl || '').toLowerCase().includes(filesSearch));
+  }
+
+  files.sort((a, b) => {
+    switch (filesSort) {
+      case 'date-asc': return new Date(a.uploadedAt) - new Date(b.uploadedAt);
+      case 'date-desc': return new Date(b.uploadedAt) - new Date(a.uploadedAt);
+      case 'name-asc': return a.name.localeCompare(b.name);
+      case 'name-desc': return b.name.localeCompare(a.name);
+      case 'size-asc': return a.size - b.size;
+      case 'size-desc': return b.size - a.size;
+      default: return new Date(b.uploadedAt) - new Date(a.uploadedAt);
+    }
+  });
+
+  if (files.length === 0) {
+    setHTML('filesList', filesSearch
+      ? '<div class="empty-state"><div class="empty-state-text">No files match your search</div></div>'
+      : '<div class="empty-state"><div class="empty-state-title">No files yet</div></div>');
+    return;
+  }
+
+  setHTML('filesList', files.map(f => renderFileCard(f, effectiveStaff)).join(''));
+}
+
+// Renders a single file card (shared between renderFiles and renderFilesList)
+function renderFileCard(f, effectiveStaff) {
+  const uploader = getUserById(f.uploadedBy);
+  const isExternal = f.externalUrl;
+  const isPlaceholder = f.isPlaceholder;
+  const isHidden = f.hidden;
+
+  const visibilityText = isHidden ? 'Make Visible' : 'Hide from Students';
+  const visibilityBadge = isHidden
+    ? `<span style="padding:2px 8px; margin-left:8px; border-radius:4px; background:var(--danger-light); color:var(--danger); font-size:0.75rem; font-weight:600;">Hidden</span>`
+    : '';
+
+  const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '';
+  const menuButton = effectiveStaff ? `
+    <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-file-${f.id}')">☰</button>
+    <div id="menu-file-${f.id}" class="floating-menu">
+      <button class="btn btn-secondary btn-sm" onclick="closeMenu(); renameFile('${f.id}')">Rename</button>
+      ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); updateFileContent('${f.id}')">Replace File</button>` : ''}
+      ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
+      <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
+      <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteFile('${f.id}')" style="color:var(--danger);">Delete</button>
+    </div>
+  ` : '';
+
+  return `
+    <div class="card"
+         style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}"
+         ${isPlaceholder && effectiveStaff ? `ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border-color)'" ondrop="handlePlaceholderFileDrop(event, '${f.id}'); this.style.borderColor='var(--border-color)'"` : ''}>
+      <div class="card-header">
+        <div style="flex:1;">
+          <div class="card-title" ${(!isPlaceholder && !isExternal) ? `onclick="window.viewFile('${f.id}')" style="cursor:pointer;"` : ''}>${icon ? icon + ' ' : ''}${escapeHtml(f.name)} ${visibilityBadge}</div>
+          <div class="muted">
+            ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
+            · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          ${isExternal && f.externalUrl ? `
+            <a href="${escapeHtml(f.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
+              ${f.isYouTube ? '▶ Watch' : '🔗 Open'}
+            </a>
+          ` : ''}
+          ${effectiveStaff && isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToFile('${f.id}')">📎 Upload File</button>` : ''}
+          ${menuButton}
+        </div>
+      </div>
+      ${isExternal && f.isYouTube ? `
+        <div style="margin-top:12px;">
+          <iframe width="100%" height="315" src="${escapeHtml(f.externalUrl)}" frameborder="0" allowfullscreen style="border-radius:var(--radius);"></iframe>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
 }
 
 export function renderFiles() {
@@ -968,10 +1063,9 @@ export function renderFiles() {
 
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
 
-  // Actions with search and sort
   setHTML('filesActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search files..." value="${escapeHtml(filesSearch)}" onkeyup="updateFilesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <input type="text" class="form-input" id="filesSearchInput" placeholder="Search files..." value="${escapeHtml(filesSearch)}" oninput="updateFilesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       <select class="form-select" onchange="updateFilesSort(this.value)" style="width:150px;">
         <option value="date-desc" ${filesSort === 'date-desc' ? 'selected' : ''}>Newest first</option>
         <option value="date-asc" ${filesSort === 'date-asc' ? 'selected' : ''}>Oldest first</option>
@@ -984,96 +1078,7 @@ export function renderFiles() {
     </div>
   `);
 
-  const effectiveStaff = isStaffUser && !studentViewMode;
-
-  let files = appData.files.filter(f => f.courseId === activeCourseId);
-
-  // Hide hidden files from students
-  if (!effectiveStaff) {
-    files = files.filter(f => !f.hidden);
-  }
-
-  // Filter by search
-  if (filesSearch) {
-    files = files.filter(f => f.name.toLowerCase().includes(filesSearch));
-  }
-
-  // Sort
-  files.sort((a, b) => {
-    switch (filesSort) {
-      case 'date-asc': return new Date(a.uploadedAt) - new Date(b.uploadedAt);
-      case 'date-desc': return new Date(b.uploadedAt) - new Date(a.uploadedAt);
-      case 'name-asc': return a.name.localeCompare(b.name);
-      case 'name-desc': return b.name.localeCompare(a.name);
-      case 'size-asc': return a.size - b.size;
-      case 'size-desc': return b.size - a.size;
-      default: return 0;
-    }
-  });
-
-  if (files.length === 0) {
-    setHTML('filesList', filesSearch
-      ? '<div class="empty-state"><div class="empty-state-text">No files match your search</div></div>'
-      : '<div class="empty-state"><div class="empty-state-title">No files yet</div></div>');
-    return;
-  }
-
-  const html = files.map(f => {
-    const uploader = getUserById(f.uploadedBy);
-    const isExternal = f.externalUrl;
-    const isPlaceholder = f.isPlaceholder;
-    const isHidden = f.hidden;
-
-    // Visibility badge for staff
-    const visibilityText = isHidden ? 'Make Visible' : 'Hide from Students';
-    const visibilityBadge = isHidden
-      ? `<span style="padding:2px 8px; margin-left:8px; border-radius:4px; background:var(--danger-light); color:var(--danger); font-size:0.75rem; font-weight:600;">Hidden</span>`
-      : '';
-
-    const icon = isExternal && f.isYouTube ? '📺' : isExternal ? '🔗' : isPlaceholder ? '📋' : '';
-    const menuButton = effectiveStaff ? `
-      <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-file-${f.id}')">☰</button>
-      <div id="menu-file-${f.id}" class="floating-menu">
-        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); renameFile('${f.id}')">Rename</button>
-        ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); updateFileContent('${f.id}')">Replace File</button>` : ''}
-        ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
-        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
-        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteFile('${f.id}')" style="color:var(--danger);">Delete</button>
-      </div>
-    ` : '';
-
-    return `
-      <div class="card"
-           style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}"
-           ${isPlaceholder && effectiveStaff ? `ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border-color)'" ondrop="handlePlaceholderFileDrop(event, '${f.id}'); this.style.borderColor='var(--border-color)'"` : ''}>
-        <div class="card-header">
-          <div style="flex:1;">
-            <div class="card-title" ${(!isPlaceholder && !isExternal) ? `onclick="window.viewFile('${f.id}')" style="cursor:pointer;"` : ''}>${icon ? icon + ' ' : ''}${escapeHtml(f.name)} ${visibilityBadge}</div>
-            <div class="muted">
-              ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
-              · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
-            </div>
-          </div>
-          <div style="display:flex; gap:8px;">
-            ${isExternal && f.externalUrl ? `
-              <a href="${escapeHtml(f.externalUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
-                ${f.isYouTube ? '▶ Watch' : '🔗 Open'}
-              </a>
-            ` : ''}
-            ${effectiveStaff && isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); convertPlaceholderToFile('${f.id}')">📎 Upload File</button>` : ''}
-            ${menuButton}
-          </div>
-        </div>
-        ${isExternal && f.isYouTube ? `
-          <div style="margin-top:12px;">
-            <iframe width="100%" height="315" src="${escapeHtml(f.externalUrl)}" frameborder="0" allowfullscreen style="border-radius:var(--radius);"></iframe>
-          </div>
-        ` : ''}
-      </div>
-    `;
-  }).join('');
-
-  setHTML('filesList', html);
+  renderFilesList();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

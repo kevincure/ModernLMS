@@ -835,10 +835,22 @@ export function updateAiActionField(idx, field, value) {
 function syncAiActionFromDom(idx) {
   const msg = aiThread[idx];
   if (!msg || msg.role !== 'action') return;
-  // Trigger input event on every annotated field so its handler updates msg.data
+  // Directly read DOM values instead of relying on event dispatch
   document.querySelectorAll(`[data-ai-idx="${idx}"]`).forEach(el => {
-    el.dispatchEvent(new Event('input', { bubbles: false }));
-    el.dispatchEvent(new Event('change', { bubbles: false }));
+    const fieldName = el.dataset.aiField;
+    if (!fieldName) return;
+    if (fieldName === '__emails__') {
+      msg.data.emails = el.value.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (el.type === 'checkbox') {
+      msg.data[fieldName] = el.checked;
+    } else if (el.type === 'number') {
+      const n = parseFloat(el.value);
+      if (!isNaN(n)) msg.data[fieldName] = n;
+    } else if (el.type === 'datetime-local') {
+      if (el.value) msg.data[fieldName] = new Date(el.value).toISOString();
+    } else {
+      msg.data[fieldName] = el.value;
+    }
   });
 }
 
@@ -1540,12 +1552,12 @@ function renderActionPreview(msg, idx) {
   }
 
   function datetimeInput(fieldName, val) {
-    return `<input type="datetime-local" class="form-input" value="${toDatetimeLocal(val)}" onchange="window.updateAiActionField(${idx}, '${fieldName}', new Date(this.value).toISOString())">`;
+    return `<input type="datetime-local" class="form-input" data-ai-idx="${idx}" data-ai-field="${fieldName}" value="${toDatetimeLocal(val)}" onchange="window.updateAiActionField(${idx}, '${fieldName}', new Date(this.value).toISOString())">`;
   }
 
   function selectInput(fieldName, val, options) {
     const opts = options.map(([v, l]) => `<option value="${v}" ${val === v ? 'selected' : ''}>${l}</option>`).join('');
-    return `<select class="form-input" onchange="window.updateAiActionField(${idx}, '${fieldName}', this.value)">${opts}</select>`;
+    return `<select class="form-input" data-ai-idx="${idx}" data-ai-field="${fieldName}" onchange="window.updateAiActionField(${idx}, '${fieldName}', this.value)">${opts}</select>`;
   }
 
   function checkboxInput(fieldName, checked, label) {

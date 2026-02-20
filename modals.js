@@ -261,7 +261,6 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
           <div class="form-group">
             <label class="form-label">Category</label>
             <select class="form-select" id="assignmentCategory">
-              <option value="homework">Homework</option>
               <option value="quiz">Quiz</option>
               <option value="exam">Exam</option>
               <option value="essay">Essay</option>
@@ -1147,7 +1146,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <select class="form-select" id="newAssignmentType" onchange="handleNewAssignmentTypeChange()">
               <option value="essay">Essay</option>
               <option value="project">Project</option>
-              <option value="homework">Homework</option>
               <option value="participation">Participation</option>
               <option value="quiz">Quiz</option>
               <option value="exam">Exam</option>
@@ -1179,7 +1177,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
               <select class="form-select" id="newAssignmentQuestionBank">
                 <option value="">-- Select a question bank --</option>
               </select>
-              <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="openQuestionBankModal()">Manage Question Banks</button>
             </div>
             <div class="form-group">
               <label class="form-label">Number of Questions</label>
