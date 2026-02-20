@@ -616,6 +616,9 @@ function handleAiAction(action) {
         randomizeQuestions: !!action.randomizeQuestions,
         availableFrom: action.availableFrom || null,
         availableUntil: action.availableUntil || null,
+        allowLateSubmissions: action.allowLateSubmissions !== undefined ? !!action.allowLateSubmissions : true,
+        latePenaltyType: action.latePenaltyType || 'per_day',
+        lateDeduction: action.lateDeduction !== undefined ? action.lateDeduction : 10,
         questions: action.questions || [],
         fileIds: action.fileIds || [],
         fileNames: action.fileNames || []
@@ -660,11 +663,17 @@ function handleAiAction(action) {
       data: {
         title: action.title,
         description: action.description || '',
+        introNotes: action.introNotes || '',
+        gradingNotes: action.gradingNotes || '',
         points: action.points || 100,
         dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
+        availableFrom: action.availableFrom || null,
+        availableUntil: action.availableUntil || null,
+        timeAllowed: action.timeAllowed || null,
         status: action.status || 'draft',
         category: action.category || 'homework',
         allowLateSubmissions: action.allowLateSubmissions,
+        latePenaltyType: action.latePenaltyType || 'per_day',
         lateDeduction: action.lateDeduction,
         allowResubmission: action.allowResubmission,
         fileIds: action.fileIds || [],
@@ -1102,14 +1111,22 @@ async function executeAiOperation(operation, publish = false) {
       courseId: activeCourseId,
       title: resolved.title,
       description: appendFileLinksToContent(resolved.description || '', resolved.fileIds),
+      introNotes: resolved.introNotes || '',
+      gradingNotes: resolved.gradingNotes || '',
       points: resolved.points || 100,
       status: publish ? 'published' : (resolved.status || 'draft'),
+      hidden: !publish && resolved.status !== 'published',
       dueDate: resolved.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
+      availableFrom: resolved.availableFrom || null,
+      availableUntil: resolved.availableUntil || null,
+      timeAllowed: resolved.timeAllowed || null,
       createdAt: new Date().toISOString(),
       category: resolved.category || 'homework',
-      allowLateSubmissions: resolved.allowLateSubmissions !== undefined ? !!resolved.allowLateSubmissions : false,
-      lateDeduction: resolved.lateDeduction !== undefined ? resolved.lateDeduction : 0,
-      allowResubmission: resolved.allowResubmission !== undefined ? !!resolved.allowResubmission : false
+      allowLateSubmissions: resolved.allowLateSubmissions !== undefined ? !!resolved.allowLateSubmissions : true,
+      latePenaltyType: resolved.latePenaltyType || 'per_day',
+      lateDeduction: resolved.lateDeduction !== undefined ? resolved.lateDeduction : 10,
+      allowResubmission: resolved.allowResubmission !== undefined ? !!resolved.allowResubmission : false,
+      createdBy: appData.currentUser?.id
     };
     const result = await supabaseCreateAssignment(newAssignment);
     if (!result) {
