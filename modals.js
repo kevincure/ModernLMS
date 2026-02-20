@@ -1100,29 +1100,48 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       </div>
     </div>
 
-    <!-- Question Bank Edit Modal -->
+    <!-- Question Bank Edit Modal (QTI 3.0 aligned) -->
     <div class="modal-overlay" id="questionBankEditModal">
-      <div class="modal" style="max-width:900px;">
+      <div class="modal" style="max-width:960px;">
         <div class="modal-header">
           <h2 class="modal-title" id="questionBankEditTitle">New Question Bank</h2>
           <button class="modal-close" onclick="closeModal('questionBankEditModal')">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">Bank Name</label>
-            <input type="text" class="form-input" id="questionBankName" placeholder="e.g., Chapter 1 Questions">
+          <!-- Bank-level settings -->
+          <div style="background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:20px;">
+            <h4 style="margin-bottom:14px; font-size:0.95rem;">Bank Settings</h4>
+            <div class="form-group">
+              <label class="form-label">Bank Title *</label>
+              <input type="text" class="form-input" id="questionBankName" placeholder="e.g., Chapter 1 Questions">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Description (optional)</label>
+              <textarea class="form-textarea" id="questionBankDescription" rows="2" placeholder="Brief description of this question bank..."></textarea>
+            </div>
+            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label">Default Points Per Question</label>
+                <input type="number" class="form-input" id="questionBankDefaultPoints" value="1" min="0.5" step="0.5" placeholder="1">
+                <div class="hint">Auto-fills new questions to save time</div>
+              </div>
+              <div class="form-group" style="margin-bottom:0; padding-top:28px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="questionBankRandomize">
+                  <span>Randomize question order per student</span>
+                </label>
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Description (optional)</label>
-            <textarea class="form-textarea" id="questionBankDescription" rows="2" placeholder="Description of this question bank..."></textarea>
-          </div>
+
+          <!-- Questions list -->
           <div class="form-group">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-              <label class="form-label" style="margin:0;">Questions</label>
+              <label class="form-label" style="margin:0;">Questions <span id="questionBankPointsTotal" class="muted" style="font-size:0.85rem; font-weight:400;"></span></label>
               <button class="btn btn-secondary btn-sm" onclick="addQuestionToBankForm()">+ Add Question</button>
             </div>
             <div id="questionBankQuestionsContainer">
-              <!-- Questions rendered here -->
+              <!-- Questions rendered here dynamically -->
             </div>
           </div>
         </div>
@@ -1133,82 +1152,180 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       </div>
     </div>
 
-    <!-- New Assignment Modal (direct creation with type) -->
+    <!-- New Assignment Modal (CC 1.4 aligned — 3 type model) -->
     <div class="modal-overlay" id="newAssignmentModal">
-      <div class="modal" style="max-width:700px;">
+      <div class="modal" style="max-width:720px;">
         <div class="modal-header">
           <h2 class="modal-title" id="newAssignmentModalTitle">New Assignment</h2>
           <button class="modal-close" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">&times;</button>
         </div>
         <div class="modal-body">
+
+          <!-- ── Universal Fields ─────────────────────────────── -->
           <div class="form-group">
-            <label class="form-label">Assignment Type</label>
-            <select class="form-select" id="newAssignmentType" onchange="handleNewAssignmentTypeChange()">
-              <option value="essay">Essay</option>
-              <option value="project">Project</option>
-              <option value="participation">Participation</option>
-              <option value="quiz">Quiz</option>
-              <option value="exam">Exam</option>
-            </select>
+            <label class="form-label">Assignment Type *</label>
+            <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;">
+              <label id="atype-essay-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; border-right:1px solid var(--border); background:var(--primary); color:#fff; font-size:0.9rem;" onclick="setAssignmentType('essay')">
+                <input type="radio" name="newAssignmentType" id="newAssignmentTypeEssay" value="essay" style="display:none;" checked>
+                Essay / Free Text
+              </label>
+              <label id="atype-quiz-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; border-right:1px solid var(--border); background:var(--bg-card); font-size:0.9rem;" onclick="setAssignmentType('quiz')">
+                <input type="radio" name="newAssignmentType" id="newAssignmentTypeQuiz" value="quiz" style="display:none;">
+                Quiz / Exam
+              </label>
+              <label id="atype-nosub-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; background:var(--bg-card); font-size:0.9rem;" onclick="setAssignmentType('no_submission')">
+                <input type="radio" name="newAssignmentType" id="newAssignmentTypeNoSub" value="no_submission" style="display:none;">
+                No Submission
+              </label>
+            </div>
           </div>
+
           <div class="form-group">
-            <label class="form-label">Title</label>
-            <input type="text" class="form-input" id="newAssignmentTitle" placeholder="Enter title">
+            <label class="form-label">Title *</label>
+            <input type="text" class="form-input" id="newAssignmentTitle" placeholder="Enter assignment title">
           </div>
+
           <div class="form-group">
-            <label class="form-label">Description / Instructions</label>
+            <label class="form-label">Description / Prompt *</label>
             <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
               <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('newAssignmentDescription')" title="Insert Link">🔗 Link</button>
               <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('newAssignmentDescription')" title="Insert File">📄 File</button>
               <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('newAssignmentDescription')" title="Insert Video">📹 Video</button>
             </div>
-            <textarea class="form-textarea" id="newAssignmentDescription" placeholder="Describe the assignment... (supports Markdown)"></textarea>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Intro Notes (visible to students before starting)</label>
-            <textarea class="form-textarea" id="newAssignmentIntroNotes" rows="2" placeholder="Optional notes shown to students before they begin..."></textarea>
+            <textarea class="form-textarea" id="newAssignmentDescription" placeholder="Describe the assignment prompt... (supports Markdown)" rows="4"></textarea>
           </div>
 
-          <!-- Question Bank Section (for Quiz/Exam) -->
-          <div id="questionBankSection" style="display:none; background:var(--surface); padding:16px; border-radius:var(--radius); margin-bottom:16px;">
-            <h4 style="margin-bottom:12px;">Question Bank Settings</h4>
-            <div class="form-group">
-              <label class="form-label">Select Question Bank</label>
-              <select class="form-select" id="newAssignmentQuestionBank">
-                <option value="">-- Select a question bank --</option>
-              </select>
+          <!-- ── Conditional: Essay / Free Text ──────────────── -->
+          <div id="essaySection">
+            <div style="background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:16px;">
+              <h4 style="margin-bottom:12px; font-size:0.9rem;">Submission Settings</h4>
+              <div class="form-group" style="margin-bottom:10px;">
+                <label class="form-label" style="margin-bottom:6px;">Submission Modality (at least one) *</label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
+                  <input type="checkbox" id="newAssignmentModalityText" checked onchange="handleModalityChange()">
+                  <span>Online Text Entry</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="newAssignmentModalityFile" onchange="handleModalityChange()">
+                  <span>File Upload</span>
+                </label>
+              </div>
+              <div id="fileUploadSettings" style="display:none; padding-left:24px;">
+                <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" style="font-size:0.85rem;">Allowed File Types</label>
+                    <input type="text" class="form-input" id="newAssignmentFileTypes" placeholder=".pdf, .docx, .png">
+                    <div class="hint">Comma-separated extensions, or leave blank for any type</div>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" style="font-size:0.85rem;">Max File Size (MB)</label>
+                    <input type="number" class="form-input" id="newAssignmentMaxFileSize" value="50" min="1" max="500">
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Number of Questions</label>
-              <input type="number" class="form-input" id="newAssignmentNumQuestions" value="10" min="1" placeholder="Number of questions to include">
-              <div class="hint">Leave blank or 0 to include all questions from the bank</div>
+
+            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="form-group">
+                <label class="form-label">Grading Type</label>
+                <select class="form-select" id="essayGradingType" onchange="handleGradingTypeChange('essay')">
+                  <option value="points">Points</option>
+                  <option value="complete_incomplete">Complete / Incomplete</option>
+                  <option value="letter_grade">Letter Grade</option>
+                </select>
+              </div>
+              <div class="form-group" id="essayPointsGroup">
+                <label class="form-label">Total Points Possible</label>
+                <input type="number" class="form-input" id="newAssignmentPoints" value="100" min="0" step="0.5">
+              </div>
             </div>
-            <div class="form-group">
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="newAssignmentRandomizeQuestions" checked>
-                <span>Randomize question order</span>
-              </label>
-            </div>
-            <div class="form-group">
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="newAssignmentRandomizeAnswers" checked>
-                <span>Randomize answer choices</span>
-              </label>
+
+            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="form-group">
+                <label class="form-label">Submission Attempts</label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <input type="number" class="form-input" id="newAssignmentAttempts" value="" min="1" placeholder="e.g. 3" style="flex:1;">
+                  <label style="display:flex; align-items:center; gap:4px; white-space:nowrap; font-size:0.85rem; cursor:pointer;">
+                    <input type="checkbox" id="newAssignmentUnlimitedAttempts" onchange="toggleUnlimitedAttempts('newAssignmentAttempts', this)"> Unlimited
+                  </label>
+                </div>
+              </div>
+              <div class="form-group">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; padding-top:28px;">
+                  <input type="checkbox" id="newAssignmentAllowResubmit" checked>
+                  <span>Allow resubmission</span>
+                </label>
+              </div>
             </div>
           </div>
 
-          <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
-            <div class="form-group">
-              <label class="form-label">Points</label>
-              <input type="number" class="form-input" id="newAssignmentPoints" value="100" min="1">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Time to Complete (minutes, optional)</label>
-              <input type="number" class="form-input" id="newAssignmentTimeAllowed" min="1" placeholder="Leave blank for unlimited">
-              <div class="hint">Clock starts when student opens the assignment.</div>
+          <!-- ── Conditional: Quiz / Exam ─────────────────────── -->
+          <div id="quizSection" style="display:none;">
+            <div style="background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:16px;">
+              <h4 style="margin-bottom:12px; font-size:0.9rem;">Quiz Settings</h4>
+              <div class="form-group">
+                <label class="form-label">Question Bank *</label>
+                <select class="form-select" id="newAssignmentQuestionBank" onchange="updateQuizPointsFromBank()">
+                  <option value="">-- Select a question bank --</option>
+                </select>
+                <div class="hint">Points are auto-calculated from the bank's question totals</div>
+              </div>
+              <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group" style="margin-bottom:0;">
+                  <label class="form-label">Total Points Possible</label>
+                  <input type="number" class="form-input" id="newAssignmentQuizPoints" value="" readonly
+                    style="background:var(--bg-color); color:var(--text-secondary);" placeholder="Auto-calculated">
+                  <div class="hint">Read-only — sum of question points</div>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                  <label class="form-label">Time Limit (minutes)</label>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="number" class="form-input" id="newAssignmentTimeLimit" value="" min="1" placeholder="e.g. 60" style="flex:1;">
+                    <label style="display:flex; align-items:center; gap:4px; white-space:nowrap; font-size:0.85rem; cursor:pointer;">
+                      <input type="checkbox" id="newAssignmentUnlimitedTime" onchange="toggleUnlimitedTime(this)"> Unlimited
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+                <div class="form-group" style="margin-bottom:0;">
+                  <label class="form-label">Submission Attempts</label>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="number" class="form-input" id="newAssignmentQuizAttempts" value="1" min="1" style="flex:1;">
+                    <label style="display:flex; align-items:center; gap:4px; white-space:nowrap; font-size:0.85rem; cursor:pointer;">
+                      <input type="checkbox" id="newAssignmentUnlimitedQuizAttempts" onchange="toggleUnlimitedAttempts('newAssignmentQuizAttempts', this)"> Unlimited
+                    </label>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0; padding-top:28px;">
+                  <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" id="newAssignmentRandomizeQuestions">
+                    <span>Randomize question order</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
+          <!-- ── Conditional: No Submission ───────────────────── -->
+          <div id="noSubSection" style="display:none;">
+            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="form-group">
+                <label class="form-label">Grading Type</label>
+                <select class="form-select" id="noSubGradingType" onchange="handleGradingTypeChange('nosub')">
+                  <option value="points">Points</option>
+                  <option value="complete_incomplete">Complete / Incomplete</option>
+                  <option value="letter_grade">Letter Grade</option>
+                </select>
+              </div>
+              <div class="form-group" id="noSubPointsGroup">
+                <label class="form-label">Total Points Possible</label>
+                <input type="number" class="form-input" id="newAssignmentNoSubPoints" value="100" min="0" step="0.5">
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Universal: Dates ──────────────────────────────── -->
           <div class="form-group">
             <label class="form-label">Due Date &amp; Time <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
             <div style="display:flex; gap:8px;">
@@ -1223,10 +1340,10 @@ student3@example.com, 92, Well done" rows="10"></textarea>
 
           <div class="form-group">
             <label class="form-label" style="margin-bottom:4px;">Availability Window <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
-            <div class="hint" style="margin-bottom:8px;">Leave blank for smart defaults (open now → due date; or always open if late submissions allowed).</div>
-            <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap:12px;">
+            <div class="hint" style="margin-bottom:8px;">Available From = when submit button unlocks. Available To = when it hard-locks.</div>
+            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
               <div>
-                <label class="form-label" style="font-size:0.85rem;">Open From</label>
+                <label class="form-label" style="font-size:0.85rem;">Available From</label>
                 <div style="display:flex; flex-direction:column; gap:4px;">
                   <input type="date" class="form-input" id="newAssignmentAvailableFromDate"
                     onchange="updateAvailabilityConstraints();">
@@ -1237,7 +1354,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                 </div>
               </div>
               <div>
-                <label class="form-label" style="font-size:0.85rem;">Open Until</label>
+                <label class="form-label" style="font-size:0.85rem;">Available To</label>
                 <div style="display:flex; flex-direction:column; gap:4px;">
                   <input type="date" class="form-input" id="newAssignmentAvailableUntilDate"
                     onchange="updateAvailabilityConstraints();">
@@ -1249,6 +1366,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             </div>
           </div>
 
+          <!-- ── Universal: Status + Late ─────────────────────── -->
           <div class="form-group">
             <label class="form-label">Status</label>
             <select class="form-select" id="newAssignmentStatus">
@@ -1257,7 +1375,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             </select>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" id="lateSubmissionToggleGroup">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
               <input type="checkbox" id="newAssignmentAllowLate" checked onchange="syncAvailableUntilToDueDate()">
               <span>Allow late submissions <span class="muted" style="font-size:0.85rem;">(if off, availability closes at due date)</span></span>
@@ -1265,30 +1383,26 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           </div>
 
           <div id="latePenaltySection">
-            <div class="form-group">
-              <label class="form-label">Late Penalty Type</label>
-              <select class="form-select" id="newAssignmentLatePenaltyType">
-                <option value="per_day">Percentage per day late</option>
-                <option value="flat">Flat percentage overall</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Penalty Amount (%)</label>
-              <input type="number" class="form-input" id="newAssignmentLatePenalty" value="10" min="0" max="100">
+            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="form-group">
+                <label class="form-label">Late Penalty Type</label>
+                <select class="form-select" id="newAssignmentLatePenaltyType">
+                  <option value="per_day">Percentage per day late</option>
+                  <option value="flat">Flat percentage overall</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Penalty Amount (%)</label>
+                <input type="number" class="form-input" id="newAssignmentLatePenalty" value="10" min="0" max="100">
+              </div>
             </div>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Grading Notes (private - only visible to instructors)</label>
-            <textarea class="form-textarea" id="newAssignmentGradingNotes" rows="2" placeholder="Notes for graders (rubric guidance, common issues to watch for, etc.)"></textarea>
+            <label class="form-label">Grading Notes (private — instructors only)</label>
+            <textarea class="form-textarea" id="newAssignmentGradingNotes" rows="2" placeholder="Notes for graders (rubric guidance, key points to check, etc.)"></textarea>
           </div>
 
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="newAssignmentAllowResubmit" checked>
-              <span>Allow resubmission</span>
-            </label>
-          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">Cancel</button>

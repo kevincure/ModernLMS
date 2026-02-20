@@ -663,15 +663,23 @@ function handleAiAction(action) {
       data: {
         title: action.title,
         description: action.description || '',
-        introNotes: action.introNotes || '',
         gradingNotes: action.gradingNotes || '',
-        points: action.points || 100,
+        // CC 1.4 fields
+        assignmentType: action.assignmentType || 'essay',
+        gradingType: action.gradingType || 'points',
+        submissionModalities: action.submissionModalities || ['text'],
+        allowedFileTypes: action.allowedFileTypes || [],
+        maxFileSizeMb: action.maxFileSizeMb || 50,
+        questionBankId: action.questionBankId || null,
+        submissionAttempts: action.submissionAttempts ?? null,
+        timeLimit: action.timeLimit || null,
+        randomizeQuestions: action.randomizeQuestions || false,
+        points: action.points ?? 100,
         dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
         availableFrom: action.availableFrom || null,
         availableUntil: action.availableUntil || null,
-        timeAllowed: action.timeAllowed || null,
         status: action.status || 'draft',
-        category: action.category || 'homework',
+        category: action.assignmentType === 'quiz' ? 'quiz' : 'essay',
         allowLateSubmissions: action.allowLateSubmissions,
         latePenaltyType: action.latePenaltyType || 'per_day',
         lateDeduction: action.lateDeduction,
@@ -1136,23 +1144,33 @@ async function executeAiOperation(operation, publish = false) {
   }
 
   if (action === 'assignment') {
+    const atype = resolved.assignmentType || 'essay';
+    const legacyCat = atype === 'quiz' ? 'quiz' : atype === 'no_submission' ? 'participation' : 'essay';
     const newAssignment = {
       id: generateId(),
       courseId: activeCourseId,
       title: resolved.title,
       description: appendFileLinksToContent(resolved.description || '', resolved.fileIds),
-      introNotes: resolved.introNotes || '',
       gradingNotes: resolved.gradingNotes || '',
-      points: resolved.points || 100,
+      // CC 1.4 / QTI 3.0 fields
+      assignmentType: atype,
+      gradingType: resolved.gradingType || 'points',
+      submissionModalities: resolved.submissionModalities || ['text'],
+      allowedFileTypes: resolved.allowedFileTypes || [],
+      maxFileSizeMb: resolved.maxFileSizeMb || 50,
+      questionBankId: resolved.questionBankId || null,
+      submissionAttempts: resolved.submissionAttempts ?? null,
+      timeLimit: resolved.timeLimit || null,
+      randomizeQuestions: resolved.randomizeQuestions || false,
+      points: resolved.points ?? 100,
       status: publish ? 'published' : (resolved.status || 'draft'),
       hidden: !publish && resolved.status !== 'published',
       dueDate: resolved.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
       availableFrom: resolved.availableFrom || null,
       availableUntil: resolved.availableUntil || null,
-      timeAllowed: resolved.timeAllowed || null,
       createdAt: new Date().toISOString(),
-      category: resolved.category || 'homework',
-      allowLateSubmissions: resolved.allowLateSubmissions !== undefined ? !!resolved.allowLateSubmissions : true,
+      category: legacyCat,
+      allowLateSubmissions: resolved.allowLateSubmissions !== undefined ? !!resolved.allowLateSubmissions : (atype !== 'no_submission'),
       latePenaltyType: resolved.latePenaltyType || 'per_day',
       lateDeduction: resolved.lateDeduction !== undefined ? resolved.lateDeduction : 10,
       allowResubmission: resolved.allowResubmission !== undefined ? !!resolved.allowResubmission : false,
@@ -1198,10 +1216,16 @@ async function executeAiOperation(operation, publish = false) {
     if (resolved.dueDate !== undefined) assignment.dueDate = resolved.dueDate;
     if (resolved.status !== undefined) assignment.status = resolved.status;
     if (publish) assignment.status = 'published';
-    if (resolved.category !== undefined) assignment.category = resolved.category;
+    // CC 1.4 fields
+    if (resolved.assignmentType !== undefined) {
+      assignment.assignmentType = resolved.assignmentType;
+      assignment.category = resolved.assignmentType === 'quiz' ? 'quiz' : resolved.assignmentType === 'no_submission' ? 'participation' : 'essay';
+    }
+    if (resolved.gradingType !== undefined) assignment.gradingType = resolved.gradingType;
     if (resolved.allowLateSubmissions !== undefined) assignment.allowLateSubmissions = !!resolved.allowLateSubmissions;
     if (resolved.lateDeduction !== undefined) assignment.lateDeduction = resolved.lateDeduction;
     if (resolved.allowResubmission !== undefined) assignment.allowResubmission = !!resolved.allowResubmission;
+    if (resolved.submissionAttempts !== undefined) assignment.submissionAttempts = resolved.submissionAttempts;
     const result = await supabaseUpdateAssignment(assignment);
     if (!result) { showToast('Failed to update assignment', 'error'); return false; }
     if (renderAssignmentsCallback) renderAssignmentsCallback();
@@ -1697,28 +1721,33 @@ function renderActionPreview(msg, idx) {
     `;
   }
 
-  // ─── ASSIGNMENT (create) ─────────────────────────────────────────────────
+  // ─── ASSIGNMENT (create) — CC 1.4 aligned ────────────────────────────────
   if (msg.actionType === 'assignment') {
     return `
       ${field('Title', textInput('title', d.title))}
-      ${field('Description', textarea('description', d.description, 4))}
+      ${field('Description / Prompt', textarea('description', d.description, 4))}
       ${twoCol(
-        field('Category', selectInput('category', d.category || 'homework', [
-          ['homework','Homework'],['essay','Essay'],['project','Project'],
-          ['participation','Participation'],['quiz','Quiz'],['exam','Exam']
+        field('Assignment Type', selectInput('assignmentType', d.assignmentType || 'essay', [
+          ['essay','Essay / Free Text'],['quiz','Quiz / Exam'],['no_submission','No Submission']
         ]), 0),
-        field('Points', numberInput('points', d.points ?? 100, 0, 9999), 0)
+        field('Grading Type', selectInput('gradingType', d.gradingType || 'points', [
+          ['points','Points'],['complete_incomplete','Complete / Incomplete'],['letter_grade','Letter Grade']
+        ]), 0)
       )}
       ${twoCol(
-        field('Due Date', datetimeInput('dueDate', d.dueDate), 0),
-        field('Status', selectInput('status', d.status || 'draft', [['draft','Draft'],['published','Published']]), 0)
+        field('Points', numberInput('points', d.points ?? 100, 0, 9999), 0),
+        field('Due Date', datetimeInput('dueDate', d.dueDate), 0)
+      )}
+      ${twoCol(
+        field('Status', selectInput('status', d.status || 'draft', [['draft','Draft'],['published','Published']]), 0),
+        field('Submission Attempts (blank = unlimited)', numberInput('submissionAttempts', d.submissionAttempts ?? '', 1, 99), 0)
       )}
       ${lateSection(d.allowLateSubmissions, d.lateDeduction ?? 10)}
       <div>${checkboxInput('allowResubmission', d.allowResubmission, 'Allow resubmission')}</div>
     `;
   }
 
-  // ─── ASSIGNMENT (update) ─────────────────────────────────────────────────
+  // ─── ASSIGNMENT (update) — CC 1.4 aligned ────────────────────────────────
   if (msg.actionType === 'assignment_update') {
     const a = (appData.assignments || []).find(a => a.id === d.id);
     return `
@@ -1726,9 +1755,8 @@ function renderActionPreview(msg, idx) {
       ${field('Title', textInput('title', d.title !== undefined ? d.title : (a?.title || '')))}
       ${field('Description', textarea('description', d.description !== undefined ? d.description : (a?.description || ''), 3))}
       ${twoCol(
-        field('Category', selectInput('category', d.category || a?.category || 'homework', [
-          ['homework','Homework'],['essay','Essay'],['project','Project'],
-          ['participation','Participation'],['quiz','Quiz'],['exam','Exam']
+        field('Assignment Type', selectInput('assignmentType', d.assignmentType || a?.assignmentType || 'essay', [
+          ['essay','Essay / Free Text'],['quiz','Quiz / Exam'],['no_submission','No Submission']
         ]), 0),
         field('Points', numberInput('points', d.points !== undefined ? d.points : (a?.points ?? 100), 0, 9999), 0)
       )}
