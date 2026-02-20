@@ -225,6 +225,7 @@ export async function loadDataFromSupabase() {
       allowResubmission: a.allow_resubmission,
       hidden: a.hidden || false,
       category: a.category,
+      timeAllowed: a.time_allowed || null,
       rubric: null
     }));
 
@@ -416,7 +417,10 @@ export async function loadDataFromSupabase() {
       id: o.id,
       assignmentId: o.assignment_id,
       userId: o.user_id,
-      dueDate: o.due_date
+      dueDate: o.due_date,
+      availableFrom: o.available_from || null,
+      availableUntil: o.available_until || null,
+      timeAllowed: o.time_allowed || null
     }));
 
     // Quiz time overrides (per-student time limits)
@@ -622,6 +626,7 @@ export async function supabaseCreateAssignment(assignment) {
     allow_resubmission: assignment.allowResubmission !== false,
     hidden: assignment.hidden || false,
     category: assignment.category || 'homework',
+    time_allowed: assignment.timeAllowed || null,
     created_by: appData.currentUser?.id
   };
 
@@ -681,7 +686,8 @@ export async function supabaseUpdateAssignment(assignment) {
     late_deduction: assignment.lateDeduction,
     allow_resubmission: assignment.allowResubmission,
     hidden: assignment.hidden || false,
-    category: assignment.category
+    category: assignment.category,
+    time_allowed: assignment.timeAllowed || null
   };
 
   let { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
@@ -1831,11 +1837,17 @@ export async function supabaseDeleteDiscussionReply(replyId) {
 
 export async function supabaseUpsertAssignmentOverride(override) {
   if (!supabaseClient) return null;
-  const { data, error } = await supabaseClient.from('assignment_overrides').upsert({
+  const payload = {
     assignment_id: override.assignmentId,
     user_id: override.userId,
-    due_date: override.dueDate
-  }, { onConflict: 'assignment_id,user_id' }).select().single();
+    due_date: override.dueDate || null,
+    available_from: override.availableFrom || null,
+    available_until: override.availableUntil || null,
+    time_allowed: override.timeAllowed != null ? override.timeAllowed : null
+  };
+  const { data, error } = await supabaseClient.from('assignment_overrides').upsert(
+    payload, { onConflict: 'assignment_id,user_id' }
+  ).select().single();
   if (error) { console.error('[Supabase] Upsert override error:', error); showToast('Failed to save override', 'error'); return null; }
   return data;
 }

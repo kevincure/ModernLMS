@@ -1200,37 +1200,41 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             </div>
           </div>
 
-          <div class="form-group">
-            <label class="form-label">Points</label>
-            <input type="number" class="form-input" id="newAssignmentPoints" value="100" min="1">
-          </div>
-
           <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
             <div class="form-group">
-              <label class="form-label">Available From</label>
-              <input type="datetime-local" class="form-input" id="newAssignmentAvailableFrom">
+              <label class="form-label">Points</label>
+              <input type="number" class="form-input" id="newAssignmentPoints" value="100" min="1">
             </div>
             <div class="form-group">
-              <label class="form-label">Available Until</label>
-              <input type="datetime-local" class="form-input" id="newAssignmentAvailableUntil">
+              <label class="form-label">Time to Complete (minutes, optional)</label>
+              <input type="number" class="form-input" id="newAssignmentTimeAllowed" min="1" placeholder="Leave blank for unlimited">
+              <div class="hint">Clock starts when student opens the assignment.</div>
             </div>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Due Date</label>
-            <input type="date" class="form-input" id="newAssignmentDueDate" style="margin-bottom:8px;">
-            <div style="display:flex; gap:8px; align-items:center;">
-              <select class="form-select" id="newAssignmentDueHour" style="width:auto;">
-                ${generateHourOptions(11)}
-              </select>
-              <span>:</span>
-              <select class="form-select" id="newAssignmentDueMinute" style="width:auto;">
-                ${generateMinuteOptions(59)}
-              </select>
-              <select class="form-select" id="newAssignmentDueAmPm" style="width:auto;">
-                <option value="AM">AM</option>
-                <option value="PM" selected>PM</option>
-              </select>
+            <label class="form-label">Due Date &amp; Time</label>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="date" class="form-input" id="newAssignmentDueDate" style="flex:1; min-width:140px;"
+                onchange="syncAvailableUntilToDueDate()">
+              <input type="time" class="form-input" id="newAssignmentDueTime" value="23:59" style="width:110px;"
+                onchange="syncAvailableUntilToDueDate()">
+            </div>
+            <div class="hint" style="margin-top:4px;">Default time is 11:59 PM. Click the time field to change.</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="margin-bottom:4px;">Availability Window</label>
+            <div class="hint" style="margin-bottom:8px;">Leave blank to use smart defaults (from now until due date, or always open if late submissions allowed).</div>
+            <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+              <div>
+                <label class="form-label" style="font-size:0.85rem;">Open From</label>
+                <input type="datetime-local" class="form-input" id="newAssignmentAvailableFrom">
+              </div>
+              <div>
+                <label class="form-label" style="font-size:0.85rem;">Open Until</label>
+                <input type="datetime-local" class="form-input" id="newAssignmentAvailableUntil">
+              </div>
             </div>
           </div>
 
@@ -1244,8 +1248,8 @@ student3@example.com, 92, Well done" rows="10"></textarea>
 
           <div class="form-group">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="newAssignmentAllowLate" checked>
-              <span>Allow late submissions</span>
+              <input type="checkbox" id="newAssignmentAllowLate" checked onchange="syncAvailableUntilToDueDate()">
+              <span>Allow late submissions <span class="muted" style="font-size:0.85rem;">(if off, availability closes at due date)</span></span>
             </label>
           </div>
 
