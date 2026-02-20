@@ -1,6 +1,6 @@
 -- ============================================================
--- Assignment Overrides + Time Allowed Schema Migration
--- Run this in the Supabase SQL editor.
+-- Assignment Schema Migrations
+-- Run this ENTIRE file in the Supabase SQL editor (Query Editor).
 -- ============================================================
 
 -- 1. Add optional "time to complete" (minutes) to assignments
@@ -24,3 +24,53 @@ ALTER TABLE public.assignment_overrides
 --   effective_avail_until   = override.available_until ?? assignment.available_until ?? (late_submissions ? NULL : due_date)
 --   effective_time_allowed  = override.time_allowed   ?? assignment.time_allowed    ?? NULL (unlimited)
 -- ============================================================
+
+-- 3. RLS policies: allow instructors/TAs to create manual grade entries
+
+-- 3a. Allow staff to INSERT placeholder submissions on behalf of students
+--     (needed for manual grading of students who haven't submitted)
+CREATE POLICY "Staff can create manual submissions"
+  ON public.submissions
+  FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.assignments a
+      JOIN public.enrollments e ON e.course_id = a.course_id
+      WHERE a.id = submissions.assignment_id
+        AND e.user_id = auth.uid()
+        AND e.role IN ('instructor', 'ta')
+    )
+  );
+
+-- 3b. Allow staff to UPDATE submissions in their courses
+CREATE POLICY "Staff can update submissions in their courses"
+  ON public.submissions
+  FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.assignments a
+      JOIN public.enrollments e ON e.course_id = a.course_id
+      WHERE a.id = submissions.assignment_id
+        AND e.user_id = auth.uid()
+        AND e.role IN ('instructor', 'ta')
+    )
+  );
+
+-- 3c. Allow staff to INSERT grade rows
+--     (the existing "Staff can grade" policy covers UPDATE; this adds INSERT)
+CREATE POLICY "Staff can insert grades"
+  ON public.grades
+  FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.submissions s
+      JOIN public.assignments a ON a.id = s.assignment_id
+      JOIN public.enrollments e ON e.course_id = a.course_id
+      WHERE s.id = grades.submission_id
+        AND e.user_id = auth.uid()
+        AND e.role IN ('instructor', 'ta')
+    )
+  );

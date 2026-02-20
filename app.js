@@ -3575,16 +3575,10 @@ function openNewAssignmentModal(assignmentId = null) {
     document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions !== false;
     document.getElementById('newAssignmentRandomizeAnswers').checked = assignment.randomizeAnswers !== false;
 
-    // Dates — convert ISO (UTC) → local datetime string for datetime-local inputs
-    const toLocalDtInput = iso => {
-      if (!iso) return '';
-      const d = new Date(iso);
-      const pad = n => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-    document.getElementById('newAssignmentAvailableFrom').value = toLocalDtInput(assignment.availableFrom);
-    document.getElementById('newAssignmentAvailableUntil').value = toLocalDtInput(assignment.availableUntil);
-    document.getElementById('newAssignmentDueDate').value = toLocalDtInput(assignment.dueDate);
+    // Dates — load into date+time-select pairs
+    setDateTimePair('newAssignmentAvailableFromDate', 'newAssignmentAvailableFromTime', assignment.availableFrom);
+    setDateTimePair('newAssignmentAvailableUntilDate', 'newAssignmentAvailableUntilTime', assignment.availableUntil);
+    setDateTimePair('newAssignmentDueDate', 'newAssignmentDueTime', assignment.dueDate);
 
     handleNewAssignmentTypeChange();
   } else {
@@ -3607,15 +3601,20 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentDescription').value = '';
   document.getElementById('newAssignmentIntroNotes').value = '';
   document.getElementById('newAssignmentPoints').value = '100';
-  // Default availableFrom = now, due = 1 week from now at 23:59 (local time)
+  // Default: availableFrom = today, due = 1 week from now at 23:59
   const pad = n => String(n).padStart(2, '0');
   const now = new Date();
-  const nowDtLocal = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  document.getElementById('newAssignmentAvailableFrom').value = nowDtLocal;
-  document.getElementById('newAssignmentAvailableUntil').value = '';
+  document.getElementById('newAssignmentAvailableFromDate').value = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+  // Round to nearest 30-min for the from-time
+  const fromH = now.getMinutes() >= 30 ? (now.getHours() + 1) % 24 : now.getHours();
+  const fromM = now.getMinutes() >= 30 ? '00' : '30';
+  document.getElementById('newAssignmentAvailableFromTime').value = `${pad(fromH)}:${fromM}`;
+  document.getElementById('newAssignmentAvailableUntilDate').value = '';
+  document.getElementById('newAssignmentAvailableUntilTime').value = '23:59';
   const due = new Date();
   due.setDate(due.getDate() + 7);
-  document.getElementById('newAssignmentDueDate').value = `${due.getFullYear()}-${pad(due.getMonth()+1)}-${pad(due.getDate())}T23:59`;
+  document.getElementById('newAssignmentDueDate').value = `${due.getFullYear()}-${pad(due.getMonth()+1)}-${pad(due.getDate())}`;
+  document.getElementById('newAssignmentDueTime').value = '23:59';
   document.getElementById('newAssignmentStatus').value = 'draft';
   document.getElementById('newAssignmentAllowLate').checked = true;
   document.getElementById('newAssignmentLatePenaltyType').value = 'per_day';
@@ -3656,19 +3655,93 @@ function handleNewAssignmentTypeChange() {
   }
 }
 
+// Read ISO UTC string from a date input + time select pair
+function getDateTimeFromPair(dateId, timeId) {
+  const dateVal = document.getElementById(dateId)?.value;
+  const timeVal = document.getElementById(timeId)?.value || '00:00';
+  if (!dateVal) return null;
+  return new Date(`${dateVal}T${timeVal}`).toISOString();
+}
+
+// Set date input + time select pair from an ISO UTC string
+function setDateTimePair(dateId, timeId, isoStr) {
+  const dateEl = document.getElementById(dateId);
+  const timeEl = document.getElementById(timeId);
+  if (!dateEl) return;
+  if (!isoStr) { dateEl.value = ''; return; }
+  const d = new Date(isoStr);
+  const pad = n => String(n).padStart(2, '0');
+  dateEl.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  if (timeEl) {
+    const timeVal = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    let found = false;
+    for (const opt of timeEl.options) {
+      if (opt.value === timeVal) { found = true; break; }
+    }
+    if (!found) {
+      const h = d.getHours(), m = d.getMinutes();
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      const ampm = h < 12 ? 'AM' : 'PM';
+      timeEl.insertBefore(new Option(`${h12}:${pad(m)} ${ampm}`, timeVal, true, true), timeEl.firstChild);
+    }
+    timeEl.value = timeVal;
+  }
+}
+
+// Update min constraints on availableUntil and disable earlier time options
+function updateAvailabilityConstraints() {
+  const dueDate = document.getElementById('newAssignmentDueDate')?.value;
+  const dueTime = document.getElementById('newAssignmentDueTime')?.value || '00:00';
+  const fromDate = document.getElementById('newAssignmentAvailableFromDate')?.value;
+  const fromTime = document.getElementById('newAssignmentAvailableFromTime')?.value || '00:00';
+  const untilDateEl = document.getElementById('newAssignmentAvailableUntilDate');
+  const untilTimeEl = document.getElementById('newAssignmentAvailableUntilTime');
+  if (!untilDateEl) return;
+
+  // min date for "until" = later of dueDate and fromDate
+  let minDate = '', minTime = '00:00';
+  if (dueDate && fromDate) {
+    if (dueDate > fromDate) { minDate = dueDate; minTime = dueTime; }
+    else if (fromDate > dueDate) { minDate = fromDate; minTime = fromTime; }
+    else { minDate = dueDate; minTime = dueTime > fromTime ? dueTime : fromTime; }
+  } else {
+    minDate = dueDate || fromDate || '';
+    minTime = (minDate === dueDate && dueDate) ? dueTime : fromTime;
+  }
+
+  untilDateEl.min = minDate;
+  if (untilDateEl.value && minDate && untilDateEl.value < minDate) untilDateEl.value = '';
+
+  if (untilTimeEl) {
+    const onMinDate = !!minDate && untilDateEl.value === minDate;
+    let firstEnabled = null;
+    for (const opt of untilTimeEl.options) {
+      const tooEarly = onMinDate && opt.value !== '23:59' && opt.value < minTime;
+      opt.disabled = tooEarly;
+      if (!tooEarly && !firstEnabled) firstEnabled = opt.value;
+    }
+    const cur = untilTimeEl.options[untilTimeEl.selectedIndex];
+    if (cur && cur.disabled && firstEnabled) untilTimeEl.value = firstEnabled;
+  }
+}
+window.updateAvailabilityConstraints = updateAvailabilityConstraints;
+
 // Auto-fill availableUntil to match due date when late submissions are off
 function syncAvailableUntilToDueDate() {
   const allowLate = document.getElementById('newAssignmentAllowLate');
-  const untilEl = document.getElementById('newAssignmentAvailableUntil');
+  const untilEl = document.getElementById('newAssignmentAvailableUntilDate');
   if (!untilEl) return;
   // Only auto-sync if late submissions are not allowed
   if (allowLate && allowLate.checked) {
     untilEl.value = '';
     return;
   }
-  const dueDtEl = document.getElementById('newAssignmentDueDate');
-  if (!dueDtEl || !dueDtEl.value) return;
-  untilEl.value = dueDtEl.value;
+  const dueDateEl = document.getElementById('newAssignmentDueDate');
+  const dueTimeEl = document.getElementById('newAssignmentDueTime');
+  const untilTimeEl = document.getElementById('newAssignmentAvailableUntilTime');
+  if (!dueDateEl || !dueDateEl.value) return;
+  untilEl.value = dueDateEl.value;
+  if (untilTimeEl && dueTimeEl) untilTimeEl.value = dueTimeEl.value;
 }
 window.syncAvailableUntilToDueDate = syncAvailableUntilToDueDate;
 
@@ -3678,9 +3751,9 @@ async function saveNewAssignment() {
   const description = document.getElementById('newAssignmentDescription').value.trim();
   const introNotes = document.getElementById('newAssignmentIntroNotes').value.trim();
   const points = parseInt(document.getElementById('newAssignmentPoints').value) || 100;
-  const availableFrom = document.getElementById('newAssignmentAvailableFrom').value;
-  const availableUntil = document.getElementById('newAssignmentAvailableUntil').value;
-  const dueDate = document.getElementById('newAssignmentDueDate').value || null;
+  const availableFrom = getDateTimeFromPair('newAssignmentAvailableFromDate', 'newAssignmentAvailableFromTime');
+  const availableUntil = getDateTimeFromPair('newAssignmentAvailableUntilDate', 'newAssignmentAvailableUntilTime');
+  const dueDate = getDateTimeFromPair('newAssignmentDueDate', 'newAssignmentDueTime');
   const status = normalizeContentStatus(document.getElementById('newAssignmentStatus').value);
   const allowLate = document.getElementById('newAssignmentAllowLate').checked;
   const latePenaltyType = document.getElementById('newAssignmentLatePenaltyType').value;

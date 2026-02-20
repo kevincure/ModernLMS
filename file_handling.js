@@ -94,7 +94,9 @@ export function initFileHandlingModule(deps) {
   window.updateFileContent = updateFileContent;
   window.handlePlaceholderFileDrop = handlePlaceholderFileDrop;
   window.renameFile = renameFile;
+  window._confirmRenameFile = _confirmRenameFile;
   window.convertPlaceholderToLink = convertPlaceholderToLink;
+  window._confirmPlaceholderLink = _confirmPlaceholderLink;
   window.toggleFileVisibility = toggleFileVisibility;
   window.convertYouTubeUrl = convertYouTubeUrl;
 }
@@ -1284,22 +1286,63 @@ export function convertPlaceholderToFile(fileId) {
   input.click();
 }
 
-export async function renameFile(fileId) {
+export function renameFile(fileId) {
   const file = appData.files.find(f => f.id === fileId);
   if (!file) return;
 
-  const newName = prompt('Enter new file name:', file.name || '');
-  if (!newName || !newName.trim() || newName.trim() === file.name) return;
+  const existing = document.getElementById('renameFileModal');
+  if (existing) existing.remove();
 
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-overlay visible" id="renameFileModal" onclick="if(event.target===this)window.closeModal('renameFileModal')">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Rename File</h2>
+          <button class="modal-close" onclick="window.closeModal('renameFileModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">File Name</label>
+            <input type="text" class="form-input" id="renameFileInput"
+              value="${escapeHtml(file.name || '')}" placeholder="Enter file name">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="window.closeModal('renameFileModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="window._confirmRenameFile('${fileId}')">Rename</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const input = document.getElementById('renameFileInput');
+  if (input) {
+    input.focus();
+    input.select();
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') window._confirmRenameFile(fileId);
+      if (e.key === 'Escape') window.closeModal('renameFileModal');
+    });
+  }
+}
+
+async function _confirmRenameFile(fileId) {
+  const input = document.getElementById('renameFileInput');
+  if (!input) return;
+  const newName = input.value.trim();
+  if (!newName) { showToast('Please enter a file name', 'error'); return; }
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+  if (newName === file.name) { window.closeModal('renameFileModal'); return; }
   const originalName = file.name;
-  file.name = newName.trim();
+  file.name = newName;
   const result = await supabaseUpdateFile(file);
   if (!result) {
     file.name = originalName;
     showToast('Failed to rename file', 'error');
     return;
   }
-
+  window.closeModal('renameFileModal');
   renderFiles();
   if (renderModulesCallback) renderModulesCallback();
   showToast('File renamed', 'success');
@@ -1379,26 +1422,63 @@ async function replaceFileContent(fileRecord, uploadedFile, { publish = true } =
   showToast('File updated!', 'success');
 }
 
-export async function convertPlaceholderToLink(fileId) {
+export function convertPlaceholderToLink(fileId) {
   const file = appData.files.find(f => f.id === fileId);
   if (!file) return;
 
-  // Open prompt for URL
-  const url = prompt('Enter external URL (YouTube links will auto-convert to embed):');
-  if (url) {
-    const convertedUrl = convertYouTubeUrl(url);
-    file.externalUrl = convertedUrl;
-    file.isYouTube = convertedUrl !== url;
-    file.isPlaceholder = false;
-    file.type = 'external';
-    file.hidden = false;
-    // Persist to Supabase
-    await supabaseUpdateFile(file);
+  const existing = document.getElementById('addExternalLinkModal');
+  if (existing) existing.remove();
 
-    renderFiles();
-    if (renderModulesCallback) renderModulesCallback();
-    showToast('External link added!', 'success');
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-overlay visible" id="addExternalLinkModal" onclick="if(event.target===this)window.closeModal('addExternalLinkModal')">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Add External Link</h2>
+          <button class="modal-close" onclick="window.closeModal('addExternalLinkModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">URL</label>
+            <input type="url" class="form-input" id="externalLinkInput"
+              placeholder="https://...  (YouTube links auto-embed)">
+            <div class="hint" style="margin-top:4px;">YouTube and Vimeo links will be converted to video embeds automatically.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="window.closeModal('addExternalLinkModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="window._confirmPlaceholderLink('${fileId}')">Add Link</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const input = document.getElementById('externalLinkInput');
+  if (input) {
+    input.focus();
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') window._confirmPlaceholderLink(fileId);
+      if (e.key === 'Escape') window.closeModal('addExternalLinkModal');
+    });
   }
+}
+
+async function _confirmPlaceholderLink(fileId) {
+  const input = document.getElementById('externalLinkInput');
+  const url = input?.value?.trim();
+  if (!url) { showToast('Please enter a URL', 'error'); return; }
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+  const convertedUrl = convertYouTubeUrl(url);
+  file.externalUrl = convertedUrl;
+  file.isYouTube = convertedUrl !== url;
+  file.isPlaceholder = false;
+  file.type = 'external';
+  file.hidden = false;
+  await supabaseUpdateFile(file);
+  window.closeModal('addExternalLinkModal');
+  renderFiles();
+  if (renderModulesCallback) renderModulesCallback();
+  showToast('External link added!', 'success');
 }
 
 export function downloadAllSubmissions(assignmentId) {
