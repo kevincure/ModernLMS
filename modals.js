@@ -1165,15 +1165,15 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div class="form-group">
             <label class="form-label">Assignment Type *</label>
             <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;">
-              <label id="atype-essay-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; border-right:1px solid var(--border); background:var(--primary); color:#fff; font-size:0.9rem;" onclick="setAssignmentType('essay')">
+              <label id="atype-essay-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; border-right:1px solid var(--border); background:var(--primary); color:#fff; font-size:0.85rem;" onclick="setAssignmentType('essay')">
                 <input type="radio" name="newAssignmentType" id="newAssignmentTypeEssay" value="essay" style="display:none;" checked>
                 Essay / Free Text
               </label>
-              <label id="atype-quiz-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; border-right:1px solid var(--border); background:var(--bg-card); font-size:0.9rem;" onclick="setAssignmentType('quiz')">
+              <label id="atype-quiz-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; border-right:1px solid var(--border); background:var(--bg-card); font-size:0.85rem;" onclick="setAssignmentType('quiz')">
                 <input type="radio" name="newAssignmentType" id="newAssignmentTypeQuiz" value="quiz" style="display:none;">
                 Quiz / Exam
               </label>
-              <label id="atype-nosub-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; background:var(--bg-card); font-size:0.9rem;" onclick="setAssignmentType('no_submission')">
+              <label id="atype-no-submission-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; background:var(--bg-card); font-size:0.85rem;" onclick="setAssignmentType('no_submission')">
                 <input type="radio" name="newAssignmentType" id="newAssignmentTypeNoSub" value="no_submission" style="display:none;">
                 No Submission
               </label>
@@ -1311,7 +1311,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div id="noSubSection" style="display:none;">
             <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
               <div class="form-group">
-                <label class="form-label">Grading Type</label>
+                <label class="form-label">Gradebook Category</label>
                 <select class="form-select" id="noSubGradingType" onchange="handleGradingTypeChange('nosub')">
                   <option value="points">Points</option>
                   <option value="complete_incomplete">Complete / Incomplete</option>
@@ -1319,60 +1319,68 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                 </select>
               </div>
               <div class="form-group" id="noSubPointsGroup">
-                <label class="form-label">Total Points Possible</label>
+                <label class="form-label">Points Possible</label>
                 <input type="number" class="form-input" id="newAssignmentNoSubPoints" value="100" min="0" step="0.5">
               </div>
             </div>
           </div>
 
-          <!-- ── Universal: Dates ──────────────────────────────── -->
-          <div class="form-group">
-            <label class="form-label">Due Date &amp; Time <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
-            <div style="display:flex; gap:8px;">
-              <input type="date" class="form-input" id="newAssignmentDueDate" style="flex:1;"
-                onchange="syncAvailableUntilToDueDate(); updateAvailabilityConstraints();">
-              <select class="form-select" id="newAssignmentDueTime" style="width:160px;"
-                onchange="syncAvailableUntilToDueDate(); updateAvailabilityConstraints();">
-                ${generateTimeSelectOptions('23:59')}
-              </select>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" style="margin-bottom:4px;">Availability Window <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
-            <div class="hint" style="margin-bottom:8px;">Available From = when submit button unlocks. Available To = when it hard-locks.</div>
-            <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
-              <div>
-                <label class="form-label" style="font-size:0.85rem;">Available From</label>
-                <div style="display:flex; flex-direction:column; gap:4px;">
-                  <input type="date" class="form-input" id="newAssignmentAvailableFromDate"
-                    onchange="updateAvailabilityConstraints();">
-                  <select class="form-select" id="newAssignmentAvailableFromTime"
-                    onchange="updateAvailabilityConstraints();">
-                    ${generateTimeSelectOptions('08:00')}
-                  </select>
-                </div>
+          <!-- ── Universal: Dates (hidden for no_submission) ────── -->
+          <div id="assignmentDatesSection">
+            <div class="form-group">
+              <label class="form-label">Due Date &amp; Time <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
+              <div style="display:flex; gap:8px;">
+                <input type="date" class="form-input" id="newAssignmentDueDate" style="flex:1;"
+                  onchange="syncAvailableUntilToDueDate(); updateAvailabilityConstraints();">
+                <select class="form-select" id="newAssignmentDueTime" style="width:160px;"
+                  onchange="syncAvailableUntilToDueDate(); updateAvailabilityConstraints();">
+                  ${generateTimeSelectOptions('23:59')}
+                </select>
               </div>
-              <div>
-                <label class="form-label" style="font-size:0.85rem;">Available To</label>
-                <div style="display:flex; flex-direction:column; gap:4px;">
-                  <input type="date" class="form-input" id="newAssignmentAvailableUntilDate"
-                    onchange="updateAvailabilityConstraints();">
-                  <select class="form-select" id="newAssignmentAvailableUntilTime">
-                    ${generateTimeSelectOptions('23:59')}
-                  </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="margin-bottom:4px;">Availability Window <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
+              <div class="hint" style="margin-bottom:8px;">Available From = when submit button unlocks. Available To = when it hard-locks.</div>
+              <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+                <div>
+                  <label class="form-label">Available From</label>
+                  <div style="display:flex; flex-direction:column; gap:4px;">
+                    <input type="date" class="form-input" id="newAssignmentAvailableFromDate"
+                      onchange="updateAvailabilityConstraints();">
+                    <select class="form-select" id="newAssignmentAvailableFromTime"
+                      onchange="updateAvailabilityConstraints();">
+                      ${generateTimeSelectOptions('08:00')}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label">Available To</label>
+                  <div style="display:flex; flex-direction:column; gap:4px;">
+                    <input type="date" class="form-input" id="newAssignmentAvailableUntilDate"
+                      onchange="updateAvailabilityConstraints();">
+                    <select class="form-select" id="newAssignmentAvailableUntilTime">
+                      ${generateTimeSelectOptions('23:59')}
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
           <!-- ── Universal: Status + Late ─────────────────────── -->
-          <div class="form-group">
+          <div class="form-group" id="assignmentStatusSection">
             <label class="form-label">Status</label>
             <select class="form-select" id="newAssignmentStatus">
               <option value="draft">Draft (not visible to students)</option>
               <option value="published">Published</option>
             </select>
+          </div>
+          <!-- No Submission: always-draft notice (replaces status selector) -->
+          <div id="noSubStatusNotice" style="display:none;" class="form-group">
+            <div class="hint" style="padding:10px 12px; background:var(--surface); border-radius:var(--radius); border-left:3px solid var(--primary);">
+              Always saved as <strong>Draft — not visible to students</strong>. Use the gradebook to record participation scores.
+            </div>
           </div>
 
           <div class="form-group" id="lateSubmissionToggleGroup">

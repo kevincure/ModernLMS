@@ -122,7 +122,9 @@ export async function loadDataFromSupabase() {
       discussionRepliesRes,
       assignmentOverridesRes,
       quizTimeOverridesRes,
-      gradeSettingsRes
+      gradeSettingsRes,
+      questionBanksRes,
+      bankQuestionsRes
     ] = await Promise.all([
       supabaseClient.from('profiles').select('*'),
       supabaseClient.from('courses').select('*'),
@@ -145,7 +147,9 @@ export async function loadDataFromSupabase() {
       supabaseClient.from('discussion_replies').select('*').order('created_at', { ascending: true }),
       supabaseClient.from('assignment_overrides').select('*'),
       supabaseClient.from('quiz_time_overrides').select('*'),
-      supabaseClient.from('grade_settings').select('*')
+      supabaseClient.from('grade_settings').select('*'),
+      supabaseClient.from('question_banks').select('*'),
+      supabaseClient.from('bank_questions').select('*').order('position', { ascending: true })
     ]);
 
     // Log any errors
@@ -171,8 +175,11 @@ export async function loadDataFromSupabase() {
       { name: 'discussion_replies', res: discussionRepliesRes },
       { name: 'assignment_overrides', res: assignmentOverridesRes },
       { name: 'quiz_time_overrides', res: quizTimeOverridesRes },
-      { name: 'grade_settings', res: gradeSettingsRes }
+      { name: 'grade_settings', res: gradeSettingsRes },
+      { name: 'question_banks', res: questionBanksRes },
+      { name: 'bank_questions', res: bankQuestionsRes }
     ];
+
 
     responses.forEach(({ name, res }) => {
       if (res.error) {
@@ -442,6 +449,46 @@ export async function loadDataFromSupabase() {
       curve: gs.curve ?? 0,
       extraCreditEnabled: gs.extra_credit_enabled ?? false
     }));
+
+    // Question banks with their questions (inline JSONB cache + normalized bank_questions rows)
+    const bankQs = bankQuestionsRes.data || [];
+    appData.questionBanks = (questionBanksRes.data || []).map(b => {
+      // Prefer the normalized bank_questions rows when available; fall back to JSONB cache
+      const normalizedQs = bankQs.filter(q => q.bank_id === b.id);
+      const questions = normalizedQs.length > 0
+        ? normalizedQs.map(q => ({
+            id: q.id,
+            type: q.type,
+            prompt: q.prompt,
+            options: q.options || [],
+            correctAnswer: q.correct_answer,
+            points: q.points || 1,
+            title: q.title || null,
+            timeDependt: q.time_dependent || false,
+            timeLimit: q.time_limit || null,
+            feedbackGeneral: q.feedback_general || null,
+            feedbackCorrect: q.feedback_correct || null,
+            feedbackIncorrect: q.feedback_incorrect || null,
+            hint: q.hint || null,
+            shuffleOptions: q.shuffle_options || false,
+            partialCredit: q.partial_credit || 'all_or_nothing',
+            caseSensitive: q.case_sensitive || false,
+            position: q.position || 0
+          }))
+        : (Array.isArray(b.questions) ? b.questions
+           : (typeof b.questions === 'string' ? JSON.parse(b.questions || '[]') : []));
+      return {
+        id: b.id,
+        courseId: b.course_id,
+        name: b.name,
+        description: b.description || null,
+        defaultPointsPerQuestion: b.default_points_per_question || 1,
+        randomize: b.randomize || false,
+        createdBy: b.created_by,
+        createdAt: b.created_at,
+        questions
+      };
+    });
 
     appData.settings = {};
 
@@ -1489,16 +1536,27 @@ export async function supabaseCreateQuestionBank(bank) {
     return bank;
   }
 
-  const { data, error } = await supabaseClient.from('question_banks').insert({
+  const insertPayload = {
     id: bank.id,
     course_id: bank.courseId,
     name: bank.name,
     description: bank.description || null,
     questions: JSON.stringify(bank.questions || []),
+    default_points_per_question: bank.defaultPointsPerQuestion || 1,
+    randomize: bank.randomize || false,
     created_by: appData.currentUser?.id
-  }).select().single();
+  };
+
+  const { data, error } = await supabaseClient.from('question_banks').insert(insertPayload).select().single();
 
   if (error) {
+    // PGRST204: column not yet in schema cache — retry without 'questions' (pre-migration fallback)
+    if (error.code === 'PGRST204' && /questions/.test(error.message || '')) {
+      console.warn('[Supabase] question_banks.questions column missing — run supabase_question_bank_questions_col.sql');
+      const { questions: _q, ...payloadWithout } = insertPayload;
+      const { data: d2, error: e2 } = await supabaseClient.from('question_banks').insert(payloadWithout).select().single();
+      if (!e2) { console.log('[Supabase] Question bank created (without questions cache)'); return d2 || bank; }
+    }
     console.error('[Supabase] Error creating question bank:', error);
     return bank;
   }
@@ -1518,13 +1576,24 @@ export async function supabaseUpdateQuestionBank(bank) {
     return bank;
   }
 
-  const { data, error } = await supabaseClient.from('question_banks').update({
+  const updatePayload = {
     name: bank.name,
     description: bank.description,
-    questions: JSON.stringify(bank.questions || [])
-  }).eq('id', bank.id).select().single();
+    questions: JSON.stringify(bank.questions || []),
+    default_points_per_question: bank.defaultPointsPerQuestion || 1,
+    randomize: bank.randomize || false
+  };
+
+  const { data, error } = await supabaseClient.from('question_banks').update(updatePayload).eq('id', bank.id).select().single();
 
   if (error) {
+    // PGRST204: column not yet in schema cache — retry without 'questions'
+    if (error.code === 'PGRST204' && /questions/.test(error.message || '')) {
+      console.warn('[Supabase] question_banks.questions column missing — run supabase_question_bank_questions_col.sql');
+      const { questions: _q, ...payloadWithout } = updatePayload;
+      const { data: d2, error: e2 } = await supabaseClient.from('question_banks').update(payloadWithout).eq('id', bank.id).select().single();
+      if (!e2) return d2 || bank;
+    }
     console.error('[Supabase] Error updating question bank:', error);
     return bank;
   }
