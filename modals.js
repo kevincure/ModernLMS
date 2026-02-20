@@ -1214,21 +1214,40 @@ student3@example.com, 92, Well done" rows="10"></textarea>
 
           <div class="form-group">
             <label class="form-label">Due Date &amp; Time <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
-            <input type="datetime-local" class="form-input" id="newAssignmentDueDate"
-              onchange="syncAvailableUntilToDueDate()">
+            <div style="display:flex; gap:8px;">
+              <input type="date" class="form-input" id="newAssignmentDueDate" style="flex:1;"
+                onchange="syncAvailableUntilToDueDate(); updateAvailabilityConstraints();">
+              <select class="form-select" id="newAssignmentDueTime" style="width:160px;"
+                onchange="syncAvailableUntilToDueDate(); updateAvailabilityConstraints();">
+                ${generateTimeSelectOptions('23:59')}
+              </select>
+            </div>
           </div>
 
           <div class="form-group">
             <label class="form-label" style="margin-bottom:4px;">Availability Window <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
-            <div class="hint" style="margin-bottom:8px;">Leave blank to use smart defaults (from now until due date, or always open if late submissions allowed).</div>
-            <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+            <div class="hint" style="margin-bottom:8px;">Leave blank for smart defaults (open now → due date; or always open if late submissions allowed).</div>
+            <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap:12px;">
               <div>
                 <label class="form-label" style="font-size:0.85rem;">Open From</label>
-                <input type="datetime-local" class="form-input" id="newAssignmentAvailableFrom">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <input type="date" class="form-input" id="newAssignmentAvailableFromDate"
+                    onchange="updateAvailabilityConstraints();">
+                  <select class="form-select" id="newAssignmentAvailableFromTime"
+                    onchange="updateAvailabilityConstraints();">
+                    ${generateTimeSelectOptions('08:00')}
+                  </select>
+                </div>
               </div>
               <div>
                 <label class="form-label" style="font-size:0.85rem;">Open Until</label>
-                <input type="datetime-local" class="form-input" id="newAssignmentAvailableUntil">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <input type="date" class="form-input" id="newAssignmentAvailableUntilDate"
+                    onchange="updateAvailabilityConstraints();">
+                  <select class="form-select" id="newAssignmentAvailableUntilTime">
+                    ${generateTimeSelectOptions('23:59')}
+                  </select>
+                </div>
               </div>
             </div>
           </div>
@@ -1353,5 +1372,22 @@ function generateMinuteOptions(selected = 0) {
     .join('');
 }
 
+// Generate time select options in 30-min increments + special "end of day"
+function generateTimeSelectOptions(defaultVal = '23:59') {
+  let html = '';
+  const pad = n => String(n).padStart(2, '0');
+  for (let h = 0; h < 24; h++) {
+    for (const m of [0, 30]) {
+      const val = `${pad(h)}:${pad(m)}`;
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      const ampm = h < 12 ? 'AM' : 'PM';
+      const label = `${h12}:${pad(m)} ${ampm}`;
+      html += `<option value="${val}"${val === defaultVal ? ' selected' : ''}>${label}</option>`;
+    }
+  }
+  html += `<option value="23:59"${defaultVal === '23:59' ? ' selected' : ''}>11:59 PM (end of day)</option>`;
+  return html;
+}
+
 // Export functions
-export { generateHourOptions, generateMinuteOptions };
+export { generateHourOptions, generateMinuteOptions, generateTimeSelectOptions };
