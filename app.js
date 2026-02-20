@@ -32,6 +32,7 @@ import {
   supabaseDeleteAssignment,
   supabaseCreateSubmission,
   supabaseCreateGrade,
+  supabaseUpsertGrade,
   supabaseCreateGradeCategory,
   supabaseUpdateGradeCategory,
   supabaseDeleteGradeCategory,
@@ -868,7 +869,7 @@ function confirmInsertVideo() {
     const vimeoId = url.split('/').pop().split('?')[0];
     embedCode = `\n\n<div class="video-embed"><iframe src="https://player.vimeo.com/video/${vimeoId}" frameborder="0" allowfullscreen></iframe></div>\n\n`;
   } else {
-    embedCode = `\n\n[📹 Watch Video](${url})\n\n`;
+    embedCode = `\n\n[Watch Video](${url})\n\n`;
   }
 
   insertAtCursor(currentInsertTextareaId, embedCode);
@@ -891,7 +892,6 @@ function openInsertFileModal(textareaId) {
            onclick="selectFileForInsert('${f.id}', '${escapeHtml(f.name)}')"
            onmouseover="this.style.background='var(--primary-light)'"
            onmouseout="this.style.background=''">
-        <span>📄</span>
         <span style="flex:1">${escapeHtml(f.name)}</span>
         <span class="muted" style="font-size:0.8rem;">${f.type || 'file'}</span>
       </div>
@@ -904,19 +904,19 @@ function openInsertFileModal(textareaId) {
 }
 
 function selectFileForInsert(fileId, fileName) {
-  insertAtCursor(currentInsertTextareaId, `[📄 ${fileName}](#file-${fileId})`);
+  insertAtCursor(currentInsertTextareaId, `[${fileName}](#file-${fileId})`);
   closeModal('insertFileModal');
   showToast('File link inserted', 'success');
 }
 
 function confirmInsertExternalFile() {
   const url = document.getElementById('insertFileExternalUrl').value.trim();
-  const name = document.getElementById('insertFileExternalName').value.trim() || 'File';
+  const name = document.getElementById('insertFileExternalName').value.trim() || url;
   if (!url) {
     showToast('Please enter a URL', 'error');
     return;
   }
-  insertAtCursor(currentInsertTextareaId, `[📄 ${name}](${url})`);
+  insertAtCursor(currentInsertTextareaId, `[${name}](${url})`);
   closeModal('insertFileModal');
 }
 
@@ -1021,9 +1021,9 @@ function insertFileLink(textareaId) {
 function renderEditorToolbar(textareaId) {
   return `
     <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
-      <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('${textareaId}')" title="Insert Link">🔗 Link</button>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('${textareaId}')" title="Insert File">📄 File</button>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('${textareaId}')" title="Insert Video">📹 Video</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('${textareaId}')" title="Insert Link">Link</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('${textareaId}')" title="Insert File">File</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('${textareaId}')" title="Insert Video">Video</button>
     </div>
   `;
 }
@@ -1058,49 +1058,73 @@ function formatDueDate(dateString) {
 
 
 // Helper functions for 12-hour time selector
-function getDateTimeFromSelectors(dateId, hourId, minuteId, ampmId) {
-  const dateVal = document.getElementById(dateId).value;
-  if (!dateVal) return null;
+// ── Date + time helpers ──────────────────────────────────────────────────────
+// New approach: one date input + one <input type="time"> (24 h, HH:MM).
+// Defaults to 23:59 when no time is stored, which shows as 11:59 PM locally.
 
+function getDateTimeFromInputs(dateId, timeId) {
+  const dateEl = document.getElementById(dateId);
+  if (!dateEl || !dateEl.value) return null;
+  const timeEl = document.getElementById(timeId);
+  const timeVal = (timeEl && timeEl.value) ? timeEl.value : '23:59';
+  const [year, month, day] = dateEl.value.split('-').map(Number);
+  const [hour, minute] = timeVal.split(':').map(Number);
+  return new Date(year, month - 1, day, hour, minute, 0, 0).toISOString();
+}
+
+function setDateTimeInputs(dateId, timeId, isoDateString) {
+  const pad = n => String(n).padStart(2, '0');
+  const dateEl = document.getElementById(dateId);
+  const timeEl = document.getElementById(timeId);
+  if (!dateEl) return;
+  if (!isoDateString) {
+    dateEl.value = '';
+    if (timeEl) timeEl.value = '23:59';
+    return;
+  }
+  const d = new Date(isoDateString);
+  dateEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  if (timeEl) timeEl.value = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ── Legacy 3-select helper (quiz modal still uses select elements) ───────────
+function getDateTimeFromSelectors(dateId, hourId, minuteId, ampmId) {
+  const dateEl = document.getElementById(dateId);
+  if (!dateEl || !dateEl.value) return null;
   let hour = parseInt(document.getElementById(hourId).value, 10);
   const minute = document.getElementById(minuteId).value;
   const ampm = document.getElementById(ampmId).value;
-
-  // Convert to 24-hour format
   if (ampm === 'PM' && hour !== 12) hour += 12;
   if (ampm === 'AM' && hour === 12) hour = 0;
-
-  const date = new Date(dateVal + 'T' + hour.toString().padStart(2, '0') + ':' + minute + ':00');
-  return date.toISOString();
+  const [year, month, day] = dateEl.value.split('-').map(Number);
+  return new Date(year, month - 1, day, hour, parseInt(minute, 10), 0, 0).toISOString();
 }
 
 function setDateTimeSelectors(dateId, hourId, minuteId, ampmId, isoDateString) {
+  const pad = n => String(n).padStart(2, '0');
+  const dateEl = document.getElementById(dateId);
+  const hourEl = document.getElementById(hourId);
+  const minuteEl = document.getElementById(minuteId);
+  const ampmEl = document.getElementById(ampmId);
+  if (!dateEl) return;
   if (!isoDateString) {
-    document.getElementById(dateId).value = '';
-    document.getElementById(hourId).value = '11';
-    document.getElementById(minuteId).value = '59';
-    document.getElementById(ampmId).value = 'PM';
+    dateEl.value = '';
+    if (hourEl) hourEl.value = '11';
+    if (minuteEl) minuteEl.value = '59';
+    if (ampmEl) ampmEl.value = 'PM';
     return;
   }
-
-  const date = new Date(isoDateString);
-  const dateStr = date.toISOString().slice(0, 10);
-  let hours = date.getHours();
-  const minutes = date.getMinutes();
+  const d = new Date(isoDateString);
+  dateEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  let hours = d.getHours();
+  const mins = d.getMinutes();
   const ampm = hours >= 12 ? 'PM' : 'AM';
-
-  // Convert to 12-hour format
-  hours = hours % 12;
-  if (hours === 0) hours = 12;
-
-  // Round minutes to nearest 15-min interval
-  const roundedMinutes = Math.round(minutes / 15) * 15;
-  const minuteStr = (roundedMinutes === 60 ? 0 : roundedMinutes).toString().padStart(2, '0');
-
-  document.getElementById(dateId).value = dateStr;
-  document.getElementById(hourId).value = hours.toString();
-  document.getElementById(minuteId).value = minuteStr;
-  document.getElementById(ampmId).value = ampm;
+  hours = hours % 12 || 12;
+  let roundedMin = Math.round(mins / 15) * 15;
+  if (roundedMin === 60) roundedMin = 0;
+  if (hourEl) hourEl.value = hours.toString();
+  if (minuteEl) minuteEl.value = mins >= 57 ? '59' : roundedMin.toString().padStart(2, '0');
+  if (ampmEl) ampmEl.value = ampm;
 }
 
 // Format date/time for AI preview display
@@ -2726,13 +2750,16 @@ function renderAssignments() {
             <div class="muted">${formatDueDate(q.dueDate)} · ${quizPoints} points · ${timeLimitLabel}</div>
             <div class="muted" style="font-size:0.85rem;">${attemptsLabel} · ${submissionStatus}</div>
           </div>
-          <div style="display:flex; gap:8px;">
+          <div style="display:flex; gap:8px; align-items:center;">
             ${effectiveStaff ? `
-              <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
-              <button class="btn btn-secondary btn-sm" onclick="openQuizTimeOverridesModal('${q.id}')">Time Overrides</button>
-              <button class="btn btn-secondary btn-sm" onclick="openQuizModal('${q.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="viewQuizDetails('${q.id}')" title="View full quiz details">👁️ Preview</button>
-              <button class="btn btn-secondary btn-sm" onclick="deleteQuiz('${q.id}')" style="color:var(--danger);">Delete</button>
+              <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-quiz-${q.id}')">&#9776;</button>
+              <div id="menu-quiz-${q.id}" class="floating-menu">
+                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); openQuizTimeOverridesModal('${q.id}')">Time Overrides</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewQuizDetails('${q.id}')">Preview</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); openQuizModal('${q.id}')">Edit</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteQuiz('${q.id}')" style="color:var(--danger);">Delete</button>
+              </div>
             ` : latestSubmission ? `
               <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmission('${q.id}')">View Submission</button>
               ${!isPast && (!attemptsAllowed || attemptsLeft > 0) ? `<button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Retake</button>` : ''}
@@ -3539,6 +3566,8 @@ function openNewAssignmentModal(assignmentId = null) {
     document.getElementById('newAssignmentLatePenalty').value = assignment.lateDeduction || 10;
     document.getElementById('newAssignmentGradingNotes').value = assignment.gradingNotes || '';
     document.getElementById('newAssignmentAllowResubmit').checked = assignment.allowResubmission !== false;
+    const taEl = document.getElementById('newAssignmentTimeAllowed');
+    if (taEl) taEl.value = assignment.timeAllowed || '';
 
     // Question bank settings
     if (assignment.questionBankId) {
@@ -3548,14 +3577,16 @@ function openNewAssignmentModal(assignmentId = null) {
     document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions !== false;
     document.getElementById('newAssignmentRandomizeAnswers').checked = assignment.randomizeAnswers !== false;
 
-    // Dates
-    if (assignment.availableFrom) {
-      document.getElementById('newAssignmentAvailableFrom').value = assignment.availableFrom.slice(0, 16);
-    }
-    if (assignment.availableUntil) {
-      document.getElementById('newAssignmentAvailableUntil').value = assignment.availableUntil.slice(0, 16);
-    }
-    setDateTimeSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm', assignment.dueDate);
+    // Dates — convert ISO (UTC) → local datetime string for datetime-local inputs
+    const toLocalDtInput = iso => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    document.getElementById('newAssignmentAvailableFrom').value = toLocalDtInput(assignment.availableFrom);
+    document.getElementById('newAssignmentAvailableUntil').value = toLocalDtInput(assignment.availableUntil);
+    setDateTimeInputs('newAssignmentDueDate', 'newAssignmentDueTime', assignment.dueDate);
 
     handleNewAssignmentTypeChange();
   } else {
@@ -3578,9 +3609,13 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentDescription').value = '';
   document.getElementById('newAssignmentIntroNotes').value = '';
   document.getElementById('newAssignmentPoints').value = '100';
-  document.getElementById('newAssignmentAvailableFrom').value = '';
+  // Default availableFrom = now (local time)
+  const pad = n => String(n).padStart(2, '0');
+  const now = new Date();
+  const nowDtLocal = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  document.getElementById('newAssignmentAvailableFrom').value = nowDtLocal;
   document.getElementById('newAssignmentAvailableUntil').value = '';
-  setDateTimeSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm', null);
+  setDateTimeInputs('newAssignmentDueDate', 'newAssignmentDueTime', null);
   document.getElementById('newAssignmentStatus').value = 'draft';
   document.getElementById('newAssignmentAllowLate').checked = true;
   document.getElementById('newAssignmentLatePenaltyType').value = 'per_day';
@@ -3591,6 +3626,8 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentNumQuestions').value = '';
   document.getElementById('newAssignmentRandomizeQuestions').checked = true;
   document.getElementById('newAssignmentRandomizeAnswers').checked = true;
+  const taEl = document.getElementById('newAssignmentTimeAllowed');
+  if (taEl) taEl.value = '';
 
   handleNewAssignmentTypeChange();
 }
@@ -3619,6 +3656,24 @@ function handleNewAssignmentTypeChange() {
   }
 }
 
+// Auto-fill availableUntil to match due date when late submissions are off
+function syncAvailableUntilToDueDate() {
+  const allowLate = document.getElementById('newAssignmentAllowLate');
+  const untilEl = document.getElementById('newAssignmentAvailableUntil');
+  if (!untilEl) return;
+  // Only auto-sync if late submissions are not allowed
+  if (allowLate && allowLate.checked) {
+    untilEl.value = '';
+    return;
+  }
+  const dateEl = document.getElementById('newAssignmentDueDate');
+  const timeEl = document.getElementById('newAssignmentDueTime');
+  if (!dateEl || !dateEl.value) return;
+  const timeVal = (timeEl && timeEl.value) ? timeEl.value : '23:59';
+  untilEl.value = `${dateEl.value}T${timeVal}`;
+}
+window.syncAvailableUntilToDueDate = syncAvailableUntilToDueDate;
+
 async function saveNewAssignment() {
   const type = document.getElementById('newAssignmentType').value;
   const title = document.getElementById('newAssignmentTitle').value.trim();
@@ -3627,13 +3682,15 @@ async function saveNewAssignment() {
   const points = parseInt(document.getElementById('newAssignmentPoints').value) || 100;
   const availableFrom = document.getElementById('newAssignmentAvailableFrom').value;
   const availableUntil = document.getElementById('newAssignmentAvailableUntil').value;
-  const dueDate = getDateTimeFromSelectors('newAssignmentDueDate', 'newAssignmentDueHour', 'newAssignmentDueMinute', 'newAssignmentDueAmPm');
+  const dueDate = getDateTimeFromInputs('newAssignmentDueDate', 'newAssignmentDueTime');
   const status = normalizeContentStatus(document.getElementById('newAssignmentStatus').value);
   const allowLate = document.getElementById('newAssignmentAllowLate').checked;
   const latePenaltyType = document.getElementById('newAssignmentLatePenaltyType').value;
   const latePenalty = parseInt(document.getElementById('newAssignmentLatePenalty').value) || 0;
   const gradingNotes = document.getElementById('newAssignmentGradingNotes').value.trim();
   const allowResubmit = document.getElementById('newAssignmentAllowResubmit').checked;
+  const taRaw = document.getElementById('newAssignmentTimeAllowed')?.value;
+  const timeAllowed = taRaw ? parseInt(taRaw) : null;
 
   // Quiz/Exam specific
   let questionBankId = null;
@@ -3689,6 +3746,7 @@ async function saveNewAssignment() {
     assignment.numQuestions = numQuestions;
     assignment.randomizeQuestions = randomizeQuestions;
     assignment.randomizeAnswers = randomizeAnswers;
+    assignment.timeAllowed = timeAllowed;
 
     const result = await supabaseUpdateAssignment(assignment);
     if (!result) {
@@ -3726,6 +3784,7 @@ async function saveNewAssignment() {
       numQuestions: numQuestions,
       randomizeQuestions: randomizeQuestions,
       randomizeAnswers: randomizeAnswers,
+      timeAllowed: timeAllowed,
       createdAt: new Date().toISOString(),
       createdBy: appData.currentUser?.id
     };
@@ -5918,26 +5977,32 @@ function renderStaffGradebook() {
     };
   });
   
-  // Display statistics cards
-  let statsHTML = '<div class="card" style="margin-bottom:20px; background:var(--primary-light);">';
-  statsHTML += '<div class="card-title">Assignment Statistics</div>';
-  statsHTML += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-top:12px;">';
-  
+  // Display statistics cards (collapsed by default)
+  let statsHTML = `
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header" style="cursor:pointer; user-select:none;" onclick="toggleGradebookStats(this)">
+        <div class="card-title" style="margin:0;">Assignment Statistics</div>
+        <span id="gradebookStatsChevron" style="font-size:0.85rem; color:var(--text-muted);">&#9654; Show</span>
+      </div>
+      <div id="gradebookStatsBody" style="display:none; padding-top:12px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
+  `;
+
   assignmentStats.forEach(stat => {
     statsHTML += `
-      <div style="padding:12px; background:white; border-radius:var(--radius); border:1px solid var(--border-color);">
+      <div style="padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-color);">
         <div style="font-weight:600; font-size:0.9rem; margin-bottom:8px;">${stat.assignment.title}</div>
         <div style="font-size:0.85rem; color:var(--text-muted);">
           <div>Average: <strong>${stat.average}/${stat.assignment.points}</strong></div>
           <div>Median: ${stat.median}</div>
-          <div>Range: ${stat.min}-${stat.max}</div>
+          <div>Range: ${stat.min}&ndash;${stat.max}</div>
           <div>Graded: ${stat.count}/${students.length}</div>
         </div>
       </div>
     `;
   });
-  
-  statsHTML += '</div></div>';
+
+  statsHTML += '</div></div></div>';
   
   // For the gradebook header, flag which assignments have blind grading on
   const table = `
@@ -6000,6 +6065,15 @@ function renderStaffGradebook() {
   `;
   
   setHTML('gradebookWrap', statsHTML + table);
+}
+
+function toggleGradebookStats(headerEl) {
+  const body = document.getElementById('gradebookStatsBody');
+  const chevron = document.getElementById('gradebookStatsChevron');
+  if (!body) return;
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? 'block' : 'none';
+  if (chevron) chevron.innerHTML = isHidden ? '&#9660; Hide' : '&#9654; Show';
 }
 
 function getLetterGrade(pct, settings) {
@@ -6189,7 +6263,7 @@ async function saveManualGrade() {
     appData.submissions.push(submission);
 
     // Save submission to Supabase
-    await supabaseUpsertSubmission(submission);
+    await supabaseCreateSubmission(submission);
   }
 
   // Update or create grade
@@ -6859,7 +6933,11 @@ function openModal(id) {
 
 function closeModal(id) {
   const modal = document.getElementById(id);
-  if (modal) modal.classList.remove('visible');
+  if (modal) {
+    modal.classList.remove('visible');
+    // Also clear inline display style (used by dynamically-injected modals like overrides)
+    if (modal.style.display) modal.style.display = '';
+  }
 
   if (id === 'quizTakeModal' && quizTimerInterval) {
     clearInterval(quizTimerInterval);
@@ -8618,6 +8696,7 @@ window.saveGrade = saveGrade;
 window.openManualGradeModal = openManualGradeModal;
 window.saveManualGrade = saveManualGrade;
 window.exportGradebook = exportGradebook;
+window.toggleGradebookStats = toggleGradebookStats;
 
 // Speed Grader
 window.openSpeedGrader = openSpeedGrader;
@@ -8777,6 +8856,10 @@ function openQuizTimeOverridesModal(quizId) {
   const quiz = appData.quizzes.find(q => q.id === quizId);
   if (!quiz) return;
 
+  // Remove any existing instance so we start clean
+  const existing = document.getElementById('quizTimeOverridesModal');
+  if (existing) existing.remove();
+
   const students = appData.enrollments
     .filter(e => e.courseId === activeCourseId && e.role === 'student')
     .map(e => getUserById(e.userId))
@@ -8804,7 +8887,7 @@ function openQuizTimeOverridesModal(quizId) {
   }).join('');
 
   const modalHtml = `
-    <div class="modal-overlay" id="quizTimeOverridesModal" style="display:flex;">
+    <div class="modal-overlay" id="quizTimeOverridesModal">
       <div class="modal" style="max-width:700px;">
         <div class="modal-header">
           <h2 class="modal-title">Time Overrides — ${escapeHtml(quiz.title)}</h2>
@@ -8832,6 +8915,7 @@ function openQuizTimeOverridesModal(quizId) {
     </div>
   `;
   document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', modalHtml);
+  openModal('quizTimeOverridesModal');
 }
 
 async function saveQuizTimeOverrides(quizId) {
@@ -8877,6 +8961,10 @@ function openDeadlineOverridesModal(assignmentId) {
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
 
+  // Remove any stale instance so we always start fresh
+  const existingEl = document.getElementById('deadlineOverridesModal');
+  if (existingEl) existingEl.remove();
+
   const students = appData.enrollments
     .filter(e => e.courseId === activeCourseId && e.role === 'student')
     .map(e => getUserById(e.userId))
@@ -8890,45 +8978,74 @@ function openDeadlineOverridesModal(assignmentId) {
   const allPeople = [...students, ...invitedEmails];
   const existingOverrides = (appData.assignmentOverrides || []).filter(o => o.assignmentId === assignmentId);
 
+  // Helper to format datetime-local value from ISO string (local time)
+  function toLocalDtLocal(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  const defaultDueFmt = assignment.dueDate ? toLocalDtLocal(assignment.dueDate) : '';
+  const defaultFromFmt = assignment.availableFrom ? toLocalDtLocal(assignment.availableFrom) : '';
+  const defaultUntilFmt = assignment.availableUntil ? toLocalDtLocal(assignment.availableUntil) : '';
+  const defaultTimeAllowed = assignment.timeAllowed || '';
+
   const rowsHtml = allPeople.map(p => {
-    const override = existingOverrides.find(o => o.userId === p.id);
-    const defaultDue = assignment.dueDate ? assignment.dueDate.slice(0, 16) : '';
-    const overrideVal = override?.dueDate ? override.dueDate.slice(0, 16) : '';
+    const ov = existingOverrides.find(o => o.userId === p.id);
+    const dueFmt = ov?.dueDate ? toLocalDtLocal(ov.dueDate) : '';
+    const fromFmt = ov?.availableFrom ? toLocalDtLocal(ov.availableFrom) : '';
+    const untilFmt = ov?.availableUntil ? toLocalDtLocal(ov.availableUntil) : '';
+    const taFmt = ov?.timeAllowed != null ? ov.timeAllowed : '';
     return `
-      <tr>
-        <td style="padding:8px;">${escapeHtml(p.name)}</td>
-        <td style="padding:8px;" class="muted">${formatDate(assignment.dueDate)} (default)</td>
-        <td style="padding:8px;">
-          <input type="datetime-local" class="form-input" style="width:200px;"
-            id="override_${p.id}" value="${escapeHtml(overrideVal)}"
-            placeholder="${escapeHtml(defaultDue)}">
+      <tr style="border-bottom:1px solid var(--border-light);">
+        <td style="padding:8px; font-weight:500;">${escapeHtml(p.name)}</td>
+        <td style="padding:6px;">
+          <input type="datetime-local" class="form-input" style="width:180px; font-size:0.85rem;"
+            id="ov_due_${p.id}" value="${dueFmt}" placeholder="${escapeHtml(defaultDueFmt)}">
         </td>
-        <td style="padding:8px;">
-          ${override ? `<button class="btn btn-danger btn-sm" onclick="removeDeadlineOverride('${assignmentId}', '${p.id}')">Remove</button>` : ''}
+        <td style="padding:6px;">
+          <input type="datetime-local" class="form-input" style="width:180px; font-size:0.85rem;"
+            id="ov_from_${p.id}" value="${fromFmt}" placeholder="${escapeHtml(defaultFromFmt)}">
+        </td>
+        <td style="padding:6px;">
+          <input type="datetime-local" class="form-input" style="width:180px; font-size:0.85rem;"
+            id="ov_until_${p.id}" value="${untilFmt}" placeholder="${escapeHtml(defaultUntilFmt)}">
+        </td>
+        <td style="padding:6px;">
+          <input type="number" class="form-input" style="width:90px; font-size:0.85rem;" min="1"
+            id="ov_ta_${p.id}" value="${taFmt}" placeholder="${defaultTimeAllowed || 'min'}">
+        </td>
+        <td style="padding:6px;">
+          ${ov ? `<button class="btn btn-danger btn-sm" onclick="removeDeadlineOverride('${assignmentId}', '${p.id}')">Remove</button>` : ''}
         </td>
       </tr>
     `;
   }).join('');
 
   const modalHtml = `
-    <div class="modal-overlay" id="deadlineOverridesModal" style="display:flex;">
-      <div class="modal" style="max-width:750px;">
+    <div class="modal-overlay" id="deadlineOverridesModal">
+      <div class="modal" style="max-width:1000px;">
         <div class="modal-header">
-          <h2 class="modal-title">Deadline Overrides — ${escapeHtml(assignment.title)}</h2>
+          <h2 class="modal-title">Student Overrides — ${escapeHtml(assignment.title)}</h2>
           <button class="modal-close" onclick="closeModal('deadlineOverridesModal')">&times;</button>
         </div>
-        <div class="modal-body" style="max-height:60vh; overflow-y:auto;">
+        <div class="modal-body" style="max-height:65vh; overflow-y:auto;">
           ${allPeople.length === 0 ? '<div class="muted">No students enrolled yet.</div>' : `
-            <p class="muted" style="margin-bottom:12px;">Set a custom deadline for individual students. Leave blank to use the default deadline.</p>
-            <table style="width:100%; border-collapse:collapse;">
-              <thead><tr style="text-align:left;">
-                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Student</th>
-                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Default Due Date</th>
-                <th style="padding:8px; border-bottom:1px solid var(--border-color);">Custom Deadline</th>
-                <th style="padding:8px; border-bottom:1px solid var(--border-color);"></th>
+            <p class="muted" style="margin-bottom:12px;">Set per-student overrides. Leave blank to use the assignment default. Time Allowed = minutes from when they start.</p>
+            <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; min-width:800px;">
+              <thead><tr style="text-align:left; background:var(--bg-color);">
+                <th style="padding:8px; border-bottom:2px solid var(--border-color);">Student</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border-color);">Custom Deadline<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${formatDate(assignment.dueDate)}</span></th>
+                <th style="padding:8px; border-bottom:2px solid var(--border-color);">Available From<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${assignment.availableFrom ? formatDate(assignment.availableFrom) : 'now'}</span></th>
+                <th style="padding:8px; border-bottom:2px solid var(--border-color);">Available Until<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${assignment.availableUntil ? formatDate(assignment.availableUntil) : 'always'}</span></th>
+                <th style="padding:8px; border-bottom:2px solid var(--border-color);">Time Allowed (min)<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${assignment.timeAllowed ? assignment.timeAllowed + ' min' : 'unlimited'}</span></th>
+                <th style="padding:8px; border-bottom:2px solid var(--border-color);"></th>
               </tr></thead>
               <tbody>${rowsHtml}</tbody>
             </table>
+            </div>
           `}
         </div>
         <div class="modal-footer">
@@ -8938,8 +9055,8 @@ function openDeadlineOverridesModal(assignmentId) {
       </div>
     </div>
   `;
-  const container = document.getElementById('modalsContainer');
-  container.insertAdjacentHTML('beforeend', modalHtml);
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', modalHtml);
+  openModal('deadlineOverridesModal');
 }
 
 async function saveDeadlineOverrides(assignmentId) {
@@ -8953,16 +9070,32 @@ async function saveDeadlineOverrides(assignmentId) {
   const allPeople = [...students, ...invitedEmails];
 
   for (const p of allPeople) {
-    const input = document.getElementById(`override_${p.id}`);
-    if (!input) continue;
-    const val = input.value;
-    if (val) {
-      const override = { assignmentId, userId: p.id, dueDate: new Date(val).toISOString() };
+    const dueInput = document.getElementById(`ov_due_${p.id}`);
+    const fromInput = document.getElementById(`ov_from_${p.id}`);
+    const untilInput = document.getElementById(`ov_until_${p.id}`);
+    const taInput = document.getElementById(`ov_ta_${p.id}`);
+    if (!dueInput) continue;
+
+    const dueVal = dueInput.value;
+    const fromVal = fromInput ? fromInput.value : '';
+    const untilVal = untilInput ? untilInput.value : '';
+    const taVal = taInput ? taInput.value : '';
+
+    // Only save if at least one field has been set
+    if (dueVal || fromVal || untilVal || taVal) {
+      const override = {
+        assignmentId,
+        userId: p.id,
+        dueDate: dueVal ? new Date(dueVal).toISOString() : null,
+        availableFrom: fromVal ? new Date(fromVal).toISOString() : null,
+        availableUntil: untilVal ? new Date(untilVal).toISOString() : null,
+        timeAllowed: taVal ? parseInt(taVal) : null
+      };
       const result = await supabaseUpsertAssignmentOverride(override);
       if (result) {
         if (!appData.assignmentOverrides) appData.assignmentOverrides = [];
         const idx = appData.assignmentOverrides.findIndex(o => o.assignmentId === assignmentId && o.userId === p.id);
-        if (idx >= 0) appData.assignmentOverrides[idx].dueDate = override.dueDate;
+        if (idx >= 0) Object.assign(appData.assignmentOverrides[idx], override);
         else appData.assignmentOverrides.push({ id: result.id, ...override });
       }
     }
