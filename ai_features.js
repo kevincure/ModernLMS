@@ -828,6 +828,21 @@ export function updateAiActionField(idx, field, value) {
 }
 
 /**
+ * Flush any pending edits from focused DOM inputs into msg.data before executing.
+ * Handles the case where the user clicks Accept while still focused in a text field
+ * (the onchange/oninput may not have fired for the focused element yet).
+ */
+function syncAiActionFromDom(idx) {
+  const msg = aiThread[idx];
+  if (!msg || msg.role !== 'action') return;
+  // Trigger input event on every annotated field so its handler updates msg.data
+  document.querySelectorAll(`[data-ai-idx="${idx}"]`).forEach(el => {
+    el.dispatchEvent(new Event('input', { bubbles: false }));
+    el.dispatchEvent(new Event('change', { bubbles: false }));
+  });
+}
+
+/**
  * Generate a natural-language confirmation message after an AI action succeeds.
  */
 function pageLink(page, label) {
@@ -895,6 +910,9 @@ function generateActionConfirmation(msg, publish = false) {
  * Confirm and execute an AI action
  */
 export async function confirmAiAction(idx, publish = false) {
+  // Flush any in-progress edits (handles user clicking Accept while still focused in a field)
+  syncAiActionFromDom(idx);
+
   const msg = aiThread[idx];
   if (!msg || msg.role !== 'action') return;
 
@@ -1510,15 +1528,15 @@ function renderActionPreview(msg, idx) {
   }
 
   function textInput(fieldName, val) {
-    return `<input type="text" class="form-input" value="${escapeHtml(val || '')}" onchange="window.updateAiActionField(${idx}, '${fieldName}', this.value)">`;
+    return `<input type="text" class="form-input" data-ai-idx="${idx}" data-ai-field="${fieldName}" value="${escapeHtml(val || '')}" oninput="window.updateAiActionField(${idx}, '${fieldName}', this.value)">`;
   }
 
   function textarea(fieldName, val, rows = 3) {
-    return `<textarea class="form-textarea" rows="${rows}" onchange="window.updateAiActionField(${idx}, '${fieldName}', this.value)">${escapeHtml(val || '')}</textarea>`;
+    return `<textarea class="form-textarea" rows="${rows}" data-ai-idx="${idx}" data-ai-field="${fieldName}" oninput="window.updateAiActionField(${idx}, '${fieldName}', this.value)">${escapeHtml(val || '')}</textarea>`;
   }
 
   function numberInput(fieldName, val, min = 0, max = 9999) {
-    return `<input type="number" class="form-input" value="${val !== null && val !== undefined ? val : ''}" min="${min}" max="${max}" onchange="window.updateAiActionField(${idx}, '${fieldName}', Number(this.value))">`;
+    return `<input type="number" class="form-input" data-ai-idx="${idx}" data-ai-field="${fieldName}" value="${val !== null && val !== undefined ? val : ''}" min="${min}" max="${max}" oninput="window.updateAiActionField(${idx}, '${fieldName}', Number(this.value))">`;
   }
 
   function datetimeInput(fieldName, val) {
@@ -1773,7 +1791,7 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'invite_create') {
     const emailsVal = Array.isArray(d.emails) ? d.emails.join(', ') : '';
     return `
-      ${field('Email address(es)', `<input type="text" class="form-input" value="${escapeHtml(emailsVal)}" placeholder="email1@example.com, email2@example.com" onchange="window.updateAiActionField(${idx}, 'emails', this.value.split(',').map(s=>s.trim()).filter(Boolean))">`)}
+      ${field('Email address(es)', `<input type="text" class="form-input" data-ai-idx="${idx}" data-ai-field="__emails__" value="${escapeHtml(emailsVal)}" placeholder="email1@example.com, email2@example.com" oninput="window.updateAiActionField(${idx}, 'emails', this.value.split(',').map(s=>s.trim()).filter(Boolean))">`)}
       ${field('Role', selectInput('role', d.role || 'student', [['student','Student'],['ta','Teaching Assistant'],['instructor','Instructor']]), 0)}
     `;
   }
