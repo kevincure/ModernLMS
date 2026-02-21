@@ -14,6 +14,7 @@ import {
   supabaseCreateAssignment, supabaseUpdateAssignment, supabaseDeleteAssignment,
   supabaseCreateModule, supabaseCreateModuleItem, supabaseDeleteModuleItem,
   supabaseCreateInvite, supabaseDeleteInvite,
+  supabaseDeleteEnrollment,
   supabaseUpdateCourse
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
@@ -550,7 +551,7 @@ async function executeAiTool(toolName, params = {}) {
     case 'list_announcements':
       return (appData.announcements || [])
         .filter(a => a.courseId === activeCourseId)
-        .map(a => ({ id: a.id, title: a.title, pinned: !!a.pinned, hidden: !!a.hidden, createdAt: a.createdAt }));
+        .map(a => ({ id: a.id, title: a.title, content: (a.content || a.body || '').slice(0, 500), pinned: !!a.pinned, hidden: !!a.hidden, createdAt: a.createdAt }));
 
     case 'get_grade_categories':
       return (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId);
@@ -717,6 +718,42 @@ async function runAiLoop(contents, systemPrompt) {
   renderAiThread();
 }
 
+/**
+ * Build Gemini-format conversation history from aiThread,
+ * excluding the most-recently-added message (current user turn just pushed).
+ * Consecutive same-role turns are merged to satisfy Gemini's alternating requirement.
+ */
+function buildGeminiHistory() {
+  const history = [];
+  const previousMessages = aiThread.slice(0, -1); // exclude current user msg
+  for (const msg of previousMessages) {
+    if (msg.hidden) continue;
+    let role, text;
+    if (msg.role === 'user') {
+      role = 'user';
+      text = msg.content;
+    } else if (msg.role === 'assistant') {
+      role = 'model';
+      text = msg.content;
+    } else if (msg.role === 'action' && msg.confirmed) {
+      role = 'model';
+      text = `[Action completed: ${msg.actionType}]`;
+    } else if (msg.role === 'action' && msg.rejected) {
+      role = 'model';
+      text = `[Proposed action "${msg.actionType}" was cancelled by instructor.]`;
+    } else {
+      continue; // skip tool_step, pending actions, ask_user
+    }
+    const last = history[history.length - 1];
+    if (last && last.role === role) {
+      last.parts[0].text += '\n\n' + text;
+    } else {
+      history.push({ role, parts: [{ text }] });
+    }
+  }
+  return history;
+}
+
 export async function sendAiMessage(audioBase64 = null) {
   const input = document.getElementById('aiInput');
   const message = audioBase64 ? '[Voice message]' : input?.value.trim();
@@ -744,7 +781,19 @@ export async function sendAiMessage(audioBase64 = null) {
         ]
       }];
     } else {
-      contents = [{ role: 'user', parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }];
+      const geminiHistory = buildGeminiHistory();
+      if (geminiHistory.length === 0) {
+        // First message: embed system prompt in user turn
+        contents = [{ role: 'user', parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }];
+      } else {
+        // Subsequent messages: system prompt anchor + history + current message
+        contents = [
+          { role: 'user', parts: [{ text: systemPrompt }] },
+          { role: 'model', parts: [{ text: '{"type":"answer","text":"Understood. I will follow these instructions."}' }] },
+          ...geminiHistory,
+          { role: 'user', parts: [{ text: message }] }
+        ];
+      }
     }
     await runAiLoop(contents, systemPrompt);
   } catch (err) {
@@ -1118,6 +1167,20 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'remove_person') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'person_remove',
+      data: {
+        userId: action.userId || null,
+        name: action.name || '',
+        email: action.email || '',
+        role: action.role || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else if (action.action === 'set_course_visibility') {
     aiThread.push({
       role: 'action',
@@ -1233,6 +1296,8 @@ function generateActionConfirmation(msg, publish = false) {
     }
     case 'invite_revoke':
       return `Done! The invitation has been revoked. Manage invites from ${pageLink('people', 'People')}.`;
+    case 'person_remove':
+      return `Done! ${b(d.name || d.email || 'The person')} has been removed from the course. See ${pageLink('people', 'People')}.`;
     case 'course_visibility':
       return `Done! The course is now <strong>${d.visible !== false ? 'visible to students' : 'hidden from students'}</strong>.`;
     default:
@@ -1663,6 +1728,18 @@ async function executeAiOperation(operation, publish = false) {
     return true;
   }
 
+  if (action === 'person_remove') {
+    const userId = resolved.userId;
+    if (!userId) { showToast('User ID missing', 'error'); return false; }
+    const enrollment = (appData.enrollments || []).find(e => e.userId === userId && e.courseId === activeCourseId);
+    if (!enrollment) { showToast('User is not enrolled in this course', 'error'); return false; }
+    await supabaseDeleteEnrollment(userId, activeCourseId);
+    appData.enrollments = (appData.enrollments || []).filter(
+      e => !(e.userId === userId && e.courseId === activeCourseId)
+    );
+    return true;
+  }
+
   if (action === 'course_visibility') {
     const courseId = resolved.courseId || activeCourseId;
     const course = (appData.courses || []).find(c => c.id === courseId);
@@ -1828,6 +1905,7 @@ export function renderAiThread() {
         'module_move_item': 'Module Item',
         'invite_create': 'Invitation',
         'invite_revoke': 'Invitation',
+        'person_remove': 'Person',
         'course_visibility': 'Course Visibility',
         'pipeline': 'Automation Pipeline'
       }[msg.actionType] || 'Content';
@@ -1851,6 +1929,7 @@ export function renderAiThread() {
         'module_move_item': 'Move to',
         'invite_create': 'Send',
         'invite_revoke': 'Revoke',
+        'person_remove': 'Remove',
         'course_visibility': msg.data?.visible === false ? 'Hide' : 'Show',
         'pipeline': 'Run'
       }[msg.actionType] || 'Run';
@@ -2189,6 +2268,16 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'invite_revoke') {
     return `
       <div class="muted" style="font-size:0.9rem;">Revoke invitation for: <strong>${escapeHtml(d.email || d.inviteId || '')}</strong></div>
+    `;
+  }
+
+  // ─── PERSON REMOVE ───────────────────────────────────────────────────────
+  if (msg.actionType === 'person_remove') {
+    const displayName = d.name || d.email || d.userId || '';
+    const roleLabel = d.role ? ` (${d.role === 'ta' ? 'Teaching Assistant' : d.role.charAt(0).toUpperCase() + d.role.slice(1)})` : '';
+    return `
+      <div class="muted" style="font-size:0.9rem;">Remove <strong>${escapeHtml(displayName)}</strong>${escapeHtml(roleLabel)} from this course.</div>
+      <div style="margin-top:8px; font-size:0.82rem; color:var(--danger, #c00);">⚠️ This will unenroll them immediately. Their submissions and grades are kept.</div>
     `;
   }
 
