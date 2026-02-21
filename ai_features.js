@@ -119,112 +119,33 @@ export function buildAiContext() {
         context += `Your role in this course: ${currentEnrollment.role}\n`;
       }
 
-      // Add assignments
-      const assignments = appData.assignments?.filter(a => a.courseId === activeCourseId) || [];
-      if (assignments.length > 0) {
-        context += `\nCOURSE ASSIGNMENTS (${assignments.length}):\n`;
-        assignments.forEach(a => {
-          const atype = a.assignmentType || 'essay';
-          const gt = a.gradingType || 'points';
-          const dueStr = a.dueDate ? new Date(a.dueDate).toLocaleDateString() : 'no due date';
-          context += `- ID: ${a.id} | ${a.title} | type: ${atype} | grading: ${gt} | ${a.points ?? 0} pts | due: ${dueStr} | status: ${a.status}\n`;
-        });
-      }
+      // Counts only — IDs and content are fetched via tools at query time.
+      // This keeps the context small and forces fresh lookups for accurate IDs.
+      const assignments   = (appData.assignments   || []).filter(a => a.courseId === activeCourseId);
+      const quizzes       = (appData.quizzes       || []).filter(q => q.courseId === activeCourseId);
+      const questionBanks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
+      const files         = (appData.files         || []).filter(f => f.courseId === activeCourseId && !f.isPlaceholder);
+      const modules       = (appData.modules       || []).filter(m => m.courseId === activeCourseId);
+      const announcements = (appData.announcements || []).filter(a => a.courseId === activeCourseId);
+      const enrolled      = (appData.enrollments   || []).filter(e => e.courseId === activeCourseId);
+      const invites       = (appData.invites       || []).filter(i => i.courseId === activeCourseId && i.status === 'pending');
+      const qTotal        = questionBanks.reduce((s, b) => s + (b.questions?.length || 0), 0);
 
-      // Add quizzes
-      const quizzes = appData.quizzes?.filter(q => q.courseId === activeCourseId) || [];
-      if (quizzes.length > 0) {
-        context += `\nCOURSE QUIZZES (${quizzes.length}):\n`;
-        quizzes.forEach(q => {
-          context += `- ID: ${q.id} | ${q.title} (due: ${new Date(q.dueDate).toLocaleDateString()}, status: ${q.status})\n`;
-        });
-      }
-
-      // Add question banks
-      const questionBanks = appData.questionBanks?.filter(qb => qb.courseId === activeCourseId) || [];
-      if (questionBanks.length > 0) {
-        context += `\nQUESTION BANKS (${questionBanks.length}):\n`;
-        questionBanks.forEach(qb => {
-          const qCount = qb.questions?.length || 0;
-          context += `- ID: ${qb.id} | Name: "${qb.name}" | ${qCount} questions\n`;
-        });
-      } else {
-        context += `\nQUESTION BANKS: None available\n`;
-      }
-
-      // Add files
-      const files = appData.files?.filter(f => f.courseId === activeCourseId) || [];
-      if (files.length > 0) {
-        context += `\nCOURSE FILES (${files.length}):\n`;
-        files.forEach(f => {
-          context += `- ID: ${f.id} | ${f.name}${f.description ? ` - ${f.description}` : ''}\n`;
-        });
-      }
-
-      context += '\nCOURSE DOCUMENT INDEX:\n';
-      files.forEach(f => {
-        context += `- FILE ${f.id}: ${f.name}${f.description ? ` | ${f.description}` : ''}\n`;
-      });
-
-      assignments.forEach(a => {
-        const preview = (a.description || '').replace(/\s+/g, ' ').slice(0, 140);
-        context += `- ASSIGNMENT ${a.id}: ${a.title}${preview ? ` | ${preview}` : ''}\n`;
-      });
-
-      quizzes.forEach(q => {
-        const preview = (q.description || '').replace(/\s+/g, ' ').slice(0, 140);
-        context += `- QUIZ ${q.id}: ${q.title}${preview ? ` | ${preview}` : ''}\n`;
-      });
-
-      // Add announcements
-      const announcements = appData.announcements?.filter(a => a.courseId === activeCourseId) || [];
-      if (announcements.length > 0) {
-        context += `\nCOURSE ANNOUNCEMENTS (${announcements.length}):\n`;
-        announcements
-          .slice()
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-          .slice(0, 10)
-          .forEach(a => {
-            context += `- ID: ${a.id} | ${a.title} (posted: ${new Date(a.createdAt).toLocaleDateString()}, pinned: ${!!a.pinned}, hidden: ${!!a.hidden})\n`;
-          });
-
-        announcements.slice(0, 10).forEach(a => {
-          const preview = (a.content || '').replace(/\s+/g, ' ').slice(0, 140);
-          context += `- ANNOUNCEMENT ${a.id}: ${a.title}${preview ? ` | ${preview}` : ''}\n`;
-        });
-      }
-
-      // Add course roster summary
-      const courseEnrollments = appData.enrollments?.filter(e => e.courseId === activeCourseId) || [];
-      if (courseEnrollments.length > 0) {
-        context += `\nCOURSE ROSTER (${courseEnrollments.length}):\n`;
-        courseEnrollments.forEach(e => {
-          const user = getUserByIdCallback ? getUserByIdCallback(e.userId) : null;
-          const label = user?.name || user?.email || e.userId;
-          context += `- ${label} (${e.role})\n`;
-        });
-      }
-
-      // Add modules — include IDs and item details so AI can reference exact modules/items
-      const modules = appData.modules?.filter(m => m.courseId === activeCourseId) || [];
-      if (modules.length > 0) {
-        context += `\nCOURSE MODULES (${modules.length}):\n`;
-        modules.forEach(m => {
-          context += `- ID: ${m.id} | Name: "${m.name}" (${m.items?.length || 0} items)\n`;
-          (m.items || []).forEach(item => {
-            let refTitle = item.title || '';
-            if (item.refId && !refTitle) {
-              if (item.type === 'assignment') refTitle = (appData.assignments || []).find(a => a.id === item.refId)?.title || '';
-              else if (item.type === 'quiz') refTitle = (appData.quizzes || []).find(q => q.id === item.refId)?.title || '';
-              else if (item.type === 'file') refTitle = (appData.files || []).find(f => f.id === item.refId)?.name || '';
-            }
-            context += `  - Item ID: ${item.id} | type: ${item.type}${item.refId ? ` | refId: ${item.refId}` : ''}${refTitle ? ` | title: "${refTitle}"` : ''}\n`;
-          });
-        });
-      }
+      context += `\nCOURSE CONTENTS — call the relevant tool to get IDs, titles, and full content:\n`;
+      context += `- assignments: ${assignments.length}\n`;
+      context += `- quizzes: ${quizzes.length}\n`;
+      context += `- question banks: ${questionBanks.length} (${qTotal} questions total)\n`;
+      context += `- files: ${files.length}\n`;
+      context += `- modules: ${modules.length}\n`;
+      context += `- announcements: ${announcements.length}\n`;
+      context += `- enrolled users: ${enrolled.length}${invites.length ? `, ${invites.length} pending invite${invites.length !== 1 ? 's' : ''}` : ''}\n`;
     }
   } else {
-    context += 'No active course selected. Ask the user to open a course for course-specific actions.\n';
+    context += 'No active course selected.\n';
+  }
+
+  if (appData.currentUser) {
+    context += `\nCurrent user: ${appData.currentUser.name || appData.currentUser.email}\n`;
   }
 
   const pending = getLatestPendingAction();
@@ -447,22 +368,30 @@ ${toolList}
 AVAILABLE ACTIONS (* = required field):
 ${actionList}
 
-MANDATORY PRE-ACTION RULES — ALWAYS call the relevant tool before acting:
-- Before ANY invite/person action (revoke_invite, remove_person): call list_people to get the real inviteId/userId
-- Before creating a quiz/exam from a bank: call list_question_banks to find the correct bank ID
-- Before update/delete of any content: verify the item exists and get its real ID from the relevant list tool
+MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT IDs. You MUST call a tool to get real IDs before every action:
+- Before update/delete assignment: call list_assignments → use the returned id
+- Before update/delete announcement: call list_announcements → use the returned id
+- Before update/delete quiz: call list_quizzes → use the returned id
+- Before update/delete module/item: call list_modules → use the returned moduleId/itemId
+- Before ANY invite/person action (revoke_invite, remove_person): call list_people → use the returned inviteId/userId
+- Before creating a quiz/exam from a bank: call list_question_banks → use the returned id
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
 - NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
   ❌ WRONG: "There are two announcements: 'Andy' (ID: f42c0e22-...) and 'Chad' (ID: 65570f8d-...)"
   ✓ RIGHT: "There are two guest lecture announcements: one for Andy Esteves and one for Chad Kogar. Which did you mean?"
-- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include real database IDs (inviteId, userId, id, moduleId, etc.) in action JSON payloads — those fields are required for the action to execute and are never shown directly to the user.
+- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include the real database "id" (or inviteId/userId/moduleId) field in every action JSON payload. These are machine fields, not shown to users. The COURSE CONTEXT only shows counts — you MUST call the relevant list tool first to obtain the real ID.
+  ❌ WRONG update_assignment: {"type":"action","action":"update_assignment","title":"New Title"}  ← missing id; call list_assignments first
+  ✓ RIGHT update_assignment: {"type":"action","action":"update_assignment","id":"the-uuid-from-list_assignments","title":"New Title"}
+  ❌ WRONG update_announcement: {"type":"action","action":"update_announcement","title":"New Title"}  ← missing id; call list_announcements first
+  ✓ RIGHT update_announcement: {"type":"action","action":"update_announcement","id":"the-uuid-from-list_announcements","title":"New Title"}
+  ❌ WRONG revoke_invite: {"type":"action","action":"revoke_invite","email":"x@x.com"}  ← missing inviteId; call list_people first
+  ✓ RIGHT revoke_invite: {"type":"action","action":"revoke_invite","inviteId":"the-uuid-from-list_people","email":"x@x.com"}
 
 ALWAYS include human-readable label fields alongside every ID in action payloads:
 - inviteId → also include email (from list_people result)
 - userId → also include name and email (from list_people result)
 - moduleId → also include moduleName (from list_modules result)
 - itemId → also include itemTitle (from list_modules or list_assignments/quizzes/files)
-- assignmentId or quizId → also include title
 
 CLARIFICATION RULE — minimize ask_user:
 - Only ask when you genuinely cannot proceed (e.g., multiple question banks match and user didn't specify)
