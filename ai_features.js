@@ -104,7 +104,7 @@ export function clearAiThread() {
  * Build context for AI assistant
  */
 export function buildAiContext() {
-  let context = `Current date/time: ${new Date().toLocaleString()}\n\n`;
+  let context = `Current date/time: ${new Date().toLocaleString()}\n\nNOTE: The IDs listed in this context are real database IDs. Use them directly in action payload "id" fields — do NOT omit them or substitute names.\n\n`;
 
   if (activeCourseId && getCourseByIdCallback) {
     const course = getCourseByIdCallback(activeCourseId);
@@ -188,9 +188,11 @@ export function buildAiContext() {
             context += `- ID: ${a.id} | ${a.title} (posted: ${new Date(a.createdAt).toLocaleDateString()}, pinned: ${!!a.pinned}, hidden: ${!!a.hidden})\n`;
           });
 
+        // Include full announcement body so the AI can answer content questions
+        // without needing an extra tool call
         announcements.slice(0, 10).forEach(a => {
-          const preview = (a.content || '').replace(/\s+/g, ' ').slice(0, 140);
-          context += `- ANNOUNCEMENT ${a.id}: ${a.title}${preview ? ` | ${preview}` : ''}\n`;
+          const body = (a.content || a.body || '').trim();
+          context += `- ANNOUNCEMENT ${a.id}: ${a.title}${body ? `\n  BODY: ${body}` : ' (no body)'}\n`;
         });
       }
 
@@ -455,14 +457,19 @@ MANDATORY PRE-ACTION RULES — ALWAYS call the relevant tool before acting:
 - NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
   ❌ WRONG: "There are two announcements: 'Andy' (ID: f42c0e22-...) and 'Chad' (ID: 65570f8d-...)"
   ✓ RIGHT: "There are two guest lecture announcements: one for Andy Esteves and one for Chad Kogar. Which did you mean?"
-- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include real database IDs (inviteId, userId, id, moduleId, etc.) in action JSON payloads — those fields are required for the action to execute and are never shown directly to the user.
+- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include the real database "id" (or inviteId/userId/moduleId) field in every action JSON payload. These are machine fields, not shown to users. The COURSE CONTEXT section contains current IDs — use them directly.
+  ❌ WRONG update_assignment: {"type":"action","action":"update_assignment","title":"New Title"}  ← missing id, will fail
+  ✓ RIGHT update_assignment: {"type":"action","action":"update_assignment","id":"the-uuid-from-context","title":"New Title"}
+  ❌ WRONG update_announcement: {"type":"action","action":"update_announcement","title":"New Title"}  ← missing id
+  ✓ RIGHT update_announcement: {"type":"action","action":"update_announcement","id":"the-uuid-from-context","title":"New Title"}
+  ❌ WRONG revoke_invite: {"type":"action","action":"revoke_invite","email":"x@x.com"}  ← missing inviteId
+  ✓ RIGHT revoke_invite: {"type":"action","action":"revoke_invite","inviteId":"the-uuid-from-list_people","email":"x@x.com"}
 
 ALWAYS include human-readable label fields alongside every ID in action payloads:
 - inviteId → also include email (from list_people result)
 - userId → also include name and email (from list_people result)
 - moduleId → also include moduleName (from list_modules result)
 - itemId → also include itemTitle (from list_modules or list_assignments/quizzes/files)
-- assignmentId or quizId → also include title
 
 CLARIFICATION RULE — minimize ask_user:
 - Only ask when you genuinely cannot proceed (e.g., multiple question banks match and user didn't specify)
