@@ -422,6 +422,11 @@ function buildSystemPrompt(isStaff, courseContext) {
 
   return `You are an AI assistant for an LMS (Learning Management System) helping an INSTRUCTOR manage course content. You look up real data via tools, then propose an action for the instructor to confirm.
 
+⚠️ OUTPUT FORMAT — CRITICAL:
+- Output ONLY a single valid JSON object. No text before or after the JSON. No explanation outside the JSON.
+- If you need to explain something, put it inside the "text" field of a {"type":"answer"} object.
+- If you need to call a tool, output ONLY the tool_call JSON — do not add any prose explanation.
+
 ALWAYS respond with ONLY a single valid JSON object in exactly one of these formats:
 
 1. Direct text answer (for questions/explanations, or when no action is needed):
@@ -447,8 +452,10 @@ MANDATORY PRE-ACTION RULES — ALWAYS call the relevant tool before acting:
 - Before creating a quiz/exam from a bank: call list_question_banks to find the correct bank ID
 - Before update/delete of any content: verify the item exists and get its real ID from the relevant list tool
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
-- NEVER include raw UUIDs or database IDs in the "text" field of {"type":"answer"} responses — always refer to things by human-readable name, title, or email in prose. If you only have an ID, call the relevant tool first to look up the name.
-- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include real database IDs (inviteId, userId, id, moduleId, etc.) in action JSON payloads — those fields are required for the action to execute and are never shown directly to the user as-is.
+- NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
+  ❌ WRONG: "There are two announcements: 'Andy' (ID: f42c0e22-...) and 'Chad' (ID: 65570f8d-...)"
+  ✓ RIGHT: "There are two guest lecture announcements: one for Andy Esteves and one for Chad Kogar. Which did you mean?"
+- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include real database IDs (inviteId, userId, id, moduleId, etc.) in action JSON payloads — those fields are required for the action to execute and are never shown directly to the user.
 
 ALWAYS include human-readable label fields alongside every ID in action payloads:
 - inviteId → also include email (from list_people result)
@@ -461,6 +468,7 @@ CLARIFICATION RULE — minimize ask_user:
 - Only ask when you genuinely cannot proceed (e.g., multiple question banks match and user didn't specify)
 - Do NOT ask about: due dates, points, grading type, modality, late policy, status — use defaults
 - If a field is optional and unknown, set it to null; the instructor edits it in the confirmation form
+- NEVER use ask_user to say "I need to call list_people" or "can you tell me the ID?" — JUST CALL THE TOOL instead. Calling tools is always available to you.
 
 DEFAULTS (use unless user specifies otherwise):
 - Assignment: assignmentType:"essay", gradingType:"points", points:100, dueDate:1 week from now, status:"draft", allowLateSubmissions:true, latePenaltyType:"per_day", lateDeduction:10, allowResubmission:true, submissionAttempts:null
@@ -660,8 +668,35 @@ async function runAiLoop(contents, systemPrompt) {
     const rawReply = data.candidates[0].content.parts[0].text.trim();
     const cleaned = rawReply.replace(/^```json\s*/i, '').replace(/^```/, '').replace(/```$/, '').trim();
 
+    // ── Parse JSON — robust extraction handles mixed text+JSON responses ─────
+    // Gemini sometimes outputs a prose explanation followed by (or mixed with)
+    // a JSON object. Walk the string to find every top-level {...} block,
+    // parse each, then pick the highest-priority type so a tool_call wins
+    // over a plain answer even when mixed with natural language.
+    const TYPE_PRIORITY = { tool_call: 4, action: 3, ask_user: 2, answer: 1 };
     let parsed = null;
-    try { parsed = JSON.parse(cleaned); } catch { /* not JSON */ }
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Extract all top-level JSON blocks
+      let depth = 0, blockStart = -1;
+      let best = null, bestPriority = 0;
+      for (let i = 0; i < cleaned.length; i++) {
+        if (cleaned[i] === '{') { if (depth === 0) blockStart = i; depth++; }
+        else if (cleaned[i] === '}' && depth > 0) {
+          depth--;
+          if (depth === 0 && blockStart !== -1) {
+            try {
+              const candidate = JSON.parse(cleaned.slice(blockStart, i + 1));
+              const p = TYPE_PRIORITY[candidate.type] || 0;
+              if (p > bestPriority) { best = candidate; bestPriority = p; }
+            } catch { /* malformed block — skip */ }
+            blockStart = -1;
+          }
+        }
+      }
+      parsed = best;
+    }
 
     // ── Direct text answer ────────────────────────────────────────────────────
     if (!parsed || parsed.type === 'answer') {
