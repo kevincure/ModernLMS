@@ -2633,6 +2633,7 @@ function renderAssignments() {
   const _now = new Date();
   const assignments = appData.assignments
     .filter(a => a.courseId === activeCourseId)
+    .filter(a => (a.assignmentType || 'essay') !== 'no_submission') // no_submission shows only in gradebook
     .filter(a => {
       if (effectiveStaff) return true;
       if (a.status !== 'published' || a.hidden) return false;
@@ -4066,7 +4067,10 @@ function openNewAssignmentModal(assignmentId = null) {
     document.getElementById('newAssignmentLatePenaltyType').value = assignment.latePenaltyType || 'per_day';
     document.getElementById('newAssignmentLatePenalty').value = assignment.lateDeduction || 10;
     document.getElementById('newAssignmentGradingNotes').value = assignment.gradingNotes || '';
-    document.getElementById('newAssignmentAllowResubmit').checked = assignment.allowResubmission !== false;
+    const allowResub = assignment.allowResubmission !== false;
+    document.getElementById('newAssignmentAllowResubmit').checked = allowResub;
+    const resubGroup = document.getElementById('resubmitLimitGroup');
+    if (resubGroup) resubGroup.style.display = allowResub ? 'flex' : 'none';
 
     // Determine assignment_type (new field) falling back to category mapping
     const atype = assignment.assignmentType ||
@@ -4084,14 +4088,9 @@ function openNewAssignmentModal(assignmentId = null) {
       document.getElementById('essayGradingType').value = assignment.gradingType || 'points';
       handleGradingTypeChange('essay');
       document.getElementById('newAssignmentPoints').value = assignment.points || 100;
-      const attempts = assignment.submissionAttempts;
-      if (!attempts) {
-        document.getElementById('newAssignmentUnlimitedAttempts').checked = true;
-        document.getElementById('newAssignmentAttempts').value = '';
-        document.getElementById('newAssignmentAttempts').disabled = true;
-      } else {
-        document.getElementById('newAssignmentAttempts').value = attempts;
-      }
+      const limitGroup = document.getElementById('resubmitLimitGroup');
+      if (limitGroup) limitGroup.style.display = 'flex';
+      document.getElementById('newAssignmentAttempts').value = assignment.submissionAttempts || '';
     } else if (atype === 'quiz') {
       if (assignment.questionBankId) {
         document.getElementById('newAssignmentQuestionBank').value = assignment.questionBankId;
@@ -4144,7 +4143,8 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentQuizPoints').value = '';
   document.getElementById('newAssignmentQuizAttempts').value = '1';
   document.getElementById('newAssignmentAttempts').value = '';
-  document.getElementById('newAssignmentUnlimitedAttempts').checked = false;
+  const _resubGroup = document.getElementById('resubmitLimitGroup');
+  if (_resubGroup) _resubGroup.style.display = 'flex'; // default: allow resubmit checked = visible
   document.getElementById('newAssignmentUnlimitedQuizAttempts').checked = false;
   document.getElementById('newAssignmentTimeLimit').value = '';
   document.getElementById('newAssignmentUnlimitedTime').checked = false;
@@ -4270,6 +4270,12 @@ function toggleUnlimitedAttempts(inputId, checkbox) {
   if (checkbox.checked) input.value = '';
 }
 window.toggleUnlimitedAttempts = toggleUnlimitedAttempts;
+
+function toggleResubmitOptions(checkbox) {
+  const group = document.getElementById('resubmitLimitGroup');
+  if (group) group.style.display = checkbox.checked ? 'flex' : 'none';
+}
+window.toggleResubmitOptions = toggleResubmitOptions;
 
 function toggleUnlimitedTime(checkbox) {
   const input = document.getElementById('newAssignmentTimeLimit');
@@ -4426,8 +4432,8 @@ async function saveNewAssignment() {
       maxFileSizeMb = parseInt(document.getElementById('newAssignmentMaxFileSize').value) || 50;
     }
     allowResubmit = document.getElementById('newAssignmentAllowResubmit').checked;
-    const unlimitedAttempts = document.getElementById('newAssignmentUnlimitedAttempts').checked;
-    submissionAttempts = unlimitedAttempts ? null : (parseInt(document.getElementById('newAssignmentAttempts').value) || null);
+    // no resubmit → 1 attempt; resubmit + blank → unlimited (null); resubmit + number → that many
+    submissionAttempts = allowResubmit ? (parseInt(document.getElementById('newAssignmentAttempts').value) || null) : 1;
 
   } else if (assignmentType === 'quiz') {
     questionBankId = document.getElementById('newAssignmentQuestionBank').value;
@@ -5458,6 +5464,9 @@ function openModuleFile(fileId, event) {
 
 function isAssignmentVisibleInGradebook(assignment) {
   if (!assignment || assignment.courseId !== activeCourseId) return false;
+
+  // no_submission assignments always appear in gradebook (no due date, always draft)
+  if ((assignment.assignmentType || 'essay') === 'no_submission') return true;
 
   // Show active/published/closed assignments and anything that has passed
   // availability/due windows (treated as closed for grading visibility).
@@ -6974,7 +6983,7 @@ function openManualGradeModal(studentId, assignmentId) {
   const submission = appData.submissions.find(s => s.assignmentId === assignmentId && s.userId === studentId);
   const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
 
-  // Create modal if it doesn't exist
+  // Create modal shell if it doesn't exist
   if (!document.getElementById('manualGradeModal')) {
     const modalHtml = `
       <div class="modal-overlay" id="manualGradeModal">
@@ -6985,13 +6994,7 @@ function openManualGradeModal(studentId, assignmentId) {
           </div>
           <div class="modal-body">
             <div id="manualGradeInfo" class="muted" style="margin-bottom:16px;"></div>
-            <div class="form-group">
-              <label class="form-label">Score</label>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <input type="number" class="form-input" id="manualGradeScore" min="0" style="width:100px;">
-                <span id="manualGradeMax">/ 100</span>
-              </div>
-            </div>
+            <div id="manualGradeScoreSection"></div>
             <div class="form-group">
               <label class="form-label">Feedback (optional)</label>
               <textarea class="form-textarea" id="manualGradeFeedback" rows="3" placeholder="Add feedback..."></textarea>
@@ -7013,11 +7016,42 @@ function openManualGradeModal(studentId, assignmentId) {
     document.body.insertAdjacentHTML('beforeend', modalHtml);
   }
 
+  // Build the score input based on grading type
+  const gt = assignment.gradingType || 'points';
+  let scoreHtml = '';
+  const currentScore = grade ? grade.score : '';
+  if (gt === 'complete_incomplete') {
+    const isComplete = currentScore === 1 || currentScore === '1' || currentScore === true;
+    scoreHtml = `
+      <div class="form-group">
+        <label class="form-label">Grade</label>
+        <select class="form-select" id="manualGradeScore">
+          <option value="1" ${isComplete || !grade ? 'selected' : ''}>✓ Complete</option>
+          <option value="0" ${grade && !isComplete ? 'selected' : ''}>✗ Incomplete</option>
+        </select>
+      </div>`;
+  } else if (gt === 'letter_grade') {
+    const letters = ['A','A-','B+','B','B-','C+','C','C-','D+','D','D-','F'];
+    const opts = letters.map(l => `<option value="${l}" ${currentScore === l ? 'selected' : ''}>${l}</option>`).join('');
+    scoreHtml = `
+      <div class="form-group">
+        <label class="form-label">Letter Grade</label>
+        <select class="form-select" id="manualGradeScore" style="width:120px;">${opts}</select>
+      </div>`;
+  } else {
+    scoreHtml = `
+      <div class="form-group">
+        <label class="form-label">Score</label>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input type="number" class="form-input" id="manualGradeScore" min="0" max="${assignment.points}" value="${currentScore}" style="width:100px;">
+          <span class="muted">/ ${assignment.points} pts</span>
+        </div>
+      </div>`;
+  }
+  document.getElementById('manualGradeScoreSection').innerHTML = scoreHtml;
+
   document.getElementById('manualGradeTitle').textContent = grade ? 'Edit Grade' : 'Add Grade';
   document.getElementById('manualGradeInfo').textContent = `${student.name} · ${assignment.title}`;
-  document.getElementById('manualGradeMax').textContent = `/ ${assignment.points}`;
-  document.getElementById('manualGradeScore').value = grade ? grade.score : '';
-  document.getElementById('manualGradeScore').max = assignment.points;
   document.getElementById('manualGradeFeedback').value = grade ? (grade.feedback || '') : '';
   document.getElementById('manualGradeReleased').checked = grade ? grade.released : true;
 
@@ -7025,19 +7059,21 @@ function openManualGradeModal(studentId, assignmentId) {
 }
 
 async function saveManualGrade() {
-  const score = parseFloat(document.getElementById('manualGradeScore').value);
   const feedback = document.getElementById('manualGradeFeedback').value.trim();
   const released = document.getElementById('manualGradeReleased').checked;
   const assignment = appData.assignments.find(a => a.id === manualGradeAssignmentId);
+  const gt = assignment.gradingType || 'points';
 
-  if (isNaN(score) || score < 0) {
-    showToast('Please enter a valid score', 'error');
-    return;
-  }
-
-  if (score > assignment.points) {
-    showToast(`Score cannot exceed ${assignment.points} points`, 'error');
-    return;
+  let score;
+  if (gt === 'complete_incomplete') {
+    score = parseInt(document.getElementById('manualGradeScore').value);
+  } else if (gt === 'letter_grade') {
+    score = document.getElementById('manualGradeScore').value;
+    if (!score) { showToast('Please select a letter grade', 'error'); return; }
+  } else {
+    score = parseFloat(document.getElementById('manualGradeScore').value);
+    if (isNaN(score) || score < 0) { showToast('Please enter a valid score', 'error'); return; }
+    if (score > assignment.points) { showToast(`Score cannot exceed ${assignment.points} points`, 'error'); return; }
   }
 
   // Check if submission exists, if not create a placeholder

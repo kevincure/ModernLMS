@@ -123,7 +123,10 @@ export function buildAiContext() {
       if (assignments.length > 0) {
         context += `\nCOURSE ASSIGNMENTS (${assignments.length}):\n`;
         assignments.forEach(a => {
-          context += `- ID: ${a.id} | ${a.title} (${a.points} pts, due: ${new Date(a.dueDate).toLocaleDateString()}, status: ${a.status})\n`;
+          const atype = a.assignmentType || 'essay';
+          const gt = a.gradingType || 'points';
+          const dueStr = a.dueDate ? new Date(a.dueDate).toLocaleDateString() : 'no due date';
+          context += `- ID: ${a.id} | ${a.title} | type: ${atype} | grading: ${gt} | ${a.points ?? 0} pts | due: ${dueStr} | status: ${a.status}\n`;
         });
       }
 

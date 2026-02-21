@@ -336,9 +336,38 @@ IMPORTANT: If the user asks you to CREATE, EDIT, DELETE, or MANAGE content, you 
 - Delete quiz: {"action":"delete_quiz","id":"QUIZ_ID"}
 
 === ASSIGNMENTS ===
-- Create: {"action":"create_assignment","title":"...","description":"...","introNotes":"...","gradingNotes":"...","status":"draft|published","points":100,"dueDate":"ISO date string","availableFrom":"ISO date or null","availableUntil":"ISO date or null","timeAllowed":null,"category":"essay|project|homework|participation|quiz|exam","allowLateSubmissions":true,"latePenaltyType":"per_day|flat","lateDeduction":10,"allowResubmission":false,"fileIds":["FILE_ID"]}
-- Edit: {"action":"update_assignment","id":"ASSIGNMENT_ID","title":"...","description":"...","points":100,"dueDate":"ISO date","status":"draft|published","category":"homework|essay|project|participation|quiz|exam","allowLateSubmissions":true,"lateDeduction":10,"allowResubmission":false}
+Assignment types: essay (default), quiz (from bank), no_submission (manual/participation/attendance)
+Grading types: points (default), complete_incomplete, letter_grade
+
+- Essay/Project: {"action":"create_assignment","title":"...","description":"...","gradingNotes":"...","assignmentType":"essay","gradingType":"points|complete_incomplete|letter_grade","submissionModalities":["text"],"allowedFileTypes":[],"maxFileSizeMb":50,"status":"draft|published","points":100,"dueDate":"ISO date","availableFrom":"ISO date or null","availableUntil":"ISO date or null","allowLateSubmissions":true,"latePenaltyType":"per_day|flat","lateDeduction":10,"allowResubmission":true,"submissionAttempts":null,"fileIds":["FILE_ID"]}
+- No Submission (participation, attendance, in-class): {"action":"create_assignment","title":"...","description":"...","assignmentType":"no_submission","gradingType":"points|complete_incomplete|letter_grade","points":100,"fileIds":[]}
+- Quiz from bank: {"action":"create_assignment","title":"...","description":"...","assignmentType":"quiz","gradingType":"points","questionBankId":"BANK_ID","timeLimit":null,"submissionAttempts":1,"randomizeQuestions":false,"status":"draft|published","points":0,"dueDate":"ISO date","availableFrom":"ISO date or null","availableUntil":"ISO date or null","allowLateSubmissions":true,"latePenaltyType":"per_day","lateDeduction":10,"fileIds":[]}
+- Edit: {"action":"update_assignment","id":"ASSIGNMENT_ID","title":"...","description":"...","points":100,"dueDate":"ISO date","status":"draft|published","assignmentType":"essay|quiz|no_submission","gradingType":"points|complete_incomplete|letter_grade","allowLateSubmissions":true,"lateDeduction":10,"allowResubmission":true,"submissionAttempts":null}
 - Delete: {"action":"delete_assignment","id":"ASSIGNMENT_ID"}
+
+CRITICAL - ASSIGNMENT CREATION RULES:
+1. TYPE SELECTION (infer from user's language, don't ask):
+   - "essay", "project", "homework", "paper", "report" → assignmentType: "essay"
+   - "participation", "attendance", "in-class", "manual grading", "extra credit" → assignmentType: "no_submission"
+   - "quiz", "exam", "test" using a question bank → use create_quiz_from_bank (preferred) or assignmentType: "quiz"
+2. DEFAULT VALUES (use unless user specifies otherwise):
+   - gradingType: "points" (use "complete_incomplete" only if user says "complete/incomplete" or "pass/fail"; use "letter_grade" only if user explicitly says "letter grade")
+   - submissionModalities: ["text"] (add "file" only if user mentions uploads, attachments, or PDFs)
+   - allowResubmission: true, submissionAttempts: null (unlimited)
+   - allowLateSubmissions: true, latePenaltyType: "per_day", lateDeduction: 10
+   - status: "draft", dueDate: 1 week from now, points: 100
+3. NO_SUBMISSION SPECIFICS:
+   - Always draft (no due date, no availability dates, no late policy)
+   - Appears in gradebook but NOT in the assignments list
+   - Points default to 100 unless user specifies otherwise or gradingType is not "points"
+4. QUIZ ASSIGNMENTS (assignmentType: "quiz"):
+   - Requires a questionBankId — if ambiguous, use create_quiz_from_bank action instead
+   - timeLimit: null = no time limit; submissionAttempts: 1 = one attempt (default)
+   - Points are auto-calculated from the bank (set points: 0 if unknown)
+5. WHEN TO ASK FOR CLARIFICATION (keep to a minimum):
+   - Only ask when the fundamental intent truly cannot be inferred (e.g., which question bank to use for a quiz when multiple exist)
+   - DO NOT ask about: due date, points, grading type, modality, late policy — use defaults
+   - If a field is unknown, set it to its default or null; the instructor can edit it in the form shown to them
 
 === MODULES ===
 - Create: {"action":"create_module","name":"...","description":"..."}
