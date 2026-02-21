@@ -2633,7 +2633,7 @@ function renderAssignments() {
   const _now = new Date();
   const assignments = appData.assignments
     .filter(a => a.courseId === activeCourseId)
-    .filter(a => (a.assignmentType || 'essay') !== 'no_submission') // no_submission shows only in gradebook
+    .filter(a => effectiveStaff || (a.assignmentType || 'essay') !== 'no_submission') // hide from students only
     .filter(a => {
       if (effectiveStaff) return true;
       if (a.status !== 'published' || a.hidden) return false;
@@ -6703,15 +6703,26 @@ function renderStaffGradebook() {
     </div>
   `);
 
+  // Staff gradebook: show ALL assignments (including hidden/draft/no_submission)
   const assignments = appData.assignments
-    .filter(a => isAssignmentVisibleInGradebook(a))
-    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    .filter(a => a.courseId === activeCourseId)
+    .sort((a, b) => {
+      if (!a.dueDate && b.dueDate) return 1;
+      if (a.dueDate && !b.dueDate) return -1;
+      return new Date(a.dueDate) - new Date(b.dueDate);
+    });
 
-  let students = appData.enrollments
-    .filter(e => e.courseId === activeCourseId && e.role === 'student')
-    .map(e => getUserById(e.userId))
-    .filter(u => u)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Include pending invitees so staff can see they need grades once they accept
+  const pendingInvitees = (appData.invites || [])
+    .filter(i => i.courseId === activeCourseId && i.status === 'pending' && (!i.role || i.role === 'student'))
+    .map(i => ({ id: 'invite_' + i.id, name: `${i.email} (invited)`, email: i.email, isPendingInvite: true }));
+  let students = [
+    ...appData.enrollments
+      .filter(e => e.courseId === activeCourseId && e.role === 'student')
+      .map(e => getUserById(e.userId))
+      .filter(u => u),
+    ...pendingInvitees
+  ].sort((a, b) => a.name.localeCompare(b.name));
 
   // Filter by search
   if (gradebookSearch) {
@@ -6823,8 +6834,12 @@ function renderStaffGradebook() {
 
             const row = `
               <tr style="border-bottom:1px solid var(--border-light);">
-                <td style="padding:12px; position:sticky; left:0; background:var(--bg-card);">${student.name}</td>
+                <td style="padding:12px; position:sticky; left:0; background:var(--bg-card);">${student.name}${student.isPendingInvite ? '' : ''}</td>
                 ${assignments.map(a => {
+                  // Pending invitees have no user account yet — show non-clickable placeholder
+                  if (student.isPendingInvite) {
+                    return `<td style="padding:12px; text-align:center; color:var(--text-muted);" title="Student has not yet accepted their invite">—</td>`;
+                  }
                   const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === student.id);
                   const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
                   // Blind grading: use anonymous ID in click handler label but real IDs in function call
