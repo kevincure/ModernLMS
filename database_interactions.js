@@ -546,7 +546,7 @@ export async function loadDataFromSupabase() {
 export async function supabaseDownloadFileBlob(storagePath, declaredMimeType) {
   if (!supabaseClient || !storagePath) return null;
   try {
-    const { data: blob, error } = await supabaseClient.storage.from('files').download(storagePath);
+    const { data: blob, error } = await supabaseClient.storage.from('course-files').download(storagePath);
     if (error || !blob) return null;
     if (blob.size > 20 * 1024 * 1024) return { error: `File is too large (${(blob.size / 1048576).toFixed(1)} MB) to attach inline — max 20 MB.` };
     const ab = await blob.arrayBuffer();
@@ -1848,9 +1848,18 @@ export async function callGeminiAPI(contents, generationConfig = null) {
     });
   }
 
+  console.log('[Gemini] ▶ input:', contents);
+
   const { data, error } = await supabaseClient.functions.invoke('gemini', {
     body: { contents, generationConfig }
   });
+
+  if (data) {
+    const usage = data.usageMetadata || {};
+    const out = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+    console.log(`[Gemini] ⚡ tokens — input: ${usage.promptTokenCount ?? '?'}, output: ${usage.candidatesTokenCount ?? '?'}, thinking: ${usage.thoughtsTokenCount ?? 0}, total: ${usage.totalTokenCount ?? '?'}`);
+    console.log('[Gemini] ◀ output:', out);
+  }
 
   if (error) {
     const status = error.context?.status;

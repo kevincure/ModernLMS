@@ -2363,6 +2363,13 @@ async function saveStartHere() {
 // UPDATES (ANNOUNCEMENTS) PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let announcementsSearch = '';
+
+function updateAnnouncementsSearch(value) {
+  announcementsSearch = value.toLowerCase();
+  renderUpdates();
+}
+
 function renderUpdates() {
   if (!activeCourseId) {
     setText('updatesSubtitle', 'Select a course');
@@ -2377,13 +2384,12 @@ function renderUpdates() {
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
   const effectiveStaff = isStaffUser && !studentViewMode;
 
-  if (effectiveStaff) {
-    setHTML('updatesActions', `
-      <button class="btn btn-primary" onclick="openModal('announcementModal')">New Announcement</button>
-    `);
-  } else {
-    setHTML('updatesActions', '');
-  }
+  setHTML('updatesActions', `
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <input type="text" class="form-input" id="announcementsSearchInput" placeholder="Search announcements..." value="${escapeHtml(announcementsSearch)}" oninput="updateAnnouncementsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      ${effectiveStaff ? `<button class="btn btn-primary" onclick="openModal('announcementModal')">New Announcement</button>` : ''}
+    </div>
+  `);
 
   let announcements = appData.announcements
     .filter(a => a.courseId === activeCourseId)
@@ -2398,8 +2404,18 @@ function renderUpdates() {
     announcements = announcements.filter(a => !a.hidden);
   }
 
+  // Filter by search
+  if (announcementsSearch) {
+    announcements = announcements.filter(a =>
+      a.title.toLowerCase().includes(announcementsSearch) ||
+      (a.content || '').toLowerCase().includes(announcementsSearch)
+    );
+  }
+
   if (announcements.length === 0) {
-    setHTML('updatesList', '<div class="empty-state"><div class="empty-state-title">No announcements yet</div></div>');
+    setHTML('updatesList', announcementsSearch
+      ? '<div class="empty-state"><div class="empty-state-text">No announcements match your search</div></div>'
+      : '<div class="empty-state"><div class="empty-state-title">No announcements yet</div></div>');
     return;
   }
 
@@ -2605,6 +2621,13 @@ async function updateAnnouncement() {
 // ASSIGNMENTS PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let assignmentsSearch = '';
+
+function updateAssignmentsSearch(value) {
+  assignmentsSearch = value.toLowerCase();
+  renderAssignments();
+}
+
 function renderAssignments() {
   if (!activeCourseId) {
     setText('assignmentsSubtitle', 'Select a course');
@@ -2612,20 +2635,21 @@ function renderAssignments() {
     setHTML('assignmentsList', '<div class="empty-state-text">No active course</div>');
     return;
   }
-  
+
   const course = getCourseById(activeCourseId);
   setText('assignmentsSubtitle', course.name);
-  
+
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-  
-  if (isStaffUser && !studentViewMode) {
-    setHTML('assignmentsActions', `
-      <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
-      <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
-    `);
-  } else {
-    setHTML('assignmentsActions', '');
-  }
+
+  setHTML('assignmentsActions', `
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <input type="text" class="form-input" id="assignmentsSearchInput" placeholder="Search assignments..." value="${escapeHtml(assignmentsSearch)}" oninput="updateAssignmentsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      ${isStaffUser && !studentViewMode ? `
+        <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
+        <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
+      ` : ''}
+    </div>
+  `);
   
   // When in student view mode, show as student would see
   const effectiveStaff = isStaffUser && !studentViewMode;
@@ -2643,17 +2667,27 @@ function renderAssignments() {
     })
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-  const quizzes = appData.quizzes
+  let quizzes = appData.quizzes
     .filter(q => q.courseId === activeCourseId)
     .filter(q => effectiveStaff || q.status === 'published')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  
-  if (assignments.length === 0 && quizzes.length === 0) {
-    setHTML('assignmentsList', '<div class="empty-state"><div class="empty-state-title">No assignments or quizzes yet</div></div>');
+
+  // Filter by search
+  let filteredAssignments = assignments;
+  let filteredQuizzes = quizzes;
+  if (assignmentsSearch) {
+    filteredAssignments = assignments.filter(a => a.title.toLowerCase().includes(assignmentsSearch));
+    filteredQuizzes = quizzes.filter(q => q.title.toLowerCase().includes(assignmentsSearch));
+  }
+
+  if (filteredAssignments.length === 0 && filteredQuizzes.length === 0) {
+    setHTML('assignmentsList', assignmentsSearch
+      ? '<div class="empty-state"><div class="empty-state-text">No assignments match your search</div></div>'
+      : '<div class="empty-state"><div class="empty-state-title">No assignments or quizzes yet</div></div>');
     return;
   }
   
-  const assignmentCards = assignments.map(a => {
+  const assignmentCards = filteredAssignments.map(a => {
     const dueDate = new Date(a.dueDate);
     const isPast = dueDate < new Date();
     const mySubmission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
@@ -2770,7 +2804,7 @@ function renderAssignments() {
     `;
   }).join('');
 
-  const quizCards = quizzes.map(q => {
+  const quizCards = filteredQuizzes.map(q => {
     const dueDate = new Date(q.dueDate);
     const isPast = dueDate < new Date();
     const quizPoints = getQuizPoints(q);
@@ -2830,10 +2864,10 @@ function renderAssignments() {
   }).join('');
 
   const sections = [];
-  if (assignments.length > 0) {
+  if (filteredAssignments.length > 0) {
     sections.push(assignmentCards);
   }
-  if (quizzes.length > 0) {
+  if (filteredQuizzes.length > 0) {
     sections.push(`
       <div class="section-header">Quizzes</div>
       ${quizCards}
@@ -5301,7 +5335,7 @@ function renderModules() {
   // Actions with search
   setHTML('modulesActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" onkeyup="updateModulesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <input type="text" class="form-input" id="modulesSearchInput" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" oninput="updateModulesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       ${effectiveStaff ? `
         <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
         <button class="btn btn-secondary" onclick="openSyllabusParserModal()">Import from Syllabus</button>
@@ -6714,7 +6748,7 @@ function renderStaffGradebook() {
   // Actions with search
   setHTML('gradebookActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" placeholder="Search students..." value="${escapeHtml(gradebookSearch)}" onkeyup="updateGradebookSearch(this.value)" style="width:200px;">
+      <input type="text" class="form-input" id="gradebookSearchInput" placeholder="Search students..." value="${escapeHtml(gradebookSearch)}" oninput="updateGradebookSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       <button class="btn btn-secondary" onclick="openCategoryWeightsModal()">Category Weights ${hasWeights ? '✓' : ''}</button>
       <button class="btn btn-secondary" onclick="openGradeSettingsModal()">Grade Settings ${gradeSettings ? '✓' : ''}</button>
       <button class="btn btn-secondary" onclick="exportGradebook()">Export CSV</button>
@@ -9754,6 +9788,8 @@ window.updateFilesSearch = updateFilesSearch;
 window.updateFilesSort = updateFilesSort;
 window.updateGradebookSearch = updateGradebookSearch;
 window.updatePeopleSearch = updatePeopleSearch;
+window.updateAssignmentsSearch = updateAssignmentsSearch;
+window.updateAnnouncementsSearch = updateAnnouncementsSearch;
 
 // File handling
 window.handleFilesDrop = handleFilesDrop;
