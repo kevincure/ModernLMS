@@ -16,7 +16,7 @@ import {
   supabaseCreateInvite, supabaseDeleteInvite,
   supabaseUpdateCourse
 } from './database_interactions.js';
-import { AI_PROMPTS, AI_CONFIG } from './constants.js';
+import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODULE STATE
@@ -394,76 +394,359 @@ function getMissingPublishRequirements(operation, publish = false) {
 
   return [];
 }
+// ═══════════════════════════════════════════════════════════════════════════════
+// MULTI-STEP AI ENGINE
+// Flow: user message → buildSystemPrompt → runAiLoop → [tool_call → result → loop]
+//       → action (Take Action Card) | answer (text bubble) | ask_user (inline input)
+// The AI never touches the DB; it only emits JSON. Deterministic code executes actions.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build system prompt dynamically from AI_TOOL_REGISTRY so it always reflects
+ * current capabilities with zero extra work when new tools/actions are added.
+ */
+function buildSystemPrompt(isStaff, courseContext) {
+  if (!isStaff) {
+    return `You are an AI assistant for an LMS helping a STUDENT. Help with course questions, explain concepts, and provide guidance on assignments. Do NOT create or modify course content — redirect those requests to instructors.\n\nRespond in plain text.\n\n${courseContext}`;
+  }
+
+  const toolList = AI_TOOL_REGISTRY.context_tools.map(t => {
+    const paramStr = t.params ? `(${Object.entries(t.params).map(([k, v]) => `${k}: ${v}`).join(', ')})` : '';
+    return `  - ${t.name}${paramStr}: ${t.description}`;
+  }).join('\n');
+
+  const actionList = AI_TOOL_REGISTRY.action_types.map(t =>
+    `  - ${t.name}${t.dangerous ? ' ⚠️' : ''}: ${t.description}`
+  ).join('\n');
+
+  return `You are an AI assistant for an LMS (Learning Management System) helping an INSTRUCTOR manage course content. You look up real data via tools, then propose an action for the instructor to confirm.
+
+ALWAYS respond with ONLY a single valid JSON object in exactly one of these formats:
+
+1. Direct text answer (for questions/explanations, or when no action is needed):
+{"type":"answer","text":"Your response here"}
+
+2. Tool call — look up real IDs/data before acting. You WILL see the result and can call more tools before your final output:
+{"type":"tool_call","tool":"tool_name","params":{"key":"value"},"step_label":"👥 Looking up people and invites..."}
+
+3. Ask user for clarification — ONLY when intent is fundamentally ambiguous and defaults cannot apply:
+{"type":"ask_user","question":"Which question bank should I use? Available: Bank A, Bank B"}
+
+4. Action — creates a Take Action Card for the instructor to review and confirm (you never touch the DB):
+{"type":"action","action":"action_name",...all required fields...}
+
+AVAILABLE TOOLS (call these first to look up real IDs — never guess IDs):
+${toolList}
+
+AVAILABLE ACTIONS (* = required field):
+${actionList}
+
+MANDATORY PRE-ACTION RULES — ALWAYS call the relevant tool before acting:
+- Before ANY invite/person action (revoke_invite, remove_person): call list_people to get the real inviteId/userId
+- Before creating a quiz/exam from a bank: call list_question_banks to find the correct bank ID
+- Before update/delete of any content: verify the item exists and get its real ID from the relevant list tool
+- NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
+
+CLARIFICATION RULE — minimize ask_user:
+- Only ask when you genuinely cannot proceed (e.g., multiple question banks match and user didn't specify)
+- Do NOT ask about: due dates, points, grading type, modality, late policy, status — use defaults
+- If a field is optional and unknown, set it to null; the instructor edits it in the confirmation form
+
+DEFAULTS (use unless user specifies otherwise):
+- Assignment: assignmentType:"essay", gradingType:"points", points:100, dueDate:1 week from now, status:"draft", allowLateSubmissions:true, latePenaltyType:"per_day", lateDeduction:10, allowResubmission:true, submissionAttempts:null
+- no_submission type: no dueDate, no availability dates, always status:"draft"
+- Quiz: attempts:1, randomizeQuestions:false, randomizeAnswers:true, timeLimit:null
+- Announcement: pinned:false, status:"draft"
+- Invite: role:"student"
+
+CONTENT FORMATTING (markdown supported in description/content fields):
+- **bold**, *italic*, ## headers, - bullet lists
+- Link files: [📄 filename](#file-FILE_ID)
+
+${courseContext}`;
+}
+
+/**
+ * Summarize a tool result into a short human-readable string for the step bubble.
+ */
+function summarizeToolResult(toolName, result) {
+  if (!result) return '';
+  if (result.error) return `error: ${result.error}`;
+  if (Array.isArray(result)) {
+    switch (toolName) {
+      case 'list_people': {
+        const enrolled = result.filter(p => p.status === 'enrolled').length;
+        const pending = result.filter(p => p.status === 'pending_invite').length;
+        return `${enrolled} enrolled${pending ? `, ${pending} pending` : ''}`;
+      }
+      case 'list_assignments':   return `${result.length} assignment${result.length !== 1 ? 's' : ''}`;
+      case 'list_question_banks':return `${result.length} bank${result.length !== 1 ? 's' : ''}`;
+      case 'list_quizzes':       return `${result.length} quiz${result.length !== 1 ? 'zes' : ''}`;
+      case 'list_files':         return `${result.length} file${result.length !== 1 ? 's' : ''}`;
+      case 'list_announcements': return `${result.length} announcement${result.length !== 1 ? 's' : ''}`;
+      case 'list_modules':       return `${result.length} module${result.length !== 1 ? 's' : ''}`;
+      default:                   return `${result.length} item${result.length !== 1 ? 's' : ''}`;
+    }
+  }
+  if (result.name) return result.name;
+  return '';
+}
+
+/**
+ * Execute a context tool — queries appData and returns JSON for Gemini to reason over.
+ * These NEVER write to the DB; they are read-only.
+ */
+async function executeAiTool(toolName, params = {}) {
+  if (!activeCourseId) return { error: 'No active course selected' };
+
+  switch (toolName) {
+    case 'list_assignments':
+      return (appData.assignments || [])
+        .filter(a => a.courseId === activeCourseId)
+        .map(a => ({ id: a.id, title: a.title, type: a.assignmentType || 'essay', gradingType: a.gradingType || 'points', status: a.status, points: a.points, dueDate: a.dueDate }));
+
+    case 'list_quizzes':
+      return (appData.quizzes || [])
+        .filter(q => q.courseId === activeCourseId)
+        .map(q => ({ id: q.id, title: q.title, status: q.status, dueDate: q.dueDate, questionCount: (q.questions || []).length }));
+
+    case 'list_files':
+      return (appData.files || [])
+        .filter(f => f.courseId === activeCourseId)
+        .map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size }));
+
+    case 'list_modules':
+      return (appData.modules || [])
+        .filter(m => m.courseId === activeCourseId)
+        .map(m => ({
+          id: m.id, name: m.name,
+          items: (m.items || []).map(i => ({
+            id: i.id, type: i.type, refId: i.refId,
+            title: i.title
+              || (appData.assignments || []).find(a => a.id === i.refId)?.title
+              || (appData.quizzes || []).find(q => q.id === i.refId)?.title
+              || (appData.files || []).find(f => f.id === i.refId)?.name || ''
+          }))
+        }));
+
+    case 'list_people': {
+      const enrolled = (appData.enrollments || [])
+        .filter(e => e.courseId === activeCourseId)
+        .map(e => {
+          const u = (appData.users || []).find(u => u.id === e.userId);
+          return { userId: e.userId, name: u?.name || '(unknown)', email: u?.email || '', role: e.role, status: 'enrolled' };
+        });
+      const pending = (appData.invites || [])
+        .filter(i => i.courseId === activeCourseId && i.status === 'pending')
+        .map(i => ({ inviteId: i.id, email: i.email, role: i.role || 'student', status: 'pending_invite' }));
+      return [...enrolled, ...pending];
+    }
+
+    case 'list_question_banks':
+      return (appData.questionBanks || [])
+        .filter(b => b.courseId === activeCourseId)
+        .map(b => ({ id: b.id, name: b.name, questionCount: (b.questions || []).length, totalPoints: (b.questions || []).reduce((s, q) => s + (parseFloat(q.points) || 1), 0) }));
+
+    case 'list_announcements':
+      return (appData.announcements || [])
+        .filter(a => a.courseId === activeCourseId)
+        .map(a => ({ id: a.id, title: a.title, pinned: !!a.pinned, hidden: !!a.hidden, createdAt: a.createdAt }));
+
+    case 'get_grade_categories':
+      return (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId);
+
+    case 'get_grade_settings':
+      return (appData.gradeSettings || []).find(s => s.courseId === activeCourseId) || null;
+
+    case 'list_discussion_threads':
+      return (appData.discussionThreads || [])
+        .filter(t => t.courseId === activeCourseId)
+        .map(t => ({ id: t.id, title: t.title, pinned: !!t.pinned, replyCount: (t.replies || []).length }));
+
+    case 'get_question_bank': {
+      const bank = (appData.questionBanks || []).find(b => b.id === params.bank_id && b.courseId === activeCourseId);
+      if (!bank) return { error: 'Question bank not found' };
+      return { id: bank.id, name: bank.name, questions: (bank.questions || []).map(q => ({ id: q.id, type: q.type, prompt: q.prompt, options: q.options, correctAnswer: q.correctAnswer, points: q.points })) };
+    }
+
+    case 'get_assignment': {
+      const a = (appData.assignments || []).find(a => a.id === params.assignment_id && a.courseId === activeCourseId);
+      return a || { error: 'Assignment not found' };
+    }
+
+    case 'get_quiz': {
+      const q = (appData.quizzes || []).find(q => q.id === params.quiz_id && q.courseId === activeCourseId);
+      return q || { error: 'Quiz not found' };
+    }
+
+    case 'get_file_content': {
+      const f = (appData.files || []).find(f => f.id === params.file_id && f.courseId === activeCourseId);
+      if (!f) return { error: 'File not found' };
+      return { id: f.id, name: f.name, type: f.type, note: 'Full content requires fetching from storage — use the file name/description for context' };
+    }
+
+    default:
+      return { error: `Unknown tool: ${toolName}` };
+  }
+}
+
+/**
+ * Validate an action payload before creating the Take Action Card.
+ * Returns an error string if invalid, null if valid.
+ */
+function validateActionPayload(payload) {
+  if (!activeCourseId) return 'No active course selected';
+  const { action } = payload;
+
+  if (action === 'update_assignment' || action === 'delete_assignment') {
+    if (!payload.id) return 'Missing assignment id';
+    if (!(appData.assignments || []).find(a => a.id === payload.id && a.courseId === activeCourseId))
+      return `Assignment "${payload.id}" not found in this course — use list_assignments to find the correct id`;
+  }
+  if (action === 'update_quiz' || action === 'delete_quiz') {
+    if (!payload.id) return 'Missing quiz id';
+    if (!(appData.quizzes || []).find(q => q.id === payload.id && q.courseId === activeCourseId))
+      return `Quiz "${payload.id}" not found in this course`;
+  }
+  if (['update_announcement','delete_announcement','publish_announcement','pin_announcement'].includes(action)) {
+    if (!payload.id) return 'Missing announcement id';
+    if (!(appData.announcements || []).find(a => a.id === payload.id && a.courseId === activeCourseId))
+      return `Announcement "${payload.id}" not found in this course`;
+  }
+  if (action === 'revoke_invite') {
+    const id = payload.inviteId || payload.id;
+    if (!id) return 'Missing inviteId — call list_people first to get the real invite id';
+    if (!(appData.invites || []).find(i => i.id === id && i.courseId === activeCourseId))
+      return `Invite not found (id: ${id}) — call list_people to get the current invite list`;
+  }
+  if (action === 'remove_person') {
+    const uid = payload.userId || payload.id;
+    if (!uid) return 'Missing userId — call list_people first';
+    if (!(appData.enrollments || []).find(e => e.userId === uid && e.courseId === activeCourseId))
+      return `User "${uid}" is not enrolled in this course`;
+  }
+  if (action === 'create_quiz_from_bank' && payload.questionBankId) {
+    if (!(appData.questionBanks || []).find(b => b.id === payload.questionBankId && b.courseId === activeCourseId))
+      return `Question bank "${payload.questionBankId}" not found — use list_question_banks`;
+  }
+  return null;
+}
+
+/**
+ * The core multi-step AI loop. Runs tool calls until it gets an answer/action/ask_user.
+ * Each tool step is shown as a pill in the chat thread.
+ * Max MAX_STEPS iterations to prevent infinite loops.
+ */
+async function runAiLoop(contents, systemPrompt) {
+  const MAX_STEPS = 6;
+  let steps = 0;
+
+  while (steps < MAX_STEPS) {
+    steps++;
+
+    const data = await callGeminiAPIWithRetry(contents, { temperature: AI_CONFIG.TEMPERATURE_CHAT });
+    if (data.error) throw new Error(data.error.message);
+
+    const rawReply = data.candidates[0].content.parts[0].text.trim();
+    const cleaned = rawReply.replace(/^```json\s*/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+
+    let parsed = null;
+    try { parsed = JSON.parse(cleaned); } catch { /* not JSON */ }
+
+    // ── Direct text answer ────────────────────────────────────────────────────
+    if (!parsed || parsed.type === 'answer') {
+      aiThread.push({ role: 'assistant', content: parsed ? parsed.text : rawReply });
+      renderAiThread();
+      return;
+    }
+
+    // ── Tool call ─────────────────────────────────────────────────────────────
+    if (parsed.type === 'tool_call') {
+      const icon = { list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖', list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝', get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊', get_grade_settings:'📊', get_file_content:'📄', list_discussion_threads:'💬' }[parsed.tool] || '🔍';
+      const stepMsg = {
+        role: 'tool_step',
+        tool: parsed.tool,
+        stepLabel: parsed.step_label || `${icon} Calling ${parsed.tool.replace(/_/g, ' ')}…`,
+        result: null,
+        resultSummary: null
+      };
+      aiThread.push(stepMsg);
+      renderAiThread();
+
+      const result = await executeAiTool(parsed.tool, parsed.params || {});
+      stepMsg.result = result;
+      stepMsg.resultSummary = summarizeToolResult(parsed.tool, result);
+      renderAiThread();
+
+      // Feed result back as the next user turn so the loop continues
+      contents = [
+        ...contents,
+        { role: 'model', parts: [{ text: rawReply }] },
+        { role: 'user',  parts: [{ text: `TOOL_RESULT(${parsed.tool}): ${JSON.stringify(result)}\n\nContinue with the original task.` }] }
+      ];
+      continue;
+    }
+
+    // ── Ask user ──────────────────────────────────────────────────────────────
+    if (parsed.type === 'ask_user') {
+      aiThread.push({ role: 'ask_user', question: parsed.question, pendingContents: contents, systemPrompt });
+      renderAiThread();
+      return;
+    }
+
+    // ── Action ────────────────────────────────────────────────────────────────
+    if (parsed.type === 'action') {
+      const validationError = validateActionPayload(parsed);
+      if (validationError) {
+        aiThread.push({ role: 'assistant', content: `I couldn't set up that action: ${validationError}` });
+        renderAiThread();
+        return;
+      }
+      handleAiAction(parsed);
+      renderAiThread();
+      return;
+    }
+
+    // ── Fallback: treat as plain text ─────────────────────────────────────────
+    aiThread.push({ role: 'assistant', content: rawReply });
+    renderAiThread();
+    return;
+  }
+
+  aiThread.push({ role: 'assistant', content: 'I ran out of steps trying to complete that. Please try again with a more specific request.' });
+  renderAiThread();
+}
+
 export async function sendAiMessage(audioBase64 = null) {
   const input = document.getElementById('aiInput');
   const message = audioBase64 ? '[Voice message]' : input?.value.trim();
-
   if (!message && !audioBase64) return;
-
-  // Prevent double-sends while processing
   if (aiProcessing) return;
+
   aiProcessing = true;
   updateAiProcessingState();
 
   const isStaffUser = activeCourseId && isStaffCallback && isStaffCallback(appData.currentUser.id, activeCourseId);
-  // In student-preview mode, AI behaves as student (no content creation) even for instructors
   const effectiveIsStaff = isStaffUser && !studentViewMode;
-
-  // Use enhanced context builder
-  const context = buildAiContext();
-
-  // Build conversation context from last 3 exchanges
-  const conversationContext = aiThread.slice(-6).map(msg => {
-    if (msg.role === 'user') return `User: ${msg.content}`;
-    if (msg.role === 'assistant') return `Assistant: ${msg.content}`;
-    if (msg.role === 'action') return `Assistant: [Created ${msg.actionType}]`;
-    return '';
-  }).filter(Boolean).join('\n');
-
-  const systemPrompt = AI_PROMPTS.chatAssistant(effectiveIsStaff, context, conversationContext);
 
   aiThread.push({ role: 'user', content: audioBase64 ? '🎤 Voice message' : message });
   if (!audioBase64 && input) input.value = '';
   renderAiThread();
 
   try {
+    const systemPrompt = buildSystemPrompt(effectiveIsStaff, buildAiContext());
     let contents;
-
     if (audioBase64) {
-      // Voice message - send audio to Gemini
       contents = [{
         parts: [
           { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
-          { text: systemPrompt + '\n\nTranscribe and respond to this voice message:' }
+          { text: systemPrompt + '\n\nTranscribe this voice message then respond as instructed:' }
         ]
       }];
     } else {
-      contents = [{ parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }];
+      contents = [{ role: 'user', parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }];
     }
-
-    const data = await callGeminiAPIWithRetry(contents, { temperature: AI_CONFIG.TEMPERATURE_CHAT });
-
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const reply = data.candidates[0].content.parts[0].text.trim();
-    const cleanedReply = reply.replace(/^```json\s*/i, '').replace(/^```/, '').replace(/```$/, '').trim();
-
-    // Check if it's a JSON action
-    if (cleanedReply.startsWith('{') && cleanedReply.includes('"action"')) {
-      try {
-        const action = JSON.parse(cleanedReply);
-        handleAiAction(action);
-      } catch (e) {
-        aiThread.push({ role: 'assistant', content: reply });
-      }
-    } else {
-      aiThread.push({ role: 'assistant', content: reply });
-    }
-
-    renderAiThread();
-
+    await runAiLoop(contents, systemPrompt);
   } catch (err) {
     console.error('AI error:', err);
     showToast('AI request failed: ' + err.message, 'error');
@@ -473,6 +756,34 @@ export async function sendAiMessage(audioBase64 = null) {
     aiProcessing = false;
     updateAiProcessingState();
   }
+}
+
+/**
+ * Handle the user's response to an ask_user message — resumes the AI loop.
+ */
+export function sendAiFollowup(idx) {
+  const msg = aiThread[idx];
+  if (!msg || msg.role !== 'ask_user' || msg.answered) return;
+
+  const inputEl = document.getElementById(`aiFollowupInput_${idx}`);
+  const answer = inputEl?.value.trim();
+  if (!answer) return;
+
+  msg.answered = true;
+  aiThread.push({ role: 'user', content: answer });
+  renderAiThread();
+
+  const resumeContents = [
+    ...(msg.pendingContents || []),
+    { role: 'user', parts: [{ text: `USER_ANSWER: ${answer}\n\nContinue with the original task.` }] }
+  ];
+
+  aiProcessing = true;
+  updateAiProcessingState();
+  runAiLoop(resumeContents, msg.systemPrompt || '').finally(() => {
+    aiProcessing = false;
+    updateAiProcessingState();
+  });
 }
 
 /**
@@ -1453,6 +1764,41 @@ export function renderAiThread() {
         </div>
       `;
     }
+
+    // ── Tool step pill — shows what the AI is looking up ────────────────────
+    if (msg.role === 'tool_step') {
+      const done = msg.result !== null;
+      const hasError = done && msg.result?.error;
+      const statusIcon = done ? (hasError ? '✗' : '✓') : '⏳';
+      const summary = msg.resultSummary ? ` — ${escapeHtml(msg.resultSummary)}` : '';
+      return `
+        <div style="margin-bottom:6px; display:flex;">
+          <div style="background:var(--bg-color); padding:5px 14px; border-radius:20px; font-size:0.82rem; color:var(--text-muted); border:1px solid var(--border-color); display:flex; align-items:center; gap:6px;">
+            <span>${statusIcon}</span>
+            <span>${escapeHtml(msg.stepLabel || msg.tool)}</span>
+            ${summary ? `<span style="opacity:0.65;">${summary}</span>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // ── Ask user — inline clarification input ────────────────────────────────
+    if (msg.role === 'ask_user') {
+      return `
+        <div style="margin-bottom:16px; display:flex;">
+          <div style="background:var(--bg-color); padding:12px 16px; border-radius:16px 16px 16px 4px; max-width:85%; border:1px solid var(--border-color);">
+            <div style="margin-bottom:10px; font-size:0.95rem;">${escapeHtml(msg.question)}</div>
+            ${!msg.answered ? `
+              <div style="display:flex; gap:8px;">
+                <input type="text" class="form-input" id="aiFollowupInput_${idx}" placeholder="Type your answer…" style="flex:1;" onkeydown="if(event.key==='Enter') window.sendAiFollowup(${idx})">
+                <button class="btn btn-primary btn-sm" onclick="window.sendAiFollowup(${idx})">Send</button>
+              </div>
+            ` : `<div class="muted" style="font-size:0.82rem;">Answered ✓</div>`}
+          </div>
+        </div>
+      `;
+    }
+
     if (msg.role === 'assistant') {
       return `
         <div style="margin-bottom:16px; display:flex;">
@@ -2312,6 +2658,7 @@ export function setAiQuizDraft(draft) {
 // Make functions available globally for inline onclick handlers
 if (typeof window !== 'undefined') {
   window.sendAiMessage = sendAiMessage;
+  window.sendAiFollowup = sendAiFollowup;
   window.confirmAiAction = confirmAiAction;
   window.rejectAiAction = rejectAiAction;
   window.updateAiActionField = updateAiActionField;
