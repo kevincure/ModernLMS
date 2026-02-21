@@ -6716,13 +6716,13 @@ function renderStaffGradebook() {
   const pendingInvitees = (appData.invites || [])
     .filter(i => i.courseId === activeCourseId && i.status === 'pending' && (!i.role || i.role === 'student'))
     .map(i => ({ id: 'invite_' + i.id, name: `${i.email} (invited)`, email: i.email, isPendingInvite: true }));
-  let students = [
-    ...appData.enrollments
-      .filter(e => e.courseId === activeCourseId && e.role === 'student')
-      .map(e => getUserById(e.userId))
-      .filter(u => u),
-    ...pendingInvitees
-  ].sort((a, b) => a.name.localeCompare(b.name));
+  // Enrolled students sorted alphabetically; pending invitees always at bottom
+  const enrolledStudents = appData.enrollments
+    .filter(e => e.courseId === activeCourseId && e.role === 'student')
+    .map(e => getUserById(e.userId))
+    .filter(u => u)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  let students = [...enrolledStudents, ...pendingInvitees];
 
   // Filter by search
   if (gradebookSearch) {
@@ -6814,7 +6814,7 @@ function renderStaffGradebook() {
               else if (atype === 'no_submission') ptLabel = `${a.points ?? 0}pts (manual)`;
               else if (atype === 'quiz') ptLabel = `${a.points ?? 0}pts (auto)`;
               else ptLabel = `${a.points ?? 0}pts`;
-              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span></th>`;
+              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span><br><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">⚡ SpeedGrader</button></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>
@@ -6832,13 +6832,19 @@ function renderStaffGradebook() {
             let totalScore = 0;
             let totalPoints = 0;
 
+            const rowStyle = student.isPendingInvite
+              ? 'border-bottom:1px solid var(--border-light); opacity:0.45;'
+              : 'border-bottom:1px solid var(--border-light);';
+            const nameStyle = student.isPendingInvite
+              ? 'padding:12px; position:sticky; left:0; background:var(--bg-card); color:var(--text-muted); font-style:italic;'
+              : 'padding:12px; position:sticky; left:0; background:var(--bg-card);';
             const row = `
-              <tr style="border-bottom:1px solid var(--border-light);">
-                <td style="padding:12px; position:sticky; left:0; background:var(--bg-card);">${student.name}${student.isPendingInvite ? '' : ''}</td>
+              <tr style="${rowStyle}">
+                <td style="${nameStyle}">${student.isPendingInvite ? `${student.email} <span style="font-size:0.75rem;">(invited)</span>` : escapeHtml(student.name)}</td>
                 ${assignments.map(a => {
                   // Pending invitees have no user account yet — show non-clickable placeholder
                   if (student.isPendingInvite) {
-                    return `<td style="padding:12px; text-align:center; color:var(--text-muted);" title="Student has not yet accepted their invite">—</td>`;
+                    return `<td style="padding:12px; text-align:center;">—</td>`;
                   }
                   const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === student.id);
                   const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
@@ -6863,16 +6869,18 @@ function renderStaffGradebook() {
                   }
                   return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
-                <td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? `${totalScore}/${totalPoints}` : '—'}</td>
+                ${student.isPendingInvite
+                  ? `<td style="padding:12px; text-align:center;">—</td><td style="padding:12px; text-align:center;">—</td>${gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : ''}`
+                  : `<td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? `${totalScore}/${totalPoints}` : '—'}</td>
                 ${(() => {
                   if (totalPoints === 0) return '<td style="padding:12px; text-align:center;">—</td>' + (gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : '');
                   const curvedScore = Math.min(totalScore + (gradeSettings ? (gradeSettings.curve || 0) * totalPoints / 100 : 0), totalPoints);
                   const pct = (curvedScore / totalPoints) * 100;
                   const pctStr = pct.toFixed(1) + '%' + (gradeSettings?.curve ? ` (+${gradeSettings.curve}% curve)` : '');
                   const letterGrade = gradeSettings ? getLetterGrade(pct, gradeSettings) : null;
-                  return `<td style="padding:12px; text-align:center; font-weight:600;">${pctStr}</td>` +
-                    (gradeSettings ? `<td style="padding:12px; text-align:center; font-weight:700; color:${getGradeColor(letterGrade)};">${letterGrade}</td>` : '');
-                })()}
+                  return '<td style="padding:12px; text-align:center; font-weight:600;">' + pctStr + '</td>' +
+                    (gradeSettings ? '<td style="padding:12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
+                })()}`}
               </tr>
             `;
             return row;

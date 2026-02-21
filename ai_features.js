@@ -448,6 +448,13 @@ MANDATORY PRE-ACTION RULES — ALWAYS call the relevant tool before acting:
 - Before update/delete of any content: verify the item exists and get its real ID from the relevant list tool
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
 
+ALWAYS include human-readable label fields alongside every ID in action payloads:
+- inviteId → also include email (from list_people result)
+- userId → also include name and email (from list_people result)
+- moduleId → also include moduleName (from list_modules result)
+- itemId → also include itemTitle (from list_modules or list_assignments/quizzes/files)
+- assignmentId or quizId → also include title
+
 CLARIFICATION RULE — minimize ask_user:
 - Only ask when you genuinely cannot proceed (e.g., multiple question banks match and user didn't specify)
 - Do NOT ask about: due dates, points, grading type, modality, late policy, status — use defaults
@@ -1283,21 +1290,38 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! The quiz has been permanently deleted.`;
     case 'module':
       return `Done! Created module ${b(d.name || 'Untitled')}. Add content from ${pageLink('modules', 'Modules')}.`;
-    case 'module_add_item':
-      return `Done! Added ${b(d.itemTitle || 'the item')} to module ${b(d.moduleName || d.moduleId || 'module')}. See ${pageLink('modules', 'Modules')}.`;
-    case 'module_remove_item':
-      return `Done! Removed the item from the module. See ${pageLink('modules', 'Modules')}.`;
-    case 'module_move_item':
-      return `Done! Moved the item to ${b(d.toModuleName || 'the new module')}. See ${pageLink('modules', 'Modules')}.`;
+    case 'module_add_item': {
+      const mod = (appData.modules || []).find(m => m.id === d.moduleId);
+      const resolvedItemTitle = d.itemTitle
+        || (appData.assignments || []).find(a => a.id === d.itemId)?.title
+        || (appData.quizzes || []).find(q => q.id === d.itemId)?.title
+        || (appData.files || []).find(f => f.id === d.itemId)?.name
+        || 'the item';
+      return `Done! Added ${b(resolvedItemTitle)} to module ${b(d.moduleName || mod?.name || 'module')}. See ${pageLink('modules', 'Modules')}.`;
+    }
+    case 'module_remove_item': {
+      const mod = (appData.modules || []).find(m => m.id === d.moduleId);
+      return `Done! Removed ${b(d.itemTitle || 'the item')} from module ${b(d.moduleName || mod?.name || 'module')}. See ${pageLink('modules', 'Modules')}.`;
+    }
+    case 'module_move_item': {
+      const toMod = (appData.modules || []).find(m => m.id === d.toModuleId);
+      return `Done! Moved ${b(d.itemTitle || 'the item')} to ${b(d.toModuleName || toMod?.name || 'the new module')}. See ${pageLink('modules', 'Modules')}.`;
+    }
     case 'invite_create': {
       const count = Array.isArray(d.emails) ? d.emails.length : 1;
       const emailList = Array.isArray(d.emails) ? d.emails.join(', ') : (d.emails || '');
       return `Done! Sent ${count} invitation${count !== 1 ? 's' : ''} to ${b(emailList)} as ${escapeHtml(d.role || 'student')}. Manage from ${pageLink('people', 'People')}.`;
     }
-    case 'invite_revoke':
-      return `Done! The invitation has been revoked. Manage invites from ${pageLink('people', 'People')}.`;
-    case 'person_remove':
-      return `Done! ${b(d.name || d.email || 'The person')} has been removed from the course. See ${pageLink('people', 'People')}.`;
+    case 'invite_revoke': {
+      const inv = (appData.invites || []).find(i => i.id === (d.inviteId || d.id));
+      const revokedEmail = d.email || inv?.email || '';
+      return `Done! The invitation${revokedEmail ? ` for ${b(revokedEmail)}` : ''} has been revoked. Manage invites from ${pageLink('people', 'People')}.`;
+    }
+    case 'person_remove': {
+      const removedUser = (appData.users || []).find(u => u.id === d.userId);
+      const removedName = d.name || removedUser?.name || d.email || removedUser?.email || 'The person';
+      return `Done! ${b(removedName)} has been removed from the course. See ${pageLink('people', 'People')}.`;
+    }
     case 'course_visibility':
       return `Done! The course is now <strong>${d.visible !== false ? 'visible to students' : 'hidden from students'}</strong>.`;
     default:
@@ -2266,17 +2290,25 @@ function renderActionPreview(msg, idx) {
 
   // ─── INVITE REVOKE ───────────────────────────────────────────────────────
   if (msg.actionType === 'invite_revoke') {
+    const inv = (appData.invites || []).find(i => i.id === (d.inviteId || d.id));
+    const displayEmail = d.email || inv?.email || d.inviteId || '';
+    const displayRole = inv?.role || d.role || '';
+    const roleLabel = displayRole ? ` (${displayRole === 'ta' ? 'Teaching Assistant' : displayRole.charAt(0).toUpperCase() + displayRole.slice(1)})` : '';
     return `
-      <div class="muted" style="font-size:0.9rem;">Revoke invitation for: <strong>${escapeHtml(d.email || d.inviteId || '')}</strong></div>
+      <div class="muted" style="font-size:0.9rem;">Revoke invitation for: <strong>${escapeHtml(displayEmail)}</strong>${escapeHtml(roleLabel)}</div>
     `;
   }
 
   // ─── PERSON REMOVE ───────────────────────────────────────────────────────
   if (msg.actionType === 'person_remove') {
-    const displayName = d.name || d.email || d.userId || '';
-    const roleLabel = d.role ? ` (${d.role === 'ta' ? 'Teaching Assistant' : d.role.charAt(0).toUpperCase() + d.role.slice(1)})` : '';
+    const user = (appData.users || []).find(u => u.id === d.userId);
+    const enrollment = (appData.enrollments || []).find(e => e.userId === d.userId && e.courseId === activeCourseId);
+    const displayName = d.name || user?.name || d.email || user?.email || d.userId || '';
+    const displayEmail = d.email || user?.email || '';
+    const displayRole = d.role || enrollment?.role || '';
+    const roleLabel = displayRole ? ` (${displayRole === 'ta' ? 'Teaching Assistant' : displayRole.charAt(0).toUpperCase() + displayRole.slice(1)})` : '';
     return `
-      <div class="muted" style="font-size:0.9rem;">Remove <strong>${escapeHtml(displayName)}</strong>${escapeHtml(roleLabel)} from this course.</div>
+      <div class="muted" style="font-size:0.9rem;">Remove <strong>${escapeHtml(displayName)}</strong>${displayEmail && displayEmail !== displayName ? ` &lt;${escapeHtml(displayEmail)}&gt;` : ''}${escapeHtml(roleLabel)} from this course.</div>
       <div style="margin-top:8px; font-size:0.82rem; color:var(--danger, #c00);">⚠️ This will unenroll them immediately. Their submissions and grades are kept.</div>
     `;
   }
