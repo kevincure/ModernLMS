@@ -1,6 +1,6 @@
-# University LMS interoperability standards shortlist (targets)
+# University LMS interoperability standards shortlist 
 
-This document lists the standards you named, with **exact spec names** (as used by 1EdTech / IMS Global) and the links you’ll want for implementation and conformance.
+These are the standards we need to hit. We will create checklists and confirm for every component here.
 
 ---
 
@@ -8,8 +8,7 @@ This document lists the standards you named, with **exact spec names** (as used 
 
 ### A1) **Learning Tools Interoperability® (LTI®) Core Specification v1.3**
 **What it is:** The core launch + security model for integrating external tools into an LMS (OIDC + OAuth2/JWT-based).  
-**You want to hit:** *Platform* (your LMS) support for LTI 1.3 launches; optionally also *Tool* support if your LMS can act as an LTI tool.
-
+**You want to hit:** *Platform* (your LMS) support for LTI 1.3 launches
 **Spec (Core):**
 - LTI 1.3 spec: https://www.imsglobal.org/spec/lti/v1p3
 
@@ -19,8 +18,7 @@ Helpful companion pages:
 
 ---
 
-### A2) The “three most recent standards” commonly meant by **LTI Advantage**
-In practice, “LTI Advantage” usually means implementing these **three LTI 1.3 service specs** (the classic bundle):
+### A2) **LTI Advantage**
 
 #### A2.1) **Learning Tools Interoperability® (LTI®) Deep Linking 2.0**
 **What it is:** Lets instructors pick content/placements from a tool (content-item selection) and return a configured link back into the LMS.  
@@ -61,7 +59,7 @@ In practice, “LTI Advantage” usually means implementing these **three LTI 1.
 
 ## C. Quizzes / exams — target: QTI 3.0
 
-### C1) **Question & Test Interoperability® (QTI®) v3.0**
+### C1) **Question & Test Interoperability (QTI) v3.0**
 **What it is:** A standard representation for assessment items and tests, plus usage/results reporting structures.  
 **You want to hit:** Import/export of QTI 3.0 item banks and tests that match your authoring/delivery features.
 
@@ -72,14 +70,13 @@ In practice, “LTI Advantage” usually means implementing these **three LTI 1.
 - 1EdTech QTI documents index: https://www.1edtech.org/standards/qti/index
 
 **Pragmatic notes:**
-- QTI support can be “shallow” (basic MCQ/TF/short answer) or “deep” (complex interactions, scoring, metadata, outcomes). Universities vary a lot; decide your target coverage explicitly.
-- If you already support Canvas-style exports or publisher question banks, test them early against QTI realities (edge cases are where time goes).
+- QTI support can be “shallow” (basic MCQ/TF/short answer) or “deep” (complex interactions, scoring, metadata, outcomes). Universities vary a lot
 
 ---
 
 ## D. SIS rostering — target: OneRoster 1.2
 
-### D1) **OneRoster® v1.2**
+### D1) **OneRoster v1.2**
 **What it is:** Standardized exchange of orgs/courses/classes/enrollments/users, via **CSV** and/or **REST/JSON**, to sync SIS ↔ LMS (and related systems).  
 **You want to hit:** Usually both *CSV binding* and *REST binding* (at least the endpoints/workflows your target SIS products require).
 
@@ -92,43 +89,3 @@ In practice, “LTI Advantage” usually means implementing these **three LTI 1.
 **Pragmatic notes:**
 - Universities often have existing SIS pipelines; the “minimum viable” integration is frequently **CSV imports** on a schedule, even if a REST integration is the long-run goal.
 - Decide whether you will be **authoritative** (LMS is source of truth for some data) or purely **downstream** (SIS is source of truth). OneRoster can support either, but your product workflow must be consistent.
-
----
-
-## E. Optional-but-common “next standards” to consider (university context)
-
-These aren’t on your must-hit list, but they show up in RFPs and ecosystem expectations:
-
-- **Caliper Analytics®** (standard event stream for learning analytics): https://www.1edtech.org/standards/caliper
-- **CASE®** (Competencies and Academic Standards Exchange): https://www.1edtech.org/standards/case
-- **Open Badges** / credential portability: https://www.1edtech.org/standards/open-badges
-- **CLR (Comprehensive Learner Record)** (often paired with credentials): https://www.1edtech.org/standards/comprehensive-learner-record
-
----
-
-## Exact target names (copy/paste)
-
-**LTI**
-- *Learning Tools Interoperability® (LTI®) Core Specification v1.3*  
-- *Learning Tools Interoperability® (LTI®) Deep Linking 2.0*  
-- *Learning Tools Interoperability® (LTI®) Assignment and Grade Services (AGS) v2.0*  
-- *Learning Tools Interoperability® (LTI®) Names and Role Provisioning Services (NRPS) v2.0*  
-
-**Export / import**
-- *Common Cartridge® v1.4*  
-
-**Assessments**
-- *Question & Test Interoperability® (QTI®) v3.0*  
-
-**SIS rostering**
-- *OneRoster® v1.2*  
-
----
-
-## Suggested “definition of done” for universities (short)
-If you say “we support the university interoperability stack,” most buyers interpret it as:
-1. LTI 1.3 launches working reliably with major LMSs/tools.  
-2. Deep Linking (content selection), NRPS (roster), AGS (grades).  
-3. CC import/export for course shells/content.  
-4. QTI import/export for item banks/tests (at least common item types).  
-5. OneRoster CSV and/or REST for SIS-driven rostering.
