@@ -15,9 +15,19 @@ import {
   supabaseCreateModule, supabaseCreateModuleItem, supabaseDeleteModuleItem,
   supabaseCreateInvite, supabaseDeleteInvite,
   supabaseDeleteEnrollment,
-  supabaseUpdateCourse
+  supabaseUpdateCourse,
+  supabaseDownloadFileBlob
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUDENT MODE: read-only tools students may call (enforced in code, not prompt)
+// ═══════════════════════════════════════════════════════════════════════════════
+const STUDENT_TOOLS = [
+  'list_assignments', 'list_quizzes', 'list_files', 'list_modules',
+  'list_announcements', 'list_discussion_threads', 'get_assignment',
+  'get_file_content', 'get_grade_categories', 'get_grade_settings'
+];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODULE STATE
@@ -329,7 +339,26 @@ function getMissingPublishRequirements(operation, publish = false) {
  */
 function buildSystemPrompt(isStaff, courseContext) {
   if (!isStaff) {
-    return `You are an AI assistant for an LMS helping a STUDENT. Help with course questions, explain concepts, and provide guidance on assignments. Do NOT create or modify course content — redirect those requests to instructors.\n\nRespond in plain text.\n\n${courseContext}`;
+    const studentToolList = STUDENT_TOOLS.map(name => {
+      const t = AI_TOOL_REGISTRY.context_tools.find(ct => ct.name === name);
+      if (!t) return '';
+      const paramStr = t.params ? `(${Object.entries(t.params).map(([k, v]) => `${k}: ${v}`).join(', ')})` : '';
+      return `  - ${t.name}${paramStr}: ${t.description}`;
+    }).filter(Boolean).join('\n');
+    return `You are an AI assistant for an LMS helping a STUDENT. Help with course questions, explain concepts, and provide guidance.
+
+⚠️ OUTPUT FORMAT — CRITICAL:
+Output ONLY a single valid JSON object. No text before or after.
+- To answer: {"type":"answer","text":"Your response here"}
+- To look up course data: {"type":"tool_call","tool":"tool_name","params":{},"step_label":"📋 Looking up..."}
+
+AVAILABLE READ-ONLY TOOLS (you may ONLY call these):
+${studentToolList}
+
+You may NOT create, update, or delete any content. If asked, explain only instructors can modify content.
+NEVER include raw UUIDs in answer text — refer to things by name/title only.
+
+${courseContext}`;
   }
 
   const toolList = AI_TOOL_REGISTRY.context_tools.map(t => {
@@ -435,6 +464,7 @@ function summarizeToolResult(toolName, result) {
       default:                   return `${result.length} item${result.length !== 1 ? 's' : ''}`;
     }
   }
+  if (result._inlineData) return `${result.name} (${(result.sizeBytes/1024).toFixed(0)} KB attached)`;
   if (result.name) return result.name;
   return '';
 }
@@ -443,6 +473,20 @@ function summarizeToolResult(toolName, result) {
  * Execute a context tool — queries appData and returns JSON for Gemini to reason over.
  * These NEVER write to the DB; they are read-only.
  */
+/** Guess MIME type from filename extension for common file types. */
+function guessMimeType(filename) {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  return ({
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', html: 'text/html',
+    json: 'application/json', xml: 'application/xml'
+  }[ext]) || 'application/octet-stream';
+}
+
 async function executeAiTool(toolName, params = {}) {
   if (!activeCourseId) return { error: 'No active course selected' };
 
@@ -529,7 +573,15 @@ async function executeAiTool(toolName, params = {}) {
     case 'get_file_content': {
       const f = (appData.files || []).find(f => f.id === params.file_id && f.courseId === activeCourseId);
       if (!f) return { error: 'File not found' };
-      return { id: f.id, name: f.name, type: f.type, note: 'Full content requires fetching from storage — use the file name/description for context' };
+      if (f.isPlaceholder || f.isYoutube) return { id: f.id, name: f.name, note: 'External link or video — no downloadable content.' };
+      if (!f.storagePath) return { id: f.id, name: f.name, note: 'No storage path for this file.' };
+      // Download blob and send directly to Gemini as inline data.
+      // Gemini supports PDF, DOCX, PPTX, XLSX, images, text, etc. up to 20 MB.
+      const mimeType = f.type || guessMimeType(f.name);
+      const result = await supabaseDownloadFileBlob(f.storagePath, mimeType);
+      if (!result || result.error) return { id: f.id, name: f.name, error: result?.error || 'Download failed.' };
+      // Return a special _inlineData marker — runAiLoop attaches it as a multimodal part
+      return { id: f.id, name: f.name, mimeType: result.mimeType, sizeBytes: result.sizeBytes, _inlineData: { mimeType: result.mimeType, data: result.base64 } };
     }
 
     default:
@@ -584,7 +636,7 @@ function validateActionPayload(payload) {
  * Each tool step is shown as a pill in the chat thread.
  * Max MAX_STEPS iterations to prevent infinite loops.
  */
-async function runAiLoop(contents, systemPrompt) {
+async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
   const MAX_STEPS = 6;
   let steps = 0;
 
@@ -627,16 +679,32 @@ async function runAiLoop(contents, systemPrompt) {
       parsed = best;
     }
 
+    // ── Bad JSON → retry with correction prompt ────────────────────────────────
+    if (!parsed) {
+      contents = [
+        ...contents,
+        { role: 'model', parts: [{ text: rawReply }] },
+        { role: 'user',  parts: [{ text: 'ERROR: Your response was not valid JSON. Output ONLY a single valid JSON object with no other text. Try again.' }] }
+      ];
+      continue;
+    }
+
     // ── Direct text answer ────────────────────────────────────────────────────
-    if (!parsed || parsed.type === 'answer') {
-      aiThread.push({ role: 'assistant', content: parsed ? parsed.text : rawReply });
+    if (parsed.type === 'answer') {
+      aiThread.push({ role: 'assistant', content: parsed.text });
       renderAiThread();
       return;
     }
 
     // ── Tool call ─────────────────────────────────────────────────────────────
     if (parsed.type === 'tool_call') {
-      const icon = { list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖', list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝', get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊', get_grade_settings:'📊', get_file_content:'📄', list_discussion_threads:'💬' }[parsed.tool] || '🔍';
+      // Enforce student tool restrictions in code (not just prompt)
+      if (!isStaffUser && !STUDENT_TOOLS.includes(parsed.tool)) {
+        aiThread.push({ role: 'assistant', content: 'I can only look up course information as a student.' });
+        renderAiThread();
+        return;
+      }
+      const icon = { list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖', list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝', get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊', get_grade_settings:'📊', get_file_content:'📄' }[parsed.tool] || '🔍';
       const stepMsg = {
         role: 'tool_step',
         tool: parsed.tool,
@@ -652,11 +720,20 @@ async function runAiLoop(contents, systemPrompt) {
       stepMsg.resultSummary = summarizeToolResult(parsed.tool, result);
       renderAiThread();
 
-      // Feed result back as the next user turn so the loop continues
+      // Feed result back as the next user turn so the loop continues.
+      // For get_file_content, attach the file as a multimodal inline data part so
+      // Gemini can read PDFs, DOCX, PPTX, images, etc. directly instead of decoded text.
+      const toolResultParts = [];
+      if (result._inlineData) {
+        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): File "${result.name}" (${result.mimeType}, ${(result.sizeBytes/1024).toFixed(0)} KB) is attached below. Read and analyze its full content.` });
+        toolResultParts.push({ inlineData: result._inlineData });
+      } else {
+        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): ${JSON.stringify(result)}\n\nContinue with the original task.` });
+      }
       contents = [
         ...contents,
         { role: 'model', parts: [{ text: rawReply }] },
-        { role: 'user',  parts: [{ text: `TOOL_RESULT(${parsed.tool}): ${JSON.stringify(result)}\n\nContinue with the original task.` }] }
+        { role: 'user',  parts: toolResultParts }
       ];
       continue;
     }
@@ -670,6 +747,12 @@ async function runAiLoop(contents, systemPrompt) {
 
     // ── Action ────────────────────────────────────────────────────────────────
     if (parsed.type === 'action') {
+      // Block all write actions for students — enforced in code, not just prompt
+      if (!isStaffUser) {
+        aiThread.push({ role: 'assistant', content: 'I can help you look up information, but only instructors can create or modify course content.' });
+        renderAiThread();
+        return;
+      }
       const validationError = validateActionPayload(parsed);
       if (validationError) {
         aiThread.push({ role: 'assistant', content: `I couldn't set up that action: ${validationError}` });
@@ -777,7 +860,7 @@ export async function sendAiMessage(audioBase64 = null) {
         ];
       }
     }
-    await runAiLoop(contents, systemPrompt);
+    await runAiLoop(contents, systemPrompt, effectiveIsStaff);
   } catch (err) {
     console.error('AI error:', err);
     showToast('AI request failed: ' + err.message, 'error');
@@ -811,7 +894,9 @@ export function sendAiFollowup(idx) {
 
   aiProcessing = true;
   updateAiProcessingState();
-  runAiLoop(resumeContents, msg.systemPrompt || '').finally(() => {
+  const isStaffUser = activeCourseId && isStaffCallback && isStaffCallback(appData.currentUser?.id, activeCourseId);
+  const effectiveIsStaff = isStaffUser && !studentViewMode;
+  runAiLoop(resumeContents, msg.systemPrompt || '', effectiveIsStaff).finally(() => {
     aiProcessing = false;
     updateAiProcessingState();
   });
@@ -843,83 +928,17 @@ function handleAiAction(action) {
       rejected: false
     });
   } else if (action.action === 'update_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_update',
-      data: {
-        id: action.id,
-        title: action.title,
-        content: action.content,
-        pinned: action.pinned,
-        hidden: action.hidden,
-        fileIds: action.fileIds || [],
-        fileNames: action.fileNames || []
-      },
-      confirmed: false,
-      rejected: false
-    });
+    const d = { id: action.id };
+    ['title','content','pinned','hidden','fileIds','fileNames'].forEach(k => { if (k in action) d[k] = action[k]; });
+    if (!('fileIds' in d)) d.fileIds = [];
+    if (!('fileNames' in d)) d.fileNames = [];
+    aiThread.push({ role: 'action', actionType: 'announcement_update', data: d, confirmed: false, rejected: false });
   } else if (action.action === 'delete_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_delete',
-      data: { id: action.id },
-      confirmed: false,
-      rejected: false
-    });
+    aiThread.push({ role: 'action', actionType: 'announcement_delete', data: { id: action.id }, confirmed: false, rejected: false });
   } else if (action.action === 'publish_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_publish',
-      data: { id: action.id },
-      confirmed: false,
-      rejected: false
-    });
+    aiThread.push({ role: 'action', actionType: 'announcement_publish', data: { id: action.id }, confirmed: false, rejected: false });
   } else if (action.action === 'pin_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_pin',
-      data: { id: action.id, pinned: action.pinned !== false },
-      confirmed: false,
-      rejected: false
-    });
-  } else if (action.action === 'update_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_update',
-      data: {
-        id: action.id,
-        title: action.title,
-        content: action.content,
-        pinned: action.pinned,
-        hidden: action.hidden
-      },
-      confirmed: false,
-      rejected: false
-    });
-  } else if (action.action === 'delete_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_delete',
-      data: { id: action.id },
-      confirmed: false,
-      rejected: false
-    });
-  } else if (action.action === 'publish_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_publish',
-      data: { id: action.id },
-      confirmed: false,
-      rejected: false
-    });
-  } else if (action.action === 'pin_announcement') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'announcement_pin',
-      data: { id: action.id, pinned: action.pinned !== false },
-      confirmed: false,
-      rejected: false
-    });
+    aiThread.push({ role: 'action', actionType: 'announcement_pin', data: { id: action.id, pinned: action.pinned !== false }, confirmed: false, rejected: false });
   } else if (action.action === 'create_quiz_from_bank') {
     const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
     aiThread.push({
@@ -972,27 +991,12 @@ function handleAiAction(action) {
       rejected: false
     });
   } else if (action.action === 'update_quiz') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'quiz_update',
-      data: {
-        id: action.id,
-        title: action.title,
-        description: action.description,
-        dueDate: action.dueDate,
-        status: action.status,
-        timeLimit: action.timeLimit,
-        attempts: action.attempts,
-        randomizeQuestions: action.randomizeQuestions,
-        availableFrom: action.availableFrom,
-        availableUntil: action.availableUntil,
-        questions: action.questions,
-        fileIds: action.fileIds || [],
-        fileNames: action.fileNames || []
-      },
-      confirmed: false,
-      rejected: false
-    });
+    const d = { id: action.id };
+    ['title','description','dueDate','status','timeLimit','attempts','randomizeQuestions',
+     'availableFrom','availableUntil','questions','fileIds','fileNames'].forEach(k => { if (k in action) d[k] = action[k]; });
+    if (!('fileIds' in d)) d.fileIds = [];
+    if (!('fileNames' in d)) d.fileNames = [];
+    aiThread.push({ role: 'action', actionType: 'quiz_update', data: d, confirmed: false, rejected: false });
   } else if (action.action === 'delete_quiz') {
     aiThread.push({
       role: 'action',
@@ -1052,19 +1056,14 @@ function handleAiAction(action) {
     aiThread.push({
       role: 'action',
       actionType: 'assignment_update',
-      data: {
-        id: action.id,
-        title: action.title,
-        description: action.description,
-        points: action.points,
-        dueDate: action.dueDate,
-        status: action.status,
-        category: action.category,
-        allowLateSubmissions: action.allowLateSubmissions,
-        lateDeduction: action.lateDeduction,
-        allowResubmission: action.allowResubmission,
-        notes: action.notes || ''
-      },
+      data: (() => {
+        // Only store fields the AI explicitly included — these are the changed ones
+        const d = { id: action.id };
+        ['title','description','points','dueDate','status','category','assignmentType',
+         'gradingType','allowLateSubmissions','lateDeduction','allowResubmission',
+         'submissionAttempts','notes'].forEach(k => { if (k in action) d[k] = action[k]; });
+        return d;
+      })(),
       confirmed: false,
       rejected: false
     });
@@ -2040,19 +2039,15 @@ function renderActionPreview(msg, idx) {
     `;
   }
 
-  // ─── ANNOUNCEMENT (update) ───────────────────────────────────────────────
+  // ─── ANNOUNCEMENT (update) — only show fields the AI actually changed ────
   if (msg.actionType === 'announcement_update') {
     const ann = (appData.announcements || []).find(a => a.id === d.id);
-    const resolvedTitle = d.title !== undefined ? d.title : (ann?.title || '');
-    const resolvedContent = d.content !== undefined ? d.content : (ann?.content || '');
-    const resolvedPinned = d.pinned !== undefined ? d.pinned : (ann?.pinned || false);
-    return `
-      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(ann?.title || d.id || '')}</div>
-      ${field('Title', textInput('title', resolvedTitle))}
-      ${field('Content', textarea('content', resolvedContent, 5))}
-      <div style="margin-bottom:4px;">${checkboxInput('pinned', resolvedPinned, 'Pinned')}</div>
-      <div style="margin-top:4px;">${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>
-    `;
+    let html = `<div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(ann?.title || d.id || '')}</div>`;
+    if ('title' in d) html += field('Title', textInput('title', d.title));
+    if ('content' in d) html += field('Content', textarea('content', d.content, 5));
+    if ('pinned' in d) html += `<div style="margin-bottom:4px;">${checkboxInput('pinned', d.pinned, 'Pinned')}</div>`;
+    if ('hidden' in d) html += `<div style="margin-top:4px;">${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>`;
+    return html;
   }
 
   // ─── ANNOUNCEMENT simple ops ─────────────────────────────────────────────
@@ -2093,23 +2088,18 @@ function renderActionPreview(msg, idx) {
     `;
   }
 
-  // ─── QUIZ (update) ───────────────────────────────────────────────────────
+  // ─── QUIZ (update) — only show fields the AI actually changed ────────────
   if (msg.actionType === 'quiz_update') {
     const quiz = (appData.quizzes || []).find(q => q.id === d.id);
-    return `
-      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(quiz?.title || d.id || '')}</div>
-      ${field('Title', textInput('title', d.title || quiz?.title || ''))}
-      ${field('Description', textarea('description', d.description !== undefined ? d.description : (quiz?.description || ''), 2))}
-      ${twoCol(
-        field('Due Date', datetimeInput('dueDate', d.dueDate || quiz?.dueDate), 0),
-        field('Status', selectInput('status', d.status || quiz?.status || 'draft', [['draft','Draft'],['published','Published'],['closed','Closed']]), 0)
-      )}
-      ${twoCol(
-        field('Time Limit (min)', numberInput('timeLimit', d.timeLimit !== undefined ? d.timeLimit : (quiz?.timeLimit ?? 30), 0, 600), 0),
-        field('Attempts', numberInput('attempts', d.attempts !== undefined ? d.attempts : (quiz?.attempts ?? 1), 1, 99), 0)
-      )}
-      <div>${checkboxInput('randomizeQuestions', d.randomizeQuestions !== undefined ? d.randomizeQuestions : !!quiz?.randomizeQuestions, 'Randomize question order')}</div>
-    `;
+    let html = `<div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(quiz?.title || d.id || '')}</div>`;
+    if ('title' in d) html += field('Title', textInput('title', d.title));
+    if ('description' in d) html += field('Description', textarea('description', d.description, 2));
+    if ('dueDate' in d) html += field('Due Date', datetimeInput('dueDate', d.dueDate));
+    if ('status' in d) html += field('Status', selectInput('status', d.status, [['draft','Draft'],['published','Published'],['closed','Closed']]));
+    if ('timeLimit' in d) html += field('Time Limit (min)', numberInput('timeLimit', d.timeLimit, 0, 600));
+    if ('attempts' in d) html += field('Attempts', numberInput('attempts', d.attempts, 1, 99));
+    if ('randomizeQuestions' in d) html += `<div>${checkboxInput('randomizeQuestions', d.randomizeQuestions, 'Randomize question order')}</div>`;
+    return html;
   }
 
   // ─── QUIZ (delete) ───────────────────────────────────────────────────────
@@ -2179,29 +2169,26 @@ function renderActionPreview(msg, idx) {
     `;
   }
 
-  // ─── ASSIGNMENT (update) — CC 1.4 aligned ────────────────────────────────
+  // ─── ASSIGNMENT (update) — only show fields the AI actually changed ────────
   if (msg.actionType === 'assignment_update') {
     const a = (appData.assignments || []).find(a => a.id === d.id);
-    return `
-      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(a?.title || d.id || '')}</div>
-      ${field('Title', textInput('title', d.title !== undefined ? d.title : (a?.title || '')))}
-      ${field('Description', textarea('description', d.description !== undefined ? d.description : (a?.description || ''), 3))}
-      ${twoCol(
-        field('Assignment Type', selectInput('assignmentType', d.assignmentType || a?.assignmentType || 'essay', [
-          ['essay','Essay / Free Text'],['quiz','Quiz / Exam'],['no_submission','No Submission']
-        ]), 0),
-        field('Points', numberInput('points', d.points !== undefined ? d.points : (a?.points ?? 100), 0, 9999), 0)
-      )}
-      ${twoCol(
-        field('Due Date', datetimeInput('dueDate', d.dueDate || a?.dueDate), 0),
-        field('Status', selectInput('status', d.status || a?.status || 'draft', [['draft','Draft'],['published','Published'],['closed','Closed']]), 0)
-      )}
-      ${lateSection(
-        d.allowLateSubmissions !== undefined ? d.allowLateSubmissions : (a?.allowLateSubmissions || false),
-        d.lateDeduction !== undefined ? d.lateDeduction : (a?.lateDeduction ?? 10)
-      )}
-      <div>${checkboxInput('allowResubmission', d.allowResubmission !== undefined ? d.allowResubmission : (a?.allowResubmission || false), 'Allow resubmission')}</div>
-    `;
+    let html = `<div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(a?.title || d.id || '')}</div>`;
+    if ('title' in d) html += field('Title', textInput('title', d.title));
+    if ('description' in d) html += field('Description', textarea('description', d.description, 3));
+    if ('assignmentType' in d) html += field('Assignment Type', selectInput('assignmentType', d.assignmentType, [
+      ['essay','Essay / Free Text'],['quiz','Quiz / Exam'],['no_submission','No Submission']
+    ]));
+    if ('gradingType' in d) html += field('Grading Type', selectInput('gradingType', d.gradingType, [
+      ['points','Points'],['complete_incomplete','Complete / Incomplete'],['letter_grade','Letter Grade']
+    ]));
+    if ('points' in d) html += field('Points', numberInput('points', d.points, 0, 9999));
+    if ('dueDate' in d) html += field('Due Date', datetimeInput('dueDate', d.dueDate));
+    if ('status' in d) html += field('Status', selectInput('status', d.status, [['draft','Draft'],['published','Published'],['closed','Closed']]));
+    if ('allowLateSubmissions' in d) html += `<div style="margin-bottom:12px;">${checkboxInput('allowLateSubmissions', d.allowLateSubmissions, 'Allow late submissions')}</div>`;
+    if ('lateDeduction' in d) html += field('Late penalty (%/day)', numberInput('lateDeduction', d.lateDeduction, 0, 100));
+    if ('allowResubmission' in d) html += `<div>${checkboxInput('allowResubmission', d.allowResubmission, 'Allow resubmission')}</div>`;
+    if ('submissionAttempts' in d) html += field('Submission Attempts (blank=unlimited)', numberInput('submissionAttempts', d.submissionAttempts, 1, 99));
+    return html;
   }
 
   // ─── ASSIGNMENT (delete) ─────────────────────────────────────────────────
