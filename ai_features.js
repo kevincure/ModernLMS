@@ -435,6 +435,14 @@ DEFAULTS (use unless user specifies otherwise):
 - Announcement: pinned:false, status:"draft"
 - Invite: role:"student"
 
+DATE/TIME RULES — CRITICAL:
+- The "Current date/time" in the course context is already in the user's LOCAL time zone. Use it as local time.
+- All date/time fields (dueDate, availableFrom, availableUntil) must be output as LOCAL time WITHOUT a trailing Z or timezone offset.
+  ✓ RIGHT: "2025-09-15T14:00:00"  (local 2pm, no Z)
+  ❌ WRONG: "2025-09-15T14:00:00.000Z"  (this is interpreted as UTC, shifts display time by timezone offset)
+  ❌ WRONG: "2025-09-15T14:00:00+05:00"  (do not include offset)
+- When a user says "2pm" they mean 2pm in their local time — output T14:00:00 with no suffix.
+
 CONTENT FORMATTING (markdown supported in description/content fields):
 - **bold**, *italic*, ## headers, - bullet lists
 - Link files: [📄 filename](#file-FILE_ID)
