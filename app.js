@@ -4792,7 +4792,7 @@ function viewSubmissions(assignmentId) {
         <div class="modal-body">
           ${metadataHtml}
           <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-            <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">⚡ SpeedGrader</button>
+            <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">SpeedGrader</button>
             <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">📋 Bulk Import Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="bulkReleaseGrades('${assignmentId}')">🔓 Release All Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="downloadAllSubmissions('${assignmentId}')">📥 Download All (ZIP)</button>
@@ -6313,23 +6313,33 @@ function renderSpeedGrader() {
     document.getElementById('speedGraderRubric').innerHTML = '';
   }
 
-  // Grade form
-  document.getElementById('speedGraderScore').value = grade ? grade.score : '';
-  document.getElementById('speedGraderScore').max = assignment.points;
-  document.getElementById('speedGraderScoreMax').textContent = `/ ${assignment.points}`;
-  document.getElementById('speedGraderFeedback').value = grade ? grade.feedback : '';
-  document.getElementById('speedGraderRelease').checked = grade ? grade.released : false;
-
-  // Disable grading if no submission
-  const gradeBtn = document.getElementById('speedGraderSaveBtn');
-  const aiBtn = document.getElementById('speedGraderAiBtn');
-  if (!submission) {
-    gradeBtn.disabled = true;
-    aiBtn.disabled = true;
+  // Grade form — input type depends on gradingType
+  const gt = assignment.gradingType || 'points';
+  const scoreSection = document.getElementById('speedGraderScoreSection');
+  if (gt === 'complete_incomplete') {
+    const val = grade ? grade.score : '';
+    scoreSection.innerHTML = `
+      <select class="form-select" id="speedGraderScore" style="width:200px;">
+        <option value="">-- Select --</option>
+        <option value="1" ${val === 1 || val === '1' ? 'selected' : ''}>Complete</option>
+        <option value="0" ${val === 0 || val === '0' ? 'selected' : ''}>Incomplete</option>
+      </select>`;
+  } else if (gt === 'letter_grade') {
+    const letters = ['A','A-','B+','B','B-','C+','C','C-','D+','D','D-','F'];
+    const val = grade ? grade.score : '';
+    scoreSection.innerHTML = `
+      <select class="form-select" id="speedGraderScore" style="width:200px;">
+        <option value="">-- Select --</option>
+        ${letters.map(l => `<option value="${l}" ${val === l ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>`;
   } else {
-    gradeBtn.disabled = false;
-    aiBtn.disabled = false;
+    scoreSection.innerHTML = `
+      <input type="number" class="form-input" id="speedGraderScore" min="0" max="${assignment.points}" value="${grade ? grade.score : ''}" style="width:100px;">
+      <span id="speedGraderScoreMax">/ ${assignment.points}</span>`;
   }
+  document.getElementById('speedGraderFeedback').value = grade ? (grade.feedback || '') : '';
+  document.getElementById('speedGraderRelease').checked = grade ? !!grade.released : false;
+  document.getElementById('speedGraderSaveBtn').disabled = !submission;
 }
 
 function speedGraderSelectStudent(index) {
@@ -6416,22 +6426,30 @@ async function saveSpeedGraderGrade() {
     return;
   }
 
-  const score = parseFloat(document.getElementById('speedGraderScore').value);
   const feedback = document.getElementById('speedGraderFeedback').value.trim();
   const release = document.getElementById('speedGraderRelease').checked;
-
-  if (isNaN(score)) {
-    showToast('Please enter a valid score', 'error');
-    return;
+  const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
+  const gt = assignment.gradingType || 'points';
+  const rawScore = document.getElementById('speedGraderScore').value;
+  let score;
+  if (gt === 'letter_grade') {
+    score = rawScore;
+    if (!score) { showToast('Please select a letter grade', 'error'); return; }
+  } else if (gt === 'complete_incomplete') {
+    if (rawScore === '') { showToast('Please select Complete or Incomplete', 'error'); return; }
+    score = parseFloat(rawScore);
+  } else {
+    score = parseFloat(rawScore);
+    if (isNaN(score)) { showToast('Please enter a valid score', 'error'); return; }
   }
 
-  const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
-
-  // Apply late deduction if applicable
+  // Apply late deduction if applicable (points-based only)
   let finalScore = score;
-  const lateDeduction = calculateLateDeduction(assignment, current.submission.submittedAt);
-  if (lateDeduction > 0) {
-    finalScore = Math.round(score * (1 - lateDeduction / 100) * 10) / 10;
+  if (gt === 'points') {
+    const lateDeduction = calculateLateDeduction(assignment, current.submission.submittedAt);
+    if (lateDeduction > 0) {
+      finalScore = Math.round(score * (1 - lateDeduction / 100) * 10) / 10;
+    }
   }
 
   // Get rubric scores if applicable
@@ -6814,7 +6832,7 @@ function renderStaffGradebook() {
               else if (atype === 'no_submission') ptLabel = `${a.points ?? 0}pts (manual)`;
               else if (atype === 'quiz') ptLabel = `${a.points ?? 0}pts (auto)`;
               else ptLabel = `${a.points ?? 0}pts`;
-              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span><br><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">⚡ SpeedGrader</button></th>`;
+              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span><br><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">SpeedGrader</button></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>

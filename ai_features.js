@@ -447,6 +447,7 @@ MANDATORY PRE-ACTION RULES — ALWAYS call the relevant tool before acting:
 - Before creating a quiz/exam from a bank: call list_question_banks to find the correct bank ID
 - Before update/delete of any content: verify the item exists and get its real ID from the relevant list tool
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
+- NEVER include raw UUIDs or database IDs anywhere in your text answers — always refer to things by name, title, or email. If you only have an ID, call the relevant tool first to get the name.
 
 ALWAYS include human-readable label fields alongside every ID in action payloads:
 - inviteId → also include email (from list_people result)
@@ -558,7 +559,7 @@ async function executeAiTool(toolName, params = {}) {
     case 'list_announcements':
       return (appData.announcements || [])
         .filter(a => a.courseId === activeCourseId)
-        .map(a => ({ id: a.id, title: a.title, content: (a.content || a.body || '').slice(0, 500), pinned: !!a.pinned, hidden: !!a.hidden, createdAt: a.createdAt }));
+        .map(a => ({ id: a.id, title: a.title, content: (a.content || a.body || ''), pinned: !!a.pinned, hidden: !!a.hidden, createdAt: a.createdAt }));
 
     case 'get_grade_categories':
       return (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId);
@@ -1734,7 +1735,10 @@ async function executeAiOperation(operation, publish = false) {
         successCount++;
       }
     }
-    if (successCount > 0) showToast(`Invited ${successCount} person${successCount > 1 ? 's' : ''}`, 'success');
+    if (successCount > 0) {
+      showToast(`Invited ${successCount} person${successCount > 1 ? 's' : ''}`, 'success');
+      if (renderPeopleCallback) renderPeopleCallback();
+    }
     return successCount > 0;
   }
 
@@ -1749,6 +1753,7 @@ async function executeAiOperation(operation, publish = false) {
     if (!inviteId) { showToast('Invite not found', 'error'); return false; }
     await supabaseDeleteInvite(inviteId);
     appData.invites = (appData.invites || []).filter(i => i.id !== inviteId);
+    if (renderPeopleCallback) renderPeopleCallback();
     return true;
   }
 
@@ -1761,6 +1766,7 @@ async function executeAiOperation(operation, publish = false) {
     appData.enrollments = (appData.enrollments || []).filter(
       e => !(e.userId === userId && e.courseId === activeCourseId)
     );
+    if (renderPeopleCallback) renderPeopleCallback();
     return true;
   }
 

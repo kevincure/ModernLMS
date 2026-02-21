@@ -732,6 +732,9 @@ export async function supabaseUpdateAssignment(assignment) {
     allow_late_submissions: assignment.allowLateSubmissions,
     late_deduction: assignment.lateDeduction,
     allow_resubmission: assignment.allowResubmission,
+    submission_attempts: assignment.submissionAttempts || null,
+    grading_type: assignment.gradingType || 'points',
+    assignment_type: assignment.assignmentType || 'essay',
     hidden: assignment.hidden || false,
     category: assignment.category,
     time_allowed: assignment.timeAllowed || null
@@ -750,6 +753,9 @@ export async function supabaseUpdateAssignment(assignment) {
       allow_late_submissions: assignment.allowLateSubmissions,
       late_deduction: assignment.lateDeduction,
       allow_resubmission: assignment.allowResubmission,
+      submission_attempts: assignment.submissionAttempts || null,
+      grading_type: assignment.gradingType || 'points',
+      assignment_type: assignment.assignmentType || 'essay',
       category: assignment.category
     };
     ({ data, error } = await supabaseClient.from('assignments').update(legacyPayload).eq('id', assignment.id).select().single());
