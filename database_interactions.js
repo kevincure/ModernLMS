@@ -233,6 +233,11 @@ export async function loadDataFromSupabase() {
       hidden: a.hidden || false,
       category: a.category,
       timeAllowed: a.time_allowed || null,
+      // CC 1.4 grading fields — map from snake_case DB columns
+      gradingType: a.grading_type || 'points',
+      assignmentType: a.assignment_type || a.category || 'essay',
+      submissionAttempts: a.submission_attempts || null,
+      latePenaltyType: a.late_penalty_type || 'per_day',
       rubric: null
     }));
 
@@ -492,6 +497,17 @@ export async function loadDataFromSupabase() {
 
     appData.settings = {};
 
+    // Security: if the current user is a student-only (no instructor/TA role in any course),
+    // remove other students' submissions and grades from memory to prevent data leakage.
+    const isStaffAnywhere = appData.enrollments.some(
+      e => e.userId === appData.currentUser?.id && ['instructor', 'ta'].includes(e.role)
+    );
+    if (!isStaffAnywhere && appData.currentUser) {
+      appData.submissions = appData.submissions.filter(s => s.userId === appData.currentUser.id);
+      const mySubIds = new Set(appData.submissions.map(s => s.id));
+      appData.grades = appData.grades.filter(g => mySubIds.has(g.submissionId));
+    }
+
     console.log('[Supabase] Data loaded successfully');
     console.log('[Supabase] Summary:', {
       users: appData.users.length,
@@ -504,6 +520,25 @@ export async function loadDataFromSupabase() {
   } catch (err) {
     console.error('[Supabase] Error loading data:', err);
     if (showToast) showToast('Failed to load data from server', 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FILE CONTENT DOWNLOAD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Download a file from Supabase storage and return its text content.
+ * Returns null on error.
+ */
+export async function supabaseDownloadFileText(storagePath) {
+  if (!supabaseClient || !storagePath) return null;
+  try {
+    const { data, error } = await supabaseClient.storage.from('files').download(storagePath);
+    if (error || !data) return null;
+    return await data.text();
+  } catch {
+    return null;
   }
 }
 
