@@ -1058,7 +1058,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
               <div id="speedGraderRubric"></div>
               <div class="form-group">
                 <label class="form-label">Score</label>
-                <div style="display:flex; align-items:center; gap:8px;">
+                <div id="speedGraderScoreSection" style="display:flex; align-items:center; gap:8px;">
                   <input type="number" class="form-input" id="speedGraderScore" min="0" style="width:100px;">
                   <span id="speedGraderScoreMax">/ 100</span>
                 </div>
@@ -1074,7 +1074,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                 </label>
               </div>
               <div style="display:flex; gap:8px;">
-                <button class="btn btn-secondary" id="speedGraderAiBtn" onclick="speedGraderDraftWithAI()">✨ AI Draft</button>
                 <button class="btn btn-primary" id="speedGraderSaveBtn" onclick="saveSpeedGraderGrade()">Save & Next</button>
               </div>
             </div>
