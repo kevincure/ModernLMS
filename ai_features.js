@@ -447,7 +447,8 @@ MANDATORY PRE-ACTION RULES — ALWAYS call the relevant tool before acting:
 - Before creating a quiz/exam from a bank: call list_question_banks to find the correct bank ID
 - Before update/delete of any content: verify the item exists and get its real ID from the relevant list tool
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
-- NEVER include raw UUIDs or database IDs anywhere in your text answers — always refer to things by name, title, or email. If you only have an ID, call the relevant tool first to get the name.
+- NEVER include raw UUIDs or database IDs in the "text" field of {"type":"answer"} responses — always refer to things by human-readable name, title, or email in prose. If you only have an ID, call the relevant tool first to look up the name.
+- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include real database IDs (inviteId, userId, id, moduleId, etc.) in action JSON payloads — those fields are required for the action to execute and are never shown directly to the user as-is.
 
 ALWAYS include human-readable label fields alongside every ID in action payloads:
 - inviteId → also include email (from list_people result)
@@ -730,10 +731,12 @@ async function runAiLoop(contents, systemPrompt) {
  * Build Gemini-format conversation history from aiThread,
  * excluding the most-recently-added message (current user turn just pushed).
  * Consecutive same-role turns are merged to satisfy Gemini's alternating requirement.
+ * HTML is stripped from assistant messages so Gemini doesn't echo markup.
  */
 function buildGeminiHistory() {
   const history = [];
   const previousMessages = aiThread.slice(0, -1); // exclude current user msg
+
   for (const msg of previousMessages) {
     if (msg.hidden) continue;
     let role, text;
@@ -741,14 +744,21 @@ function buildGeminiHistory() {
       role = 'user';
       text = msg.content;
     } else if (msg.role === 'assistant') {
+      // Strip HTML tags so confirmed-action success messages don't get echoed
+      // back verbatim (Gemini confuses rendered HTML with its own prior output)
       role = 'model';
-      text = msg.content;
+      text = (msg.content || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      if (!text) continue;
     } else if (msg.role === 'action' && msg.confirmed) {
-      role = 'model';
-      text = `[Action completed: ${msg.actionType}]`;
+      // Emit a brief action summary; deliberately NOT merged with the follow-up
+      // success-message assistant turn so Gemini gets two clean separate turns
+      // The success message assistant turn comes right after and is handled above.
+      // We skip emitting a model turn here — the assistant success message already
+      // covers it. Skipping avoids the confusing merge.
+      continue;
     } else if (msg.role === 'action' && msg.rejected) {
       role = 'model';
-      text = `[Proposed action "${msg.actionType}" was cancelled by instructor.]`;
+      text = `I proposed a "${msg.actionType}" action but the instructor cancelled it.`;
     } else {
       continue; // skip tool_step, pending actions, ask_user
     }
