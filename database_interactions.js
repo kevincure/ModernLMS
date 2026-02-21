@@ -497,13 +497,25 @@ export async function loadDataFromSupabase() {
 
     appData.settings = {};
 
-    // Security: if the current user is a student-only (no instructor/TA role in any course),
-    // remove other students' submissions and grades from memory to prevent data leakage.
-    const isStaffAnywhere = appData.enrollments.some(
-      e => e.userId === appData.currentUser?.id && ['instructor', 'ta'].includes(e.role)
-    );
-    if (!isStaffAnywhere && appData.currentUser) {
-      appData.submissions = appData.submissions.filter(s => s.userId === appData.currentUser.id);
+    // Security: filter submissions/grades so students can't see other students' data.
+    // A user may be staff (instructor/TA) in some courses and a student in others —
+    // handle this per-course: keep a submission if the current user submitted it, OR
+    // if the current user is staff in the course that submission belongs to.
+    if (appData.currentUser) {
+      const staffCourseIds = new Set(
+        appData.enrollments
+          .filter(e => e.userId === appData.currentUser.id && ['instructor', 'ta'].includes(e.role))
+          .map(e => e.courseId)
+      );
+      // Build a course-id lookup for assignments so we don't iterate assignments for every submission
+      const assignmentCourse = Object.fromEntries(
+        (appData.assignments || []).map(a => [a.id, a.courseId])
+      );
+      appData.submissions = appData.submissions.filter(s => {
+        if (s.userId === appData.currentUser.id) return true; // always keep own submissions
+        const courseId = assignmentCourse[s.assignmentId];
+        return courseId && staffCourseIds.has(courseId); // keep if staff in that course
+      });
       const mySubIds = new Set(appData.submissions.map(s => s.id));
       appData.grades = appData.grades.filter(g => mySubIds.has(g.submissionId));
     }
@@ -528,17 +540,25 @@ export async function loadDataFromSupabase() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Download a file from Supabase storage and return its text content.
- * Returns null on error.
+ * Download a file from Supabase storage and return { base64, mimeType, sizeBytes }.
+ * Returns null on error or if file is too large (>20 MB Gemini inline limit).
  */
-export async function supabaseDownloadFileText(storagePath) {
+export async function supabaseDownloadFileBlob(storagePath, declaredMimeType) {
   if (!supabaseClient || !storagePath) return null;
   try {
-    const { data, error } = await supabaseClient.storage.from('files').download(storagePath);
-    if (error || !data) return null;
-    return await data.text();
-  } catch {
-    return null;
+    const { data: blob, error } = await supabaseClient.storage.from('files').download(storagePath);
+    if (error || !blob) return null;
+    if (blob.size > 20 * 1024 * 1024) return { error: `File is too large (${(blob.size / 1048576).toFixed(1)} MB) to attach inline — max 20 MB.` };
+    const ab = await blob.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    // Encode to base64
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+    const mimeType = declaredMimeType || blob.type || 'application/octet-stream';
+    return { base64, mimeType, sizeBytes: blob.size };
+  } catch (e) {
+    return { error: e.message };
   }
 }
 

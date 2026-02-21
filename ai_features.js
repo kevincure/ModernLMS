@@ -16,7 +16,7 @@ import {
   supabaseCreateInvite, supabaseDeleteInvite,
   supabaseDeleteEnrollment,
   supabaseUpdateCourse,
-  supabaseDownloadFileText
+  supabaseDownloadFileBlob
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 
@@ -464,6 +464,7 @@ function summarizeToolResult(toolName, result) {
       default:                   return `${result.length} item${result.length !== 1 ? 's' : ''}`;
     }
   }
+  if (result._inlineData) return `${result.name} (${(result.sizeBytes/1024).toFixed(0)} KB attached)`;
   if (result.name) return result.name;
   return '';
 }
@@ -472,6 +473,20 @@ function summarizeToolResult(toolName, result) {
  * Execute a context tool — queries appData and returns JSON for Gemini to reason over.
  * These NEVER write to the DB; they are read-only.
  */
+/** Guess MIME type from filename extension for common file types. */
+function guessMimeType(filename) {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  return ({
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', html: 'text/html',
+    json: 'application/json', xml: 'application/xml'
+  }[ext]) || 'application/octet-stream';
+}
+
 async function executeAiTool(toolName, params = {}) {
   if (!activeCourseId) return { error: 'No active course selected' };
 
@@ -558,21 +573,15 @@ async function executeAiTool(toolName, params = {}) {
     case 'get_file_content': {
       const f = (appData.files || []).find(f => f.id === params.file_id && f.courseId === activeCourseId);
       if (!f) return { error: 'File not found' };
-      if (f.isPlaceholder || f.isYoutube) return { id: f.id, name: f.name, note: 'This is an external link or video — no downloadable text content.' };
-      if (!f.storagePath) return { id: f.id, name: f.name, note: 'No storage path available for this file.' };
-      const mimeType = (f.type || '').toLowerCase();
-      const isTextLike = mimeType.startsWith('text/') ||
-        ['application/json','application/xml','application/javascript'].includes(mimeType) ||
-        /\.(txt|md|csv|html|htm|js|py|json|xml|css)$/i.test(f.name);
-      const rawText = await supabaseDownloadFileText(f.storagePath);
-      if (!rawText) return { id: f.id, name: f.name, error: 'Could not download file from storage.' };
-      // Check if the content is readable text (not binary garbage)
-      const printable = (rawText.match(/[\x20-\x7E\n\r\t]/g) || []).length;
-      const ratio = rawText.length > 0 ? printable / rawText.length : 0;
-      if (!isTextLike && ratio < 0.7) {
-        return { id: f.id, name: f.name, type: mimeType, error: 'File appears to be binary and cannot be read as text.' };
-      }
-      return { id: f.id, name: f.name, content: rawText.slice(0, 12000) };
+      if (f.isPlaceholder || f.isYoutube) return { id: f.id, name: f.name, note: 'External link or video — no downloadable content.' };
+      if (!f.storagePath) return { id: f.id, name: f.name, note: 'No storage path for this file.' };
+      // Download blob and send directly to Gemini as inline data.
+      // Gemini supports PDF, DOCX, PPTX, XLSX, images, text, etc. up to 20 MB.
+      const mimeType = f.type || guessMimeType(f.name);
+      const result = await supabaseDownloadFileBlob(f.storagePath, mimeType);
+      if (!result || result.error) return { id: f.id, name: f.name, error: result?.error || 'Download failed.' };
+      // Return a special _inlineData marker — runAiLoop attaches it as a multimodal part
+      return { id: f.id, name: f.name, mimeType: result.mimeType, sizeBytes: result.sizeBytes, _inlineData: { mimeType: result.mimeType, data: result.base64 } };
     }
 
     default:
@@ -711,11 +720,20 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
       stepMsg.resultSummary = summarizeToolResult(parsed.tool, result);
       renderAiThread();
 
-      // Feed result back as the next user turn so the loop continues
+      // Feed result back as the next user turn so the loop continues.
+      // For get_file_content, attach the file as a multimodal inline data part so
+      // Gemini can read PDFs, DOCX, PPTX, images, etc. directly instead of decoded text.
+      const toolResultParts = [];
+      if (result._inlineData) {
+        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): File "${result.name}" (${result.mimeType}, ${(result.sizeBytes/1024).toFixed(0)} KB) is attached below. Read and analyze its full content.` });
+        toolResultParts.push({ inlineData: result._inlineData });
+      } else {
+        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): ${JSON.stringify(result)}\n\nContinue with the original task.` });
+      }
       contents = [
         ...contents,
         { role: 'model', parts: [{ text: rawReply }] },
-        { role: 'user',  parts: [{ text: `TOOL_RESULT(${parsed.tool}): ${JSON.stringify(result)}\n\nContinue with the original task.` }] }
+        { role: 'user',  parts: toolResultParts }
       ];
       continue;
     }
