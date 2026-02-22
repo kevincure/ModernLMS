@@ -571,26 +571,6 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             </div>
           </div>
 
-          <div class="form-group">
-            <label class="form-label">Caliper Analytics Endpoint <span style="color:var(--text-muted); font-weight:400;">(optional)</span></label>
-            <input type="url" class="form-input" id="settingsCaliperEndpoint"
-              placeholder="https://your-lrs.example.com/caliper/v1p1"
-              value="${localStorage.getItem('caliperEndpoint') || ''}">
-            <div class="hint">IMS Caliper 1.1 LRS endpoint. Leave blank to disable event sending.</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Caliper Sensor ID <span style="color:var(--text-muted); font-weight:400;">(optional)</span></label>
-            <input type="text" class="form-input" id="settingsCaliperSensorId"
-              placeholder="campus-lms"
-              value="${localStorage.getItem('caliperSensorId') || 'campus-lms'}">
-          </div>
-
-          <div class="form-group" style="border-top:1px solid var(--border-color); padding-top:16px; margin-top:4px;">
-            <label class="form-label">OneRoster Export</label>
-            <div class="hint" style="margin-bottom:8px;">Download a OneRoster 1.2 compliant ZIP of orgs, users, courses, classes, and enrollments CSVs for your institution.</div>
-            <button class="btn btn-secondary" onclick="downloadOneRosterExport(window._appData)">Export OneRoster CSVs</button>
-          </div>
-
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Cancel</button>
