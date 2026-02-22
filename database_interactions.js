@@ -13,6 +13,29 @@ let appData = null;
 let showToast = null;
 let getInitials = null;
 
+
+async function resolveCurrentOrgId() {
+  const cachedOrgId = appData?.currentUser?.orgId;
+  if (cachedOrgId) return cachedOrgId;
+  const userId = appData?.currentUser?.id;
+  if (!supabaseClient || !userId) return null;
+
+  const { data, error } = await supabaseClient
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[Supabase] Failed to resolve org_id from profile:', error);
+    return null;
+  }
+
+  const orgId = data?.org_id || null;
+  if (appData?.currentUser) appData.currentUser.orgId = orgId;
+  return orgId;
+}
+
 /**
  * Initialize the database module with required dependencies
  * @param {Object} deps - Dependencies object
@@ -99,6 +122,13 @@ export async function loadDataFromSupabase() {
   console.log('[Supabase] Loading data for user:', appData.currentUser.email);
 
   try {
+    const orgId = await resolveCurrentOrgId();
+    if (!orgId) {
+      console.error('[Supabase] Cannot load data without org context');
+      if (showToast) showToast('Unable to resolve organization context', 'error');
+      return;
+    }
+
     // Parallel fetch all data the user has access to (RLS will filter)
     const [
       profilesRes,
@@ -125,8 +155,8 @@ export async function loadDataFromSupabase() {
       gradeSettingsRes,
       questionBanksRes
     ] = await Promise.all([
-      supabaseClient.from('profiles').select('*'),
-      supabaseClient.from('courses').select('*'),
+      supabaseClient.from('profiles').select('*').eq('org_id', orgId),
+      supabaseClient.from('courses').select('*').eq('org_id', orgId),
       supabaseClient.from('enrollments').select('*'),
       supabaseClient.from('assignments').select('*'),
       supabaseClient.from('submissions').select('*'),
@@ -138,7 +168,7 @@ export async function loadDataFromSupabase() {
       supabaseClient.from('quiz_submissions').select('*'),
       supabaseClient.from('modules').select('*'),
       supabaseClient.from('module_items').select('*'),
-      supabaseClient.from('invites').select('*'),
+      supabaseClient.from('invites').select('*').eq('org_id', orgId),
       supabaseClient.from('rubrics').select('*'),
       supabaseClient.from('rubric_criteria').select('*'),
       supabaseClient.from('grade_categories').select('*'),
@@ -192,6 +222,7 @@ export async function loadDataFromSupabase() {
       name: p.name,
       email: p.email,
       avatar: p.avatar || getInitials(p.name),
+      orgId: p.org_id,
       role: 'user'
     }));
 
@@ -204,6 +235,7 @@ export async function loadDataFromSupabase() {
       createdBy: c.created_by,
       startHereTitle: c.start_here_title,
       startHereContent: c.start_here_content,
+      orgId: c.org_id,
       active: c.active
     }));
 
@@ -352,6 +384,7 @@ export async function loadDataFromSupabase() {
       email: i.email,
       role: i.role,
       status: i.status,
+      orgId: i.org_id,
       invitedBy: i.invited_by,
       createdAt: i.created_at,
       sentAt: i.created_at
@@ -557,12 +590,20 @@ export async function supabaseCreateCourse(course) {
     return null;
   }
 
+  const orgId = course.orgId || await resolveCurrentOrgId();
+  if (!orgId) {
+    console.error('[Supabase] Cannot create course: missing org_id context');
+    if (showToast) showToast('Unable to determine organization for course', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient.from('courses').insert({
     id: course.id,
     name: course.name,
     code: course.code,
     description: course.description || null,
     invite_code: course.inviteCode,
+    org_id: orgId,
     created_by: course.createdBy,
     start_here_title: course.startHereTitle || 'Start Here',
     start_here_content: course.startHereContent || null,
@@ -595,9 +636,16 @@ export async function supabaseUpdateCourse(course) {
     updateData.start_here_links = course.startHereLinks;
   }
 
+  const orgId = course.orgId || await resolveCurrentOrgId();
+  if (!orgId) {
+    console.error('[Supabase] Cannot update course: missing org_id context');
+    return null;
+  }
+
   const { data, error } = await supabaseClient.from('courses')
     .update(updateData)
     .eq('id', course.id)
+    .eq('org_id', orgId)
     .select()
     .single();
 
@@ -1129,8 +1177,18 @@ export async function supabaseCreateInvite(invite) {
     return null;
   }
 
+  const orgId = invite.orgId
+    || appData?.courses?.find(c => c.id === invite.courseId)?.orgId
+    || await resolveCurrentOrgId();
+  if (!orgId) {
+    console.error('[Supabase] Cannot create invite: missing org_id context');
+    if (showToast) showToast('Unable to determine organization for invite', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient.from('invites').insert({
     course_id: invite.courseId,
+    org_id: orgId,
     email: invite.email,
     role: invite.role || 'student',
     status: 'pending',
@@ -1153,11 +1211,18 @@ export async function supabaseDeleteInvite(inviteId) {
   }
   console.log('[Supabase] Deleting invite:', inviteId);
 
+  const orgId = await resolveCurrentOrgId();
+  if (!orgId) {
+    console.error('[Supabase] Cannot delete invite: missing org_id context');
+    return false;
+  }
+
   try {
     const { data, error } = await supabaseClient
       .from('invites')
       .delete()
       .eq('id', inviteId)
+      .eq('org_id', orgId)
       .select();
 
     if (error) {
@@ -1183,10 +1248,16 @@ export async function supabaseUpdateUserGeminiKey(userId, geminiKey) {
   if (!supabaseClient) return false;
   console.log('[Supabase] Updating Gemini key for user:', userId);
 
+  const orgId = await resolveCurrentOrgId();
+  if (!orgId) {
+    console.error('[Supabase] Cannot update Gemini key: missing org_id context');
+    return false;
+  }
+
   const { error } = await supabaseClient.from('profiles').update({
     gemini_key: geminiKey,
     updated_at: new Date().toISOString()
-  }).eq('id', userId);
+  }).eq('id', userId).eq('org_id', orgId);
 
   if (error) {
     console.error('[Supabase] Error updating Gemini key:', error);
@@ -1200,9 +1271,16 @@ export async function supabaseUpdateUserGeminiKey(userId, geminiKey) {
 export async function supabaseLoadUserGeminiKey(userId) {
   if (!supabaseClient) return null;
 
+  const orgId = await resolveCurrentOrgId();
+  if (!orgId) {
+    console.error('[Supabase] Cannot load Gemini key: missing org_id context');
+    return null;
+  }
+
   const { data, error } = await supabaseClient.from('profiles')
     .select('gemini_key')
     .eq('id', userId)
+    .eq('org_id', orgId)
     .single();
 
   if (error) {
