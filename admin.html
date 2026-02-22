@@ -147,15 +147,23 @@
       </button>
 
       <div class="toolbar-spacer"></div>
+    </nav>
 
-      <!-- Sign out -->
-      <button class="tool-btn" onclick="adminLogout()" title="Sign Out" aria-label="Sign Out">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-          <polyline points="16 17 21 12 16 7"/>
-          <line x1="21" y1="12" x2="9" y2="12"/>
-        </svg>
-      </button>
+    <!-- Mobile drawer backdrop -->
+    <div class="mobile-drawer-backdrop" id="adminMobileDrawerBackdrop" onclick="closeAdminMobileDrawer()" aria-hidden="true"></div>
+
+    <!-- Mobile slide-in navigation drawer -->
+    <nav class="mobile-drawer" id="adminMobileDrawer" aria-label="Admin menu">
+      <div class="mobile-drawer-header">
+        <span style="font-weight:600; font-size:1rem;">Admin Menu</span>
+        <button class="modal-close" onclick="closeAdminMobileDrawer()" aria-label="Close menu">&times;</button>
+      </div>
+      <div class="mobile-drawer-body">
+        <button class="mobile-drawer-item" data-section="users" onclick="adminNav('users'); closeAdminMobileDrawer()">Members</button>
+        <button class="mobile-drawer-item" data-section="courses" onclick="adminNav('courses'); closeAdminMobileDrawer()">Courses</button>
+        <button class="mobile-drawer-item" data-section="enrollments" onclick="adminNav('enrollments'); closeAdminMobileDrawer()">Enrollments</button>
+        <button class="mobile-drawer-item" data-section="audit" onclick="adminNav('audit'); closeAdminMobileDrawer()">Audit Log</button>
+      </div>
     </nav>
 
     <!-- ── Main area (right of toolbar) ─────────────────── -->
@@ -164,12 +172,14 @@
       <!-- Sticky top bar -->
       <div class="top-bar" id="adminTopBar">
         <div class="top-bar-left">
+          <button class="mobile-menu-btn" onclick="toggleAdminMobileDrawer()" aria-label="Open menu" title="Menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
           <div class="course-title" id="adminOrgTitle">Admin</div>
           <div id="adminSectionSubtitle" style="font-size:0.8rem; color:var(--text-muted); margin-top:1px;">Members</div>
         </div>
         <div class="top-bar-right" style="gap:16px;">
           <span class="muted" id="adminUserEmail" style="font-size:0.82rem;"></span>
-          <button class="btn btn-secondary" style="padding:7px 14px; font-size:0.82rem;" onclick="adminLogout()">Sign Out</button>
         </div>
       </div>
 
@@ -188,6 +198,15 @@
             </div>
             <button class="btn btn-primary" onclick="openAddUserModal()">+ Add Member</button>
           </div>
+          <div class="admin-filter-row">
+            <input class="form-input" id="usersSearchInput" placeholder="Search name or email" oninput="setUsersSearch(this.value)" />
+            <select class="form-select" id="usersSortSelect" onchange="setUsersSort(this.value)">
+              <option value="name_asc">Sort: Name A→Z</option>
+              <option value="name_desc">Sort: Name Z→A</option>
+              <option value="role">Sort: Role</option>
+              <option value="newest">Sort: Newest</option>
+            </select>
+          </div>
           <div id="usersTableWrap"></div>
         </section>
 
@@ -201,6 +220,17 @@
               </p>
             </div>
             <button class="btn btn-primary" onclick="openCreateCourseModal()">+ Create Course</button>
+          </div>
+          <div class="admin-filter-row">
+            <input class="form-input" id="coursesSearchInput" placeholder="Search course name/code/instructor" oninput="setCoursesSearch(this.value)" />
+            <select class="form-select" id="coursesTermFilter" onchange="setCoursesTermFilter(this.value)"></select>
+            <select class="form-select" id="coursesSortSelect" onchange="setCoursesSort(this.value)">
+              <option value="name_asc">Sort: Name A→Z</option>
+              <option value="name_desc">Sort: Name Z→A</option>
+              <option value="created_desc">Sort: Newest</option>
+              <option value="created_asc">Sort: Oldest</option>
+              <option value="status">Sort: Active First</option>
+            </select>
           </div>
           <div id="coursesTableWrap"></div>
         </section>
@@ -216,6 +246,14 @@
             </div>
             <button class="btn btn-primary" onclick="openAddEnrollmentModal()">+ Enroll User</button>
           </div>
+          <div class="admin-filter-row">
+            <input class="form-input" id="enrollmentsSearchInput" placeholder="Search course or user" oninput="setEnrollmentsSearch(this.value)" />
+            <select class="form-select" id="enrollmentsSortSelect" onchange="setEnrollmentsSort(this.value)">
+              <option value="course_asc">Sort: Course A→Z</option>
+              <option value="course_desc">Sort: Course Z→A</option>
+              <option value="newest">Sort: Newest Enrollments</option>
+            </select>
+          </div>
           <div id="enrollmentsWrap"></div>
         </section>
 
@@ -228,7 +266,14 @@
                 Immutable record of all admin actions. Cannot be edited or deleted.
               </p>
             </div>
-            <button class="btn btn-secondary" onclick="loadAuditLog()">↺ Refresh</button>
+            <button class="btn btn-secondary" onclick="renderAuditSection(true)">↺ Refresh</button>
+          </div>
+          <div class="admin-filter-row">
+            <input class="form-input" id="auditSearchInput" placeholder="Search actor/action/details" oninput="setAuditSearch(this.value)" />
+            <select class="form-select" id="auditSortSelect" onchange="setAuditSort(this.value)">
+              <option value="newest">Sort: Newest</option>
+              <option value="oldest">Sort: Oldest</option>
+            </select>
           </div>
           <div id="auditTableWrap"></div>
         </section>
@@ -306,6 +351,10 @@
             <option value="">Select an org member…</option>
           </select>
           <p class="hint" style="margin-top:6px;">Must be an existing org member. They will be enrolled as instructor.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="courseTermInput">Term <span style="color:var(--danger);">*</span></label>
+          <input type="text" id="courseTermInput" class="form-input" placeholder="e.g. SPRING 2026" />
         </div>
         <div id="createCourseError" class="admin-inline-error" style="display:none;" role="alert"></div>
       </div>

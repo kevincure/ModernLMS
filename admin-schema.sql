@@ -112,6 +112,23 @@ ALTER TABLE courses ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES orgs(id);
 
 
 -- ============================================================
+-- STEP 5B — Add term to courses (OneRoster: academicSession)
+--            Existing courses are backfilled to SPRING 2026.
+-- ============================================================
+
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS term TEXT;
+
+UPDATE courses
+SET term = 'SPRING 2026'
+WHERE term IS NULL;
+
+ALTER TABLE courses
+  ALTER COLUMN term SET DEFAULT 'SPRING 2026';
+
+CREATE INDEX IF NOT EXISTS idx_courses_org_term ON courses(org_id, term);
+
+
+-- ============================================================
 -- STEP 6 — admin_audit_log
 --           Every admin action is recorded here.
 --           INSERT allowed for admins; UPDATE and DELETE blocked for everyone.
@@ -298,6 +315,19 @@ CREATE POLICY "courses: org superadmin update"
   USING (
     org_id IS NOT NULL
     AND is_org_superadmin(org_id)
+  )
+  WITH CHECK (
+    org_id IS NOT NULL
+    AND is_org_superadmin(org_id)
+  );
+
+DROP POLICY IF EXISTS "courses: org superadmin delete" ON courses;
+
+CREATE POLICY "courses: org superadmin delete"
+  ON courses FOR DELETE
+  USING (
+    org_id IS NOT NULL
+    AND is_org_superadmin(org_id)
   );
 
 
@@ -343,6 +373,137 @@ CREATE POLICY "enrollments: org superadmin delete"
       AND    is_org_superadmin(c.org_id)
     )
   );
+
+
+-- ============================================================
+-- STEP 13B — Secure course cascade deletion helper
+--
+-- Deletes only rows that are explicitly tied to a course_id.
+-- This intentionally avoids touching org-level or user-level rows.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION delete_course_for_org_superadmin(p_course_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_org_id UUID;
+BEGIN
+  SELECT c.org_id
+  INTO v_org_id
+  FROM courses c
+  WHERE c.id = p_course_id;
+
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'Course not found';
+  END IF;
+
+  IF NOT is_org_superadmin(v_org_id) THEN
+    RAISE EXCEPTION 'Not authorized to delete this course';
+  END IF;
+
+  -- Delete direct course-owned data first (if table exists).
+  IF to_regclass('public.assignment_overrides') IS NOT NULL THEN
+    DELETE FROM assignment_overrides WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.quiz_time_overrides') IS NOT NULL THEN
+    DELETE FROM quiz_time_overrides WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.discussion_replies') IS NOT NULL
+     AND to_regclass('public.discussion_threads') IS NOT NULL THEN
+    DELETE FROM discussion_replies
+    WHERE thread_id IN (SELECT id FROM discussion_threads WHERE course_id = p_course_id);
+  END IF;
+
+  IF to_regclass('public.module_items') IS NOT NULL THEN
+    DELETE FROM module_items WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.rubric_criteria') IS NOT NULL
+     AND to_regclass('public.rubrics') IS NOT NULL THEN
+    DELETE FROM rubric_criteria
+    WHERE rubric_id IN (SELECT id FROM rubrics WHERE course_id = p_course_id);
+  END IF;
+
+  IF to_regclass('public.quiz_questions') IS NOT NULL
+     AND to_regclass('public.quizzes') IS NOT NULL THEN
+    DELETE FROM quiz_questions
+    WHERE quiz_id IN (SELECT id FROM quizzes WHERE course_id = p_course_id);
+  END IF;
+
+  IF to_regclass('public.submissions') IS NOT NULL
+     AND to_regclass('public.assignments') IS NOT NULL THEN
+    DELETE FROM submissions
+    WHERE assignment_id IN (SELECT id FROM assignments WHERE course_id = p_course_id);
+  END IF;
+
+  IF to_regclass('public.grades') IS NOT NULL
+     AND to_regclass('public.assignments') IS NOT NULL THEN
+    DELETE FROM grades
+    WHERE assignment_id IN (SELECT id FROM assignments WHERE course_id = p_course_id);
+  END IF;
+
+  IF to_regclass('public.quiz_submissions') IS NOT NULL THEN
+    DELETE FROM quiz_submissions WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.files') IS NOT NULL THEN
+    DELETE FROM files WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.announcements') IS NOT NULL THEN
+    DELETE FROM announcements WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.discussion_threads') IS NOT NULL THEN
+    DELETE FROM discussion_threads WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.modules') IS NOT NULL THEN
+    DELETE FROM modules WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.quizzes') IS NOT NULL THEN
+    DELETE FROM quizzes WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.invites') IS NOT NULL THEN
+    DELETE FROM invites WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.rubrics') IS NOT NULL THEN
+    DELETE FROM rubrics WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.grade_categories') IS NOT NULL THEN
+    DELETE FROM grade_categories WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.grade_settings') IS NOT NULL THEN
+    DELETE FROM grade_settings WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.question_banks') IS NOT NULL THEN
+    DELETE FROM question_banks WHERE course_id = p_course_id;
+  END IF;
+
+  IF to_regclass('public.assignments') IS NOT NULL THEN
+    DELETE FROM assignments WHERE course_id = p_course_id;
+  END IF;
+
+  -- Keep this last among course-owned children.
+  DELETE FROM enrollments WHERE course_id = p_course_id;
+
+  -- Delete the course itself.
+  DELETE FROM courses WHERE id = p_course_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION delete_course_for_org_superadmin(UUID) TO authenticated;
 
 
 -- ============================================================
