@@ -2364,12 +2364,10 @@ async function saveStartHere() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let announcementsSearch = '';
-let _announcementsSearchTimer = null;
 
 function updateAnnouncementsSearch(value) {
   announcementsSearch = value.toLowerCase();
-  clearTimeout(_announcementsSearchTimer);
-  _announcementsSearchTimer = setTimeout(renderUpdates, 200);
+  renderUpdates();
 }
 
 function renderUpdates() {
@@ -2386,12 +2384,19 @@ function renderUpdates() {
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
   const effectiveStaff = isStaffUser && !studentViewMode;
 
-  setHTML('updatesActions', `
-    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" id="announcementsSearchInput" placeholder="Search announcements..." value="${escapeHtml(announcementsSearch)}" oninput="updateAnnouncementsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      ${effectiveStaff ? `<button class="btn btn-primary" onclick="openModal('announcementModal')">New Announcement</button>` : ''}
-    </div>
-  `);
+  const searchInput = document.getElementById('announcementsSearchInput');
+  const updatesActions = document.getElementById('updatesActions');
+  const updatesActionsSignature = String(effectiveStaff);
+  if (!searchInput || updatesActions?.dataset.signature !== updatesActionsSignature) {
+    setHTML('updatesActions', `
+      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <input type="text" class="form-input" id="announcementsSearchInput" placeholder="Search announcements..." value="${escapeHtml(announcementsSearch)}" oninput="updateAnnouncementsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        ${effectiveStaff ? `<button class="btn btn-primary" onclick="openModal('announcementModal')">New Announcement</button>` : ''}
+      </div>
+    `);
+    const refreshedUpdatesActions = document.getElementById('updatesActions');
+    if (refreshedUpdatesActions) refreshedUpdatesActions.dataset.signature = updatesActionsSignature;
+  }
 
   let announcements = appData.announcements
     .filter(a => a.courseId === activeCourseId)
@@ -2624,12 +2629,9 @@ async function updateAnnouncement() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let assignmentsSearch = '';
-let _assignmentsSearchTimer = null;
-
 function updateAssignmentsSearch(value) {
   assignmentsSearch = value.toLowerCase();
-  clearTimeout(_assignmentsSearchTimer);
-  _assignmentsSearchTimer = setTimeout(renderAssignments, 200);
+  renderAssignments();
 }
 
 function renderAssignments() {
@@ -2645,16 +2647,23 @@ function renderAssignments() {
 
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
 
-  setHTML('assignmentsActions', `
-    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" id="assignmentsSearchInput" placeholder="Search assignments..." value="${escapeHtml(assignmentsSearch)}" oninput="updateAssignmentsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      ${isStaffUser && !studentViewMode ? `
-        <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
-        <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
-      ` : ''}
-    </div>
-  `);
-  
+  const assignmentsSearchInput = document.getElementById('assignmentsSearchInput');
+  const assignmentsActions = document.getElementById('assignmentsActions');
+  const assignmentsActionsSignature = String(isStaffUser && !studentViewMode);
+  if (!assignmentsSearchInput || assignmentsActions?.dataset.signature !== assignmentsActionsSignature) {
+    setHTML('assignmentsActions', `
+      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <input type="text" class="form-input" id="assignmentsSearchInput" placeholder="Search assignments..." value="${escapeHtml(assignmentsSearch)}" oninput="updateAssignmentsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        ${isStaffUser && !studentViewMode ? `
+          <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
+          <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
+        ` : ''}
+      </div>
+    `);
+    const refreshedAssignmentsActions = document.getElementById('assignmentsActions');
+    if (refreshedAssignmentsActions) refreshedAssignmentsActions.dataset.signature = assignmentsActionsSignature;
+  }
+
   // When in student view mode, show as student would see
   const effectiveStaff = isStaffUser && !studentViewMode;
 
@@ -5321,12 +5330,9 @@ function shuffleArray(list) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let modulesSearch = '';
-let _modulesSearchTimer = null;
-
 function updateModulesSearch(value) {
   modulesSearch = value.toLowerCase();
-  clearTimeout(_modulesSearchTimer);
-  _modulesSearchTimer = setTimeout(renderModules, 200);
+  renderModules();
 }
 
 function renderModules() {
@@ -5346,15 +5352,22 @@ function renderModules() {
   if (!appData.modules) appData.modules = [];
 
   // Actions with search
-  setHTML('modulesActions', `
-    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" id="modulesSearchInput" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" oninput="updateModulesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      ${effectiveStaff ? `
-        <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
-        <button class="btn btn-secondary" onclick="openSyllabusParserModal()">Import from Syllabus</button>
-      ` : ''}
-    </div>
-  `);
+  const modulesSearchInput = document.getElementById('modulesSearchInput');
+  const modulesActions = document.getElementById('modulesActions');
+  const modulesActionsSignature = String(effectiveStaff);
+  if (!modulesSearchInput || modulesActions?.dataset.signature !== modulesActionsSignature) {
+    setHTML('modulesActions', `
+      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <input type="text" class="form-input" id="modulesSearchInput" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" oninput="updateModulesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        ${effectiveStaff ? `
+          <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
+          <button class="btn btn-secondary" onclick="openSyllabusParserModal()">Import from Syllabus</button>
+        ` : ''}
+      </div>
+    `);
+    const refreshedModulesActions = document.getElementById('modulesActions');
+    if (refreshedModulesActions) refreshedModulesActions.dataset.signature = modulesActionsSignature;
+  }
 
   let modules = appData.modules
     .filter(m => m.courseId === activeCourseId)
