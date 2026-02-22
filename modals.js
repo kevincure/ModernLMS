@@ -731,33 +731,58 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
 
     <!-- Import Content Modal -->
     <div class="modal-overlay" id="importContentModal">
-      <div class="modal">
+      <div class="modal" style="max-width:560px;">
         <div class="modal-header">
           <h2 class="modal-title">Import Content</h2>
           <button class="modal-close" onclick="closeModal('importContentModal')">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">Select Source Course</label>
-            <select class="form-select" id="importSourceCourse">
+          <input type="hidden" id="importSourceCourseHidden">
+
+          <!-- Source label when opened from a course card -->
+          <div id="importSourceLabel" style="display:none; font-weight:600; margin-bottom:12px; color:var(--text-muted); font-size:0.9rem;"></div>
+
+          <!-- Source dropdown (shown when opened from sidebar) -->
+          <div id="importSourceRow" class="form-group">
+            <label class="form-label">Source Course</label>
+            <select class="form-input" id="importSourceCourse" onchange="loadImportItems()">
               <option value="">-- Select a course --</option>
             </select>
           </div>
-          <div class="form-group">
-            <label class="form-label">Content to import</label>
-            <select class="form-select" id="importContentTypes" multiple size="6">
-              <option value="assignments" selected>Assignments</option>
-              <option value="quizzes" selected>Quizzes</option>
-              <option value="announcements">Announcements</option>
-              <option value="files">Files</option>
-              <option value="categoryWeights">Grade Category Weights</option>
+
+          <!-- Destination dropdown (shown when opened from a course card) -->
+          <div id="importDestRow" class="form-group" style="display:none;">
+            <label class="form-label">Import into</label>
+            <select class="form-input" id="importDestCourse" onchange="loadImportItems()">
+              <option value="">-- Select destination course --</option>
             </select>
-            <div class="hint">Hold Ctrl (Windows) or Command (Mac) to select multiple items.</div>
           </div>
+
+          <!-- Step 2: content type checkboxes -->
+          <div class="form-group">
+            <label class="form-label">Content Types</label>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
+                <input type="checkbox" class="import-type-cb" value="assignments" checked> Assignments
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
+                <input type="checkbox" class="import-type-cb" value="quizzes" checked> Quizzes
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
+                <input type="checkbox" class="import-type-cb" value="announcements"> Announcements
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
+                <input type="checkbox" class="import-type-cb" value="files"> Files
+              </label>
+            </div>
+          </div>
+
+          <!-- Step 3: per-item selection -->
+          <div id="importItemsList" style="max-height:280px; overflow-y:auto;"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('importContentModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="executeImportContent()">Import Selected Content</button>
+          <button class="btn btn-primary" onclick="executeImportContent()">Import Selected</button>
         </div>
       </div>
     </div>
@@ -856,12 +881,12 @@ student3@example.com, 92, Well done" rows="10"></textarea>
     <div class="modal-overlay" id="categoryWeightsModal">
       <div class="modal">
         <div class="modal-header">
-          <h2 class="modal-title">Grade Category Weights</h2>
+          <h2 class="modal-title">Assignment Weights</h2>
           <button class="modal-close" onclick="closeModal('categoryWeightsModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:16px;">
-            Set the weight for each category. Weights must add up to 100%.
+            Set the weight for each assignment. Weights must add up to 100%.
           </div>
           <div id="categoryWeightsList"></div>
           <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius);">

@@ -491,8 +491,55 @@ function guessMimeType(filename) {
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
     txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', html: 'text/html',
+    tex: 'text/plain', latex: 'text/plain', bib: 'text/plain',
     json: 'application/json', xml: 'application/xml'
   }[ext]) || 'application/octet-stream';
+}
+
+/** Extract plain text from a docx file given as a base64 string. */
+async function extractDocxText(base64) {
+  if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const zip = await JSZip.loadAsync(bytes);
+  const xmlFile = zip.file('word/document.xml');
+  if (!xmlFile) throw new Error('word/document.xml not found');
+  const xml = await xmlFile.async('string');
+  // Strip XML tags, normalize whitespace, preserve paragraph breaks
+  return xml
+    .replace(/<w:p[ >]/g, '\n<w:p>')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Extract plain text from a pptx file given as a base64 string. */
+async function extractPptxText(base64) {
+  if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const zip = await JSZip.loadAsync(bytes);
+  const slideFiles = Object.keys(zip.files)
+    .filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+    .sort((a, b) => {
+      const na = parseInt(a.match(/\d+/)[0]), nb = parseInt(b.match(/\d+/)[0]);
+      return na - nb;
+    });
+  const parts = [];
+  for (const slidePath of slideFiles) {
+    const xml = await zip.file(slidePath).async('string');
+    // Extract text from <a:t> tags
+    const texts = [];
+    const re = /<a:t[^>]*>([^<]*)<\/a:t>/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) texts.push(m[1]);
+    const slideNum = slidePath.match(/\d+/)[0];
+    if (texts.length) parts.push(`[Slide ${slideNum}]\n${texts.join(' ')}`);
+  }
+  return parts.join('\n\n').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
 }
 
 async function executeAiTool(toolName, params = {}) {
@@ -603,8 +650,26 @@ async function executeAiTool(toolName, params = {}) {
       if (mt.startsWith('image/') || mt === 'application/pdf') {
         return { id: f.id, name: f.name, mimeType: mt, sizeBytes: result.sizeBytes, _inlineData: { mimeType: mt, data: result.base64 } };
       }
-      // Unsupported binary types (docx, pptx, xlsx, etc.)
-      return { id: f.id, name: f.name, error: `File type "${mt}" cannot be read by the AI. Supported: PDF, images, and text files. Please convert to a supported format.` };
+      // docx: extract text via JSZip
+      if (mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        try {
+          const text = await extractDocxText(result.base64);
+          return { id: f.id, name: f.name, mimeType: mt, sizeBytes: result.sizeBytes, _textContent: text };
+        } catch (e) {
+          return { id: f.id, name: f.name, error: `Could not extract text from docx: ${e.message}` };
+        }
+      }
+      // pptx: extract slide text via JSZip
+      if (mt === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+        try {
+          const text = await extractPptxText(result.base64);
+          return { id: f.id, name: f.name, mimeType: mt, sizeBytes: result.sizeBytes, _textContent: text };
+        } catch (e) {
+          return { id: f.id, name: f.name, error: `Could not extract text from pptx: ${e.message}` };
+        }
+      }
+      // Unsupported binary types (xlsx, etc.)
+      return { id: f.id, name: f.name, error: `File type "${mt}" cannot be read by the AI. Supported: PDF, images, text files, docx, and pptx.` };
     }
 
     default:
@@ -710,6 +775,16 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
         { role: 'user',  parts: [{ text: 'ERROR: Your response was not valid JSON. Output ONLY a single valid JSON object with no other text. Try again.' }] }
       ];
       continue;
+    }
+
+    // ── Normalize: AI sometimes uses tool name as `type` instead of tool_call ─
+    // e.g. {"type":"get_file_content","params":{...}} instead of the correct
+    // {"type":"tool_call","tool":"get_file_content","params":{...}}
+    const KNOWN_TOOLS = ['list_assignments','list_quizzes','list_files','list_modules','list_people',
+      'list_question_banks','list_announcements','list_discussion_threads','get_grade_categories',
+      'get_grade_settings','get_question_bank','get_assignment','get_quiz','get_file_content'];
+    if (parsed.type && !['tool_call','action','ask_user','answer'].includes(parsed.type) && KNOWN_TOOLS.includes(parsed.type)) {
+      parsed = { type: 'tool_call', tool: parsed.type, params: parsed.params || {}, step_label: parsed.step_label || '' };
     }
 
     // ── Direct text answer ────────────────────────────────────────────────────

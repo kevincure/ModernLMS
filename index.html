@@ -13,6 +13,8 @@
 
   <!-- Supabase SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- JSZip for docx/pptx text extraction in AI file reader -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3/dist/jszip.min.js"></script>
   <!-- Configuration (create config.local.js with your credentials) -->
   <script src="config.js"></script>
 </head>
@@ -94,24 +96,6 @@
       </button>
 
       <div class="toolbar-spacer"></div>
-
-      <button class="tool-btn" id="importToolBtn" onclick="openImportContentModal()" title="Import Content" aria-label="Import Content" style="display:none;">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
-      </button>
-
-      <button class="tool-btn" onclick="openModal('settingsModal')" title="Settings" aria-label="Settings">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
-        </svg>
-      </button>
-      <button class="tool-btn" onclick="logout()" title="Logout" aria-label="Logout">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-          <path d="M10 17l5-5-5-5"/>
-          <path d="M15 12H3"/>
-        </svg>
-      </button>
     </div>
 
     <!-- Main content -->
@@ -125,8 +109,10 @@
             <div class="course-subtitle" id="activeCourseSubtitle">Choose a course from the Courses tab</div>
           </div>
         </div>
-        <div class="top-bar-right">
+        <div class="top-bar-right" style="display:flex; align-items:center; gap:8px;">
           <div id="viewToggleContainer"></div>
+          <button class="btn btn-secondary" style="padding:5px 10px; font-size:0.8rem;" onclick="openModal('settingsModal')" title="Settings">&#9881;</button>
+          <button class="btn btn-secondary" style="padding:5px 10px; font-size:0.8rem;" onclick="logout()" title="Logout">Sign out</button>
         </div>
       </div>
 
