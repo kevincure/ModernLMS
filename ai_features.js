@@ -583,13 +583,28 @@ async function executeAiTool(toolName, params = {}) {
       if (!f) return { error: 'File not found' };
       if (f.isPlaceholder || f.isYoutube) return { id: f.id, name: f.name, note: 'External link or video — no downloadable content.' };
       if (!f.storagePath) return { id: f.id, name: f.name, note: 'No storage path for this file.' };
-      // Download blob and send directly to Gemini as inline data.
-      // Gemini supports PDF, DOCX, PPTX, XLSX, images, text, etc. up to 20 MB.
-      const mimeType = f.type || guessMimeType(f.name);
+      // Normalize mimeType — f.type may be just an extension (e.g. "pdf") from older uploads
+      let mimeType = f.type || '';
+      if (!mimeType.includes('/')) mimeType = guessMimeType(f.name) || 'application/octet-stream';
       const result = await supabaseDownloadFileBlob(f.storagePath, mimeType);
       if (!result || result.error) return { id: f.id, name: f.name, error: result?.error || 'Download failed.' };
-      // Return a special _inlineData marker — runAiLoop attaches it as a multimodal part
-      return { id: f.id, name: f.name, mimeType: result.mimeType, sizeBytes: result.sizeBytes, _inlineData: { mimeType: result.mimeType, data: result.base64 } };
+      const mt = result.mimeType;
+      // Text-based types: decode to string and return as _textContent (more reliable than inlineData)
+      if (mt.startsWith('text/') || mt === 'application/json' || mt === 'application/xml') {
+        try {
+          const bytes = Uint8Array.from(atob(result.base64), c => c.charCodeAt(0));
+          const text = new TextDecoder('utf-8').decode(bytes);
+          return { id: f.id, name: f.name, mimeType: mt, sizeBytes: result.sizeBytes, _textContent: text };
+        } catch {
+          // Fall through to inlineData if decode fails
+        }
+      }
+      // Images and PDFs: send as inline data (supported by gemini-2.0-flash)
+      if (mt.startsWith('image/') || mt === 'application/pdf') {
+        return { id: f.id, name: f.name, mimeType: mt, sizeBytes: result.sizeBytes, _inlineData: { mimeType: mt, data: result.base64 } };
+      }
+      // Unsupported binary types (docx, pptx, xlsx, etc.)
+      return { id: f.id, name: f.name, error: `File type "${mt}" cannot be read by the AI. Supported: PDF, images, and text files. Please convert to a supported format.` };
     }
 
     default:
@@ -735,6 +750,8 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
       if (result._inlineData) {
         toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): File "${result.name}" (${result.mimeType}, ${(result.sizeBytes/1024).toFixed(0)} KB) is attached below. Read and analyze its full content.` });
         toolResultParts.push({ inlineData: result._inlineData });
+      } else if (result._textContent !== undefined) {
+        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): File "${result.name}" (${result.mimeType}, ${(result.sizeBytes/1024).toFixed(0)} KB) content:\n\n${result._textContent}\n\nContinue with the original task.` });
       } else {
         toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): ${JSON.stringify(result)}\n\nContinue with the original task.` });
       }

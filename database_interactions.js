@@ -238,6 +238,8 @@ export async function loadDataFromSupabase() {
       assignmentType: a.assignment_type || a.category || 'essay',
       submissionAttempts: a.submission_attempts || null,
       latePenaltyType: a.late_penalty_type || 'per_day',
+      visibleToStudents: a.visible_to_students !== false,
+      showStatsToStudents: a.show_stats_to_students === true,
       rubric: null
     }));
 
@@ -447,10 +449,14 @@ export async function loadDataFromSupabase() {
     appData.gradeSettings = (gradeSettingsRes.data || []).map(gs => ({
       id: gs.id,
       courseId: gs.course_id,
+      gradeScale: gs.grade_scale || 'letter',
       aMin: gs.a_min ?? 90,
       bMin: gs.b_min ?? 80,
       cMin: gs.c_min ?? 70,
       dMin: gs.d_min ?? 60,
+      passMin: gs.pass_min ?? 60,
+      hpMin: gs.hp_min ?? 80,
+      hpPassMin: gs.hp_pass_min ?? 60,
       curve: gs.curve ?? 0,
       extraCreditEnabled: gs.extra_credit_enabled ?? false
     }));
@@ -792,7 +798,9 @@ export async function supabaseUpdateAssignment(assignment) {
     assignment_type: assignment.assignmentType || 'essay',
     hidden: assignment.hidden || false,
     category: assignment.category,
-    time_allowed: assignment.timeAllowed || null
+    time_allowed: assignment.timeAllowed || null,
+    visible_to_students: assignment.visibleToStudents !== false,
+    show_stats_to_students: assignment.showStatsToStudents === true
   };
 
   let { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
@@ -1856,8 +1864,10 @@ export async function callGeminiAPI(contents, generationConfig = null) {
 
   if (data) {
     const usage = data.usageMetadata || {};
+    const cached = usage.cachedContentTokenCount ?? 0;
+    const nonCached = (usage.promptTokenCount ?? 0) - cached;
     const out = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
-    console.log(`[Gemini] ⚡ tokens — input: ${usage.promptTokenCount ?? '?'}, output: ${usage.candidatesTokenCount ?? '?'}, thinking: ${usage.thoughtsTokenCount ?? 0}, total: ${usage.totalTokenCount ?? '?'}`);
+    console.log(`[Gemini] ⚡ tokens — input: ${usage.promptTokenCount ?? '?'} (non-cached: ${nonCached}, cached: ${cached}), output: ${usage.candidatesTokenCount ?? '?'}, thinking: ${usage.thoughtsTokenCount ?? 0}, total: ${usage.totalTokenCount ?? '?'}`);
     console.log('[Gemini] ◀ output:', out);
   }
 
@@ -2028,15 +2038,25 @@ export async function supabaseDeleteQuizTimeOverride(quizId, userId) {
 
 export async function supabaseUpsertGradeSettings(settings) {
   if (!supabaseClient) return null;
-  const { data, error } = await supabaseClient.from('grade_settings').upsert({
+  const payload = {
     course_id: settings.courseId,
-    a_min: settings.aMin,
-    b_min: settings.bMin,
-    c_min: settings.cMin,
-    d_min: settings.dMin,
-    curve: settings.curve,
-    extra_credit_enabled: settings.extraCreditEnabled
-  }, { onConflict: 'course_id' }).select().single();
+    grade_scale: settings.gradeScale || 'letter',
+    a_min: settings.aMin ?? null,
+    b_min: settings.bMin ?? null,
+    c_min: settings.cMin ?? null,
+    d_min: settings.dMin ?? null,
+    pass_min: settings.passMin ?? null,
+    hp_min: settings.hpMin ?? null,
+    hp_pass_min: settings.hpPassMin ?? null,
+    curve: settings.curve ?? 0,
+    extra_credit_enabled: settings.extraCreditEnabled ?? false
+  };
+  let { data, error } = await supabaseClient.from('grade_settings').upsert(payload, { onConflict: 'course_id' }).select().single();
+  // Graceful fallback if new columns don't exist yet
+  if (error?.code === 'PGRST204' || (error?.message || '').includes('grade_scale')) {
+    const legacy = { course_id: payload.course_id, a_min: payload.a_min ?? 90, b_min: payload.b_min ?? 80, c_min: payload.c_min ?? 70, d_min: payload.d_min ?? 60, curve: payload.curve, extra_credit_enabled: payload.extra_credit_enabled };
+    ({ data, error } = await supabaseClient.from('grade_settings').upsert(legacy, { onConflict: 'course_id' }).select().single());
+  }
   if (error) { console.error('[Supabase] Upsert grade settings error:', error); showToast('Failed to save grade settings', 'error'); return null; }
   return data;
 }
