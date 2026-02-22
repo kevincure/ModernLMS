@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — AllDayLMS</title>
+
+  <!-- Same typefaces as the main app -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Crimson+Pro:wght@300;400;500;600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- Shared design system -->
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Admin-specific overrides -->
+  <link rel="stylesheet" href="admin.css" />
+
+  <!-- Supabase client (same CDN as main app) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Supabase credentials — same config.js the main app uses -->
+  <script src="config.js"></script>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════
+       SCREEN: Loading spinner (shown while verifying session)
+  ════════════════════════════════════════════════════════ -->
+  <div id="screen-loading" class="login-screen" style="display:none;" aria-live="polite">
+    <div class="login-card" style="text-align:center;">
+      <div class="brand">AllDayLMS</div>
+      <p class="muted" style="margin-top:20px;">Verifying access…</p>
+      <div class="admin-spinner" style="margin:20px auto 0;" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       SCREEN: Login
+  ════════════════════════════════════════════════════════ -->
+  <div id="screen-login" class="login-screen">
+    <div class="login-card">
+      <div class="brand">AllDayLMS</div>
+      <div class="muted" style="font-size:0.8rem; margin-bottom:2px; text-transform:uppercase; letter-spacing:.06em;">Admin Portal</div>
+      <div id="loginOrgLabel" style="font-weight:600; margin-bottom:28px; font-size:1rem;"></div>
+
+      <div class="login-block">
+        <button
+          class="btn btn-primary btn-wide"
+          id="adminSignInBtn"
+          onclick="adminSignInWithGoogle()"
+          style="display:inline-flex; align-items:center; justify-content:center; gap:10px;"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+            <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+          </svg>
+          Continue with Google
+        </button>
+
+        <div id="adminLoginError"
+          style="display:none; margin-top:12px; padding:12px; background:var(--danger-light); border-radius:var(--radius); color:var(--danger); font-size:0.875rem;"
+          role="alert"
+        ></div>
+        <div id="adminLoginLoading" style="display:none; margin-top:12px; text-align:center;" class="muted">
+          Redirecting to Google…
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       SCREEN: Access Denied
+  ════════════════════════════════════════════════════════ -->
+  <div id="screen-denied" class="login-screen" style="display:none;" role="alert" aria-live="assertive">
+    <div class="login-card" style="text-align:center;">
+      <div class="brand">AllDayLMS</div>
+      <div style="margin-top:24px; padding:16px 20px; background:var(--danger-light); border-radius:var(--radius);">
+        <strong style="color:var(--danger); font-size:1rem;">Access Denied</strong>
+        <p id="deniedMessage" class="muted" style="margin-top:8px; font-size:0.875rem;"></p>
+      </div>
+      <button class="btn btn-secondary" style="margin-top:20px;" onclick="adminRetryLogin()">
+        Try a different account
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       SCREEN: Configuration / Setup Error
+  ════════════════════════════════════════════════════════ -->
+  <div id="screen-error" class="login-screen" style="display:none;" role="alert">
+    <div class="login-card" style="text-align:center;">
+      <div class="brand">AllDayLMS</div>
+      <div style="margin-top:24px;">
+        <strong>Setup Required</strong>
+        <p id="errorMessage" class="muted" style="margin-top:8px; font-size:0.875rem;"></p>
+        <p class="muted" style="margin-top:8px; font-size:0.8rem;">
+          Ensure <code>config.js</code> is configured and the URL includes <code>?org=1</code>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       SCREEN: Admin Application
+  ════════════════════════════════════════════════════════ -->
+  <div id="screen-app" style="display:none; min-height:100vh; display:none;" aria-hidden="false">
+
+    <!-- ── Left sidebar toolbar ─────────────────────────── -->
+    <nav class="toolbar" id="adminToolbar" aria-label="Admin navigation">
+
+      <!-- Users -->
+      <button class="tool-btn active" data-section="users"
+        onclick="adminNav('users')" title="Members" aria-label="Members">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </button>
+
+      <!-- Courses -->
+      <button class="tool-btn" data-section="courses"
+        onclick="adminNav('courses')" title="Courses" aria-label="Courses">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+        </svg>
+      </button>
+
+      <!-- Enrollments -->
+      <button class="tool-btn" data-section="enrollments"
+        onclick="adminNav('enrollments')" title="Enrollments" aria-label="Enrollments">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M16 11a4 4 0 1 0-8 0M4 21a8 8 0 0 1 16 0"/>
+          <line x1="19" y1="8" x2="19" y2="14"/>
+          <line x1="16" y1="11" x2="22" y2="11"/>
+        </svg>
+      </button>
+
+      <!-- Audit log -->
+      <button class="tool-btn" data-section="audit"
+        onclick="adminNav('audit')" title="Audit Log" aria-label="Audit Log">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      </button>
+
+      <div class="toolbar-spacer"></div>
+
+      <!-- Sign out -->
+      <button class="tool-btn" onclick="adminLogout()" title="Sign Out" aria-label="Sign Out">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/>
+          <line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+      </button>
+    </nav>
+
+    <!-- ── Main area (right of toolbar) ─────────────────── -->
+    <div class="main" id="adminMain">
+
+      <!-- Sticky top bar -->
+      <div class="top-bar" id="adminTopBar">
+        <div class="top-bar-left">
+          <div class="course-title" id="adminOrgTitle">Admin</div>
+          <div id="adminSectionSubtitle" style="font-size:0.8rem; color:var(--text-muted); margin-top:1px;">Members</div>
+        </div>
+        <div class="top-bar-right" style="gap:16px;">
+          <span class="muted" id="adminUserEmail" style="font-size:0.82rem;"></span>
+          <button class="btn btn-secondary" style="padding:7px 14px; font-size:0.82rem;" onclick="adminLogout()">Sign Out</button>
+        </div>
+      </div>
+
+      <!-- ── Scrollable content ───────────────────────────── -->
+      <div id="adminContent" style="padding:28px 32px; max-width:1080px;">
+
+        <!-- ── Section: Members ─────────────────────────── -->
+        <section id="section-users" class="admin-section">
+          <div class="admin-section-header">
+            <div>
+              <h2 class="admin-section-title">Organization Members</h2>
+              <p class="muted" style="margin-top:4px; font-size:0.875rem;">
+                Manage who has access to this organization and their permission level.
+                Superadmin status must be set directly in the database.
+              </p>
+            </div>
+            <button class="btn btn-primary" onclick="openAddUserModal()">+ Add Member</button>
+          </div>
+          <div id="usersTableWrap"></div>
+        </section>
+
+        <!-- ── Section: Courses ─────────────────────────── -->
+        <section id="section-courses" class="admin-section" style="display:none;">
+          <div class="admin-section-header">
+            <div>
+              <h2 class="admin-section-title">Courses</h2>
+              <p class="muted" style="margin-top:4px; font-size:0.875rem;">
+                Create and manage courses owned by this organization.
+              </p>
+            </div>
+            <button class="btn btn-primary" onclick="openCreateCourseModal()">+ Create Course</button>
+          </div>
+          <div id="coursesTableWrap"></div>
+        </section>
+
+        <!-- ── Section: Enrollments ─────────────────────── -->
+        <section id="section-enrollments" class="admin-section" style="display:none;">
+          <div class="admin-section-header">
+            <div>
+              <h2 class="admin-section-title">Course Enrollments</h2>
+              <p class="muted" style="margin-top:4px; font-size:0.875rem;">
+                Add or remove org members from courses with specific roles.
+              </p>
+            </div>
+            <button class="btn btn-primary" onclick="openAddEnrollmentModal()">+ Enroll User</button>
+          </div>
+          <div id="enrollmentsWrap"></div>
+        </section>
+
+        <!-- ── Section: Audit Log ───────────────────────── -->
+        <section id="section-audit" class="admin-section" style="display:none;">
+          <div class="admin-section-header">
+            <div>
+              <h2 class="admin-section-title">Audit Log</h2>
+              <p class="muted" style="margin-top:4px; font-size:0.875rem;">
+                Immutable record of all admin actions. Cannot be edited or deleted.
+              </p>
+            </div>
+            <button class="btn btn-secondary" onclick="loadAuditLog()">↺ Refresh</button>
+          </div>
+          <div id="auditTableWrap"></div>
+        </section>
+
+      </div><!-- /adminContent -->
+    </div><!-- /adminMain -->
+  </div><!-- /screen-app -->
+
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL: Add Org Member
+  ════════════════════════════════════════════════════════ -->
+  <div id="modal-addUser" class="modal-overlay"
+    role="dialog" aria-modal="true" aria-labelledby="addUserModalTitle">
+    <div class="modal" style="max-width:480px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="addUserModalTitle">Add Organization Member</h3>
+        <button class="modal-close" onclick="closeModal('modal-addUser')" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="addUserEmail">User Email <span style="color:var(--danger);">*</span></label>
+          <input type="email" id="addUserEmail" class="form-input" placeholder="user@example.com" autocomplete="off" />
+          <p class="hint" style="margin-top:6px;">
+            The user must have signed in to AllDayLMS at least once so their profile exists.
+          </p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="addUserRole">Role <span style="color:var(--danger);">*</span></label>
+          <select id="addUserRole" class="form-select">
+            <option value="member">Member — can be enrolled in courses</option>
+            <option value="admin">Admin — can manage courses and members</option>
+            <option value="superadmin">Superadmin — full org control (use with caution)</option>
+          </select>
+        </div>
+        <div id="addUserError" class="admin-inline-error" style="display:none;" role="alert"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-addUser')">Cancel</button>
+        <button class="btn btn-primary" id="addUserSubmitBtn" onclick="addUserToOrg()">Add Member</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL: Create Course
+  ════════════════════════════════════════════════════════ -->
+  <div id="modal-createCourse" class="modal-overlay"
+    role="dialog" aria-modal="true" aria-labelledby="createCourseModalTitle">
+    <div class="modal" style="max-width:540px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="createCourseModalTitle">Create Course</h3>
+        <button class="modal-close" onclick="closeModal('modal-createCourse')" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="courseNameInput">Course Name <span style="color:var(--danger);">*</span></label>
+          <input type="text" id="courseNameInput" class="form-input" placeholder="e.g. Introduction to Biology" />
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="courseCodeInput">Course Code</label>
+            <input type="text" id="courseCodeInput" class="form-input" placeholder="e.g. BIO 101" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="courseDescInput">Description</label>
+          <textarea id="courseDescInput" class="form-textarea" rows="3" placeholder="Optional course description"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="courseInstructorSelect">
+            Primary Instructor <span style="color:var(--danger);">*</span>
+          </label>
+          <select id="courseInstructorSelect" class="form-select">
+            <option value="">Select an org member…</option>
+          </select>
+          <p class="hint" style="margin-top:6px;">Must be an existing org member. They will be enrolled as instructor.</p>
+        </div>
+        <div id="createCourseError" class="admin-inline-error" style="display:none;" role="alert"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-createCourse')">Cancel</button>
+        <button class="btn btn-primary" id="createCourseSubmitBtn" onclick="createCourse()">Create Course</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL: Add Enrollment
+  ════════════════════════════════════════════════════════ -->
+  <div id="modal-addEnrollment" class="modal-overlay"
+    role="dialog" aria-modal="true" aria-labelledby="addEnrollModalTitle">
+    <div class="modal" style="max-width:480px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="addEnrollModalTitle">Enroll User in Course</h3>
+        <button class="modal-close" onclick="closeModal('modal-addEnrollment')" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="enrollCourseSelect">Course <span style="color:var(--danger);">*</span></label>
+          <select id="enrollCourseSelect" class="form-select">
+            <option value="">Select course…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="enrollUserSelect">User <span style="color:var(--danger);">*</span></label>
+          <select id="enrollUserSelect" class="form-select">
+            <option value="">Select org member…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="enrollRoleSelect">Role <span style="color:var(--danger);">*</span></label>
+          <select id="enrollRoleSelect" class="form-select">
+            <option value="student">Student</option>
+            <option value="ta">Teaching Assistant (TA)</option>
+            <option value="instructor">Instructor</option>
+          </select>
+        </div>
+        <div id="addEnrollError" class="admin-inline-error" style="display:none;" role="alert"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-addEnrollment')">Cancel</button>
+        <button class="btn btn-primary" id="addEnrollSubmitBtn" onclick="addEnrollment()">Enroll</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL: Change Member Role
+  ════════════════════════════════════════════════════════ -->
+  <div id="modal-changeRole" class="modal-overlay"
+    role="dialog" aria-modal="true" aria-labelledby="changeRoleModalTitle">
+    <div class="modal" style="max-width:400px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="changeRoleModalTitle">Change Member Role</h3>
+        <button class="modal-close" onclick="closeModal('modal-changeRole')" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" id="changeRoleUserLabel" style="margin-bottom:16px; font-size:0.9rem;"></p>
+        <div class="form-group">
+          <label class="form-label" for="changeRoleSelect">New Role</label>
+          <select id="changeRoleSelect" class="form-select">
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+            <option value="superadmin">Superadmin</option>
+          </select>
+        </div>
+        <div id="changeRoleError" class="admin-inline-error" style="display:none;" role="alert"></div>
+        <input type="hidden" id="changeRoleMembershipId" />
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-changeRole')">Cancel</button>
+        <button class="btn btn-primary" onclick="commitChangeRole()">Save Role</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       Toast notification (non-blocking feedback)
+  ════════════════════════════════════════════════════════ -->
+  <div id="adminToast"
+    role="status" aria-live="polite"
+    style="
+      display:none; position:fixed; bottom:24px; right:24px;
+      background:var(--text-color); color:white;
+      padding:12px 20px; border-radius:var(--radius);
+      box-shadow:var(--shadow-lg); z-index:10000;
+      font-size:0.875rem; max-width:360px; line-height:1.4;
+    "
+  ></div>
+
+  <!-- Admin application logic -->
+  <script src="admin.js"></script>
+</body>
+</html>
