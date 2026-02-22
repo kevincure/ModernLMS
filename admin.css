@@ -21,6 +21,18 @@
   line-height: 1.2;
 }
 
+.admin-filter-row {
+  display: grid;
+  grid-template-columns: 1fr 220px 220px;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+#section-users .admin-filter-row,
+#section-audit .admin-filter-row {
+  grid-template-columns: 1fr 220px;
+}
+
 /* ── Data table ──────────────────────────────────────────────────────────── */
 
 .admin-table-wrap {
@@ -64,6 +76,28 @@
 
 .admin-table tbody tr:hover {
   background: var(--bg-color);
+}
+
+.course-inactive-row td {
+  opacity: 0.72;
+}
+
+.course-status-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.course-status-active {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.course-status-inactive {
+  background: var(--warning-light);
+  color: var(--warning);
 }
 
 /* ── Role badges ─────────────────────────────────────────────────────────── */
@@ -164,5 +198,11 @@
   .admin-table th,
   .admin-table td {
     padding: 10px 12px;
+  }
+
+  .admin-filter-row,
+  #section-users .admin-filter-row,
+  #section-audit .admin-filter-row {
+    grid-template-columns: 1fr;
   }
 }

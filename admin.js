@@ -37,7 +37,19 @@ const admin = {
   orgMembers:  [],     // { id, user_id, role, profile: { id, email, name } }[]
   orgCourses:  [],     // courses rows with creator profile joined
   enrollments: [],     // enrollments for all org courses
-  activeSec:   'users'
+  auditRows:   [],
+  activeSec:   'users',
+  filters: {
+    usersSearch: '',
+    usersSort: 'name_asc',
+    coursesSearch: '',
+    coursesSort: 'name_asc',
+    coursesTerm: 'ALL',
+    enrollmentsSearch: '',
+    enrollmentsSort: 'course_asc',
+    auditSearch: '',
+    auditSort: 'newest'
+  }
 };
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
@@ -214,7 +226,7 @@ async function loadOrgMembers() {
 async function loadOrgCourses() {
   const { data: courses, error } = await admin.sb
     .from('courses')
-    .select('id, name, code, description, active, created_at, created_by')
+    .select('id, name, code, description, active, term, created_at, created_by')
     .eq('org_id', admin.org.id)
     .order('created_at', { ascending: false });
 
@@ -308,6 +320,9 @@ function adminNav(section) {
   document.querySelectorAll('#adminToolbar .tool-btn[data-section]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.section === section);
   });
+  document.querySelectorAll('#adminMobileDrawer .mobile-drawer-item[data-section]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.section === section);
+  });
 
   // Update subtitle
   const subtitleMap = {
@@ -348,7 +363,24 @@ function renderUsersSection() {
     return;
   }
 
-  const rows = admin.orgMembers.map(m => {
+  const search = admin.filters.usersSearch.toLowerCase();
+  let members = admin.orgMembers.filter(m => {
+    const name = (m.profile.name || '').toLowerCase();
+    const email = (m.profile.email || '').toLowerCase();
+    return !search || name.includes(search) || email.includes(search);
+  });
+
+  if (admin.filters.usersSort === 'name_asc') members.sort((a, b) => (a.profile.name || a.profile.email).localeCompare(b.profile.name || b.profile.email));
+  if (admin.filters.usersSort === 'name_desc') members.sort((a, b) => (b.profile.name || b.profile.email).localeCompare(a.profile.name || a.profile.email));
+  if (admin.filters.usersSort === 'role') members.sort((a, b) => a.role.localeCompare(b.role));
+  if (admin.filters.usersSort === 'newest') members.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  if (members.length === 0) {
+    wrap.innerHTML = `<div class="admin-empty">No matching members.</div>`;
+    return;
+  }
+
+  const rows = members.map(m => {
     const isSelf = m.user_id === admin.user.id;
     return `
       <tr>
@@ -395,7 +427,32 @@ function renderCoursesSection() {
     return;
   }
 
-  const rows = admin.orgCourses.map(c => {
+  hydrateCourseTermFilter();
+
+  const search = admin.filters.coursesSearch.toLowerCase();
+  let courses = admin.orgCourses.filter(c => {
+    const matchTerm = admin.filters.coursesTerm === 'ALL' || (c.term || 'SPRING 2026') === admin.filters.coursesTerm;
+    if (!matchTerm) return false;
+    const instructorText = admin.enrollments
+      .filter(e => e.course_id === c.id && e.role === 'instructor')
+      .map(e => `${e.profile.email} ${e.profile.name || ''}`.toLowerCase())
+      .join(' ');
+    const blob = `${c.name || ''} ${c.code || ''} ${instructorText}`.toLowerCase();
+    return !search || blob.includes(search);
+  });
+
+  if (admin.filters.coursesSort === 'name_asc') courses.sort((a, b) => a.name.localeCompare(b.name));
+  if (admin.filters.coursesSort === 'name_desc') courses.sort((a, b) => b.name.localeCompare(a.name));
+  if (admin.filters.coursesSort === 'created_desc') courses.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  if (admin.filters.coursesSort === 'created_asc') courses.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  if (admin.filters.coursesSort === 'status') courses.sort((a, b) => Number(b.active) - Number(a.active));
+
+  if (courses.length === 0) {
+    wrap.innerHTML = `<div class="admin-empty">No matching courses.</div>`;
+    return;
+  }
+
+  const rows = courses.map(c => {
     const enrollCount = admin.enrollments.filter(e => e.course_id === c.id).length;
     const instructors = admin.enrollments
       .filter(e => e.course_id === c.id && e.role === 'instructor')
@@ -403,12 +460,15 @@ function renderCoursesSection() {
       .join(', ') || '—';
 
     return `
-      <tr>
+      <tr class="${c.active ? '' : 'course-inactive-row'}">
         <td style="font-weight:500;">${escHtml(c.name)}</td>
         <td class="muted">${escHtml(c.code || '—')}</td>
+        <td>${escHtml(c.term || 'SPRING 2026')}</td>
+        <td><span class="course-status-badge ${c.active ? 'course-status-active' : 'course-status-inactive'}">${c.active ? 'Active' : 'Inactive'}</span></td>
         <td>${instructors}</td>
         <td style="text-align:center;">${enrollCount}</td>
         <td>${formatDate(c.created_at)}</td>
+        <td style="text-align:right;"><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);" onclick="deleteCourse('${escHtml(c.id)}','${escHtml(c.name)}')">Delete</button></td>
       </tr>`;
   }).join('');
 
@@ -417,8 +477,8 @@ function renderCoursesSection() {
       <table class="admin-table">
         <thead>
           <tr>
-            <th>Course Name</th><th>Code</th><th>Instructor(s)</th>
-            <th style="text-align:center;">Enrolled</th><th>Created</th>
+            <th>Course Name</th><th>Code</th><th>Term</th><th>Status</th><th>Instructor(s)</th>
+            <th style="text-align:center;">Enrolled</th><th>Created</th><th></th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -443,15 +503,31 @@ function renderEnrollmentsSection() {
     return;
   }
 
+  const search = admin.filters.enrollmentsSearch.toLowerCase();
+
   // Group enrollments by course
   const byCourse = {};
   for (const e of admin.enrollments) {
+    const courseName = (e.course?.name || '').toLowerCase();
+    const email = (e.profile?.email || '').toLowerCase();
+    const name = (e.profile?.name || '').toLowerCase();
+    if (search && !`${courseName} ${email} ${name}`.includes(search)) continue;
     const cid = e.course_id;
     if (!byCourse[cid]) byCourse[cid] = { course: e.course, entries: [] };
     byCourse[cid].entries.push(e);
   }
 
-  const blocks = Object.values(byCourse).map(({ course, entries }) => {
+  let grouped = Object.values(byCourse);
+  if (grouped.length === 0) {
+    wrap.innerHTML = `<div class="admin-empty">No matching enrollments.</div>`;
+    return;
+  }
+  grouped.forEach(g => g.entries.sort((a, b) => new Date(b.enrolled_at) - new Date(a.enrolled_at)));
+  if (admin.filters.enrollmentsSort === 'course_asc') grouped.sort((a, b) => (a.course?.name || '').localeCompare(b.course?.name || ''));
+  if (admin.filters.enrollmentsSort === 'course_desc') grouped.sort((a, b) => (b.course?.name || '').localeCompare(a.course?.name || ''));
+  if (admin.filters.enrollmentsSort === 'newest') grouped.sort((a, b) => new Date(b.entries[0]?.enrolled_at || 0) - new Date(a.entries[0]?.enrolled_at || 0));
+
+  const blocks = grouped.map(({ course, entries }) => {
     const rows = entries.map(e => `
       <tr>
         <td style="font-weight:500;">${escHtml(e.profile.name || '—')}</td>
@@ -487,12 +563,15 @@ function renderEnrollmentsSection() {
 
 // ─── Rendering: Audit Log ─────────────────────────────────────────────────────
 
-async function renderAuditSection() {
+async function renderAuditSection(forceReload = false) {
   const wrap = document.getElementById('auditTableWrap');
   if (!wrap) return;
   wrap.innerHTML = `<div class="muted" style="padding:12px 0;">Loading…</div>`;
 
-  const rows = await loadAuditLog();
+  if (forceReload || admin.auditRows.length === 0) {
+    admin.auditRows = await loadAuditLog();
+  }
+  const rows = filterAndSortAuditRows();
 
   if (rows.length === 0) {
     wrap.innerHTML = `<div class="admin-empty">No audit log entries yet.</div>`;
@@ -518,6 +597,17 @@ async function renderAuditSection() {
         <tbody>${tableRows}</tbody>
       </table>
     </div>`;
+}
+
+function filterAndSortAuditRows() {
+  const search = admin.filters.auditSearch.toLowerCase();
+  let rows = admin.auditRows.filter(r => {
+    const blob = `${r.actor?.email || ''} ${r.action || ''} ${JSON.stringify(r.details || {})}`.toLowerCase();
+    return !search || blob.includes(search);
+  });
+  if (admin.filters.auditSort === 'newest') rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  if (admin.filters.auditSort === 'oldest') rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  return rows;
 }
 
 // ─── CRUD: Add Member ─────────────────────────────────────────────────────────
@@ -660,6 +750,7 @@ function openCreateCourseModal() {
   document.getElementById('courseNameInput').value  = '';
   document.getElementById('courseCodeInput').value  = '';
   document.getElementById('courseDescInput').value  = '';
+  document.getElementById('courseTermInput').value  = 'SPRING 2026';
   hideInlineError('createCourseError');
 
   // Populate instructor dropdown from org members
@@ -681,11 +772,13 @@ async function createCourse() {
   const code         = document.getElementById('courseCodeInput').value.trim();
   const description  = document.getElementById('courseDescInput').value.trim();
   const instructorId = document.getElementById('courseInstructorSelect').value;
+  const term         = document.getElementById('courseTermInput').value.trim();
 
   hideInlineError('createCourseError');
 
   if (!name) { showInlineError('createCourseError', 'Course name is required.'); return; }
   if (!instructorId) { showInlineError('createCourseError', 'Select a primary instructor.'); return; }
+  if (!term) { showInlineError('createCourseError', 'Term is required.'); return; }
 
   setSubmitLoading('createCourseSubmitBtn', true);
 
@@ -698,7 +791,8 @@ async function createCourse() {
       description: description || null,
       org_id:      admin.org.id,
       created_by:  instructorId,
-      active:      true
+      active:      true,
+      term
     })
     .select()
     .single();
@@ -727,7 +821,7 @@ async function createCourse() {
   }
 
   // Audit
-  await auditLog('create_course', 'course', course.id, { name, code, instructor_id: instructorId });
+  await auditLog('create_course', 'course', course.id, { name, code, term, instructor_id: instructorId });
 
   // Refresh local state
   await loadOrgCourses();
@@ -735,6 +829,19 @@ async function createCourse() {
   closeModal('modal-createCourse');
   renderCoursesSection();
   showToast(`Course "${name}" created.`);
+}
+
+async function deleteCourse(courseId, courseName) {
+  if (!confirm(`Delete course "${courseName}" and all course-specific data (enrollments, assignments, submissions, discussions, files, quizzes, modules, etc.)?\n\nThis cannot be undone.`)) return;
+  const { error } = await admin.sb.rpc('delete_course_for_org_superadmin', { p_course_id: courseId });
+  if (error) { showToast(`Error deleting course: ${error.message}`, true); return; }
+
+  await auditLog('delete_course', 'course', courseId, { course_name: courseName });
+  await loadOrgCourses();
+  await loadEnrollments();
+  renderCoursesSection();
+  if (admin.activeSec === 'enrollments') renderEnrollmentsSection();
+  showToast(`Deleted "${courseName}".`);
 }
 
 // ─── CRUD: Add Enrollment ─────────────────────────────────────────────────────
@@ -860,6 +967,22 @@ async function adminLogout() {
   showScreen('login');
 }
 
+function toggleAdminMobileDrawer() {
+  const drawer = document.getElementById('adminMobileDrawer');
+  const backdrop = document.getElementById('adminMobileDrawerBackdrop');
+  if (!drawer || !backdrop) return;
+  drawer.classList.add('open');
+  backdrop.classList.add('visible');
+}
+
+function closeAdminMobileDrawer() {
+  const drawer = document.getElementById('adminMobileDrawer');
+  const backdrop = document.getElementById('adminMobileDrawerBackdrop');
+  if (!drawer || !backdrop) return;
+  drawer.classList.remove('open');
+  backdrop.classList.remove('visible');
+}
+
 async function adminRetryLogin() {
   await admin.sb.auth.signOut();
   showScreen('login');
@@ -974,6 +1097,30 @@ function escHtml(str) {
   return div.innerHTML;
 }
 
+function hydrateCourseTermFilter() {
+  const select = document.getElementById('coursesTermFilter');
+  if (!select) return;
+  const terms = [...new Set(admin.orgCourses.map(c => c.term || 'SPRING 2026'))].sort();
+  select.innerHTML = '<option value="ALL">All Terms</option>';
+  terms.forEach(term => {
+    const opt = document.createElement('option');
+    opt.value = term;
+    opt.textContent = term;
+    select.appendChild(opt);
+  });
+  select.value = terms.includes(admin.filters.coursesTerm) ? admin.filters.coursesTerm : 'ALL';
+}
+
+function setUsersSearch(v) { admin.filters.usersSearch = v.trim(); renderUsersSection(); }
+function setUsersSort(v) { admin.filters.usersSort = v; renderUsersSection(); }
+function setCoursesSearch(v) { admin.filters.coursesSearch = v.trim(); renderCoursesSection(); }
+function setCoursesSort(v) { admin.filters.coursesSort = v; renderCoursesSection(); }
+function setCoursesTermFilter(v) { admin.filters.coursesTerm = v; renderCoursesSection(); }
+function setEnrollmentsSearch(v) { admin.filters.enrollmentsSearch = v.trim(); renderEnrollmentsSection(); }
+function setEnrollmentsSort(v) { admin.filters.enrollmentsSort = v; renderEnrollmentsSection(); }
+function setAuditSearch(v) { admin.filters.auditSearch = v.trim(); renderAuditSection(false); }
+function setAuditSort(v) { admin.filters.auditSort = v; renderAuditSection(false); }
+
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -994,6 +1141,8 @@ function formatDatetime(iso) {
 // Expose onclick handlers (referenced in HTML attributes)
 window.adminSignInWithGoogle  = adminSignInWithGoogle;
 window.adminLogout            = adminLogout;
+window.toggleAdminMobileDrawer = toggleAdminMobileDrawer;
+window.closeAdminMobileDrawer  = closeAdminMobileDrawer;
 window.adminRetryLogin        = adminRetryLogin;
 window.adminNav               = adminNav;
 window.openAddUserModal       = openAddUserModal;
@@ -1003,8 +1152,18 @@ window.commitChangeRole       = commitChangeRole;
 window.removeMember           = removeMember;
 window.openCreateCourseModal  = openCreateCourseModal;
 window.createCourse           = createCourse;
+window.deleteCourse           = deleteCourse;
 window.openAddEnrollmentModal = openAddEnrollmentModal;
 window.addEnrollment          = addEnrollment;
 window.removeEnrollment       = removeEnrollment;
+window.setUsersSearch         = setUsersSearch;
+window.setUsersSort           = setUsersSort;
+window.setCoursesSearch       = setCoursesSearch;
+window.setCoursesSort         = setCoursesSort;
+window.setCoursesTermFilter   = setCoursesTermFilter;
+window.setEnrollmentsSearch   = setEnrollmentsSearch;
+window.setEnrollmentsSort     = setEnrollmentsSort;
+window.setAuditSearch         = setAuditSearch;
+window.setAuditSort           = setAuditSort;
 window.closeModal             = closeModal;
 window.loadAuditLog           = renderAuditSection;
