@@ -1274,30 +1274,13 @@ function renderAll() {
 }
 
 function renderTopBarActions() {
-  // Show/hide import button in sidebar based on user role
-  const importToolBtn = document.getElementById('importToolBtn');
-  if (importToolBtn) {
-    const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
-    importToolBtn.style.display = isStaffUser && !studentViewMode ? 'inline-flex' : 'none';
-  }
-
-  // Hide People, Files, Settings buttons in student view mode OR for actual students
+  // Hide People and Files sidebar buttons in student view mode OR for actual students
   const peopleBtn = document.querySelector('[data-page="people"]');
   const filesBtn = document.querySelector('[data-page="files"]');
-  const settingsBtn = document.querySelector('[onclick="openModal(\'settingsModal\')"]');
-
   const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
   const shouldHide = studentViewMode || (activeCourseId && !isStaffUser);
-
-  if (shouldHide) {
-    if (peopleBtn) peopleBtn.style.display = 'none';
-    if (filesBtn) filesBtn.style.display = 'none';
-    if (settingsBtn) settingsBtn.style.display = 'none';
-  } else {
-    if (peopleBtn) peopleBtn.style.display = 'inline-flex';
-    if (filesBtn) filesBtn.style.display = 'inline-flex';
-    if (settingsBtn) settingsBtn.style.display = 'inline-flex';
-  }
+  if (peopleBtn) peopleBtn.style.display = shouldHide ? 'none' : 'inline-flex';
+  if (filesBtn) filesBtn.style.display = shouldHide ? 'none' : 'inline-flex';
 }
 
 function renderTopBarCourse() {
@@ -1426,14 +1409,16 @@ function renderCourses() {
         <div class="card-header">
           <div>
             <div class="card-title">
-              ${escapeHtml(c.name)}
+              ${isActiveCourse
+                ? escapeHtml(c.name)
+                : `<span style="cursor:pointer; color:var(--primary);" onclick="switchCourse('${c.id}')" title="Switch to this course">${escapeHtml(c.name)}</span>`}
               ${dimmed ? ' <span style="font-size:0.7rem; font-weight:600; background:var(--border-color); color:var(--text-muted); padding:2px 7px; border-radius:10px; vertical-align:middle;">INACTIVE</span>' : ''}
             </div>
             <div class="muted">${escapeHtml(c.code)} · ${roleLabel}</div>
           </div>
-          <div style="display:flex; gap:8px; align-items:center;">
-            ${isActiveCourse ? '' : `<button class="btn btn-primary btn-sm" onclick="switchCourse('${c.id}')">Open</button>`}
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             ${c.role === 'instructor' ? `
+              <button class="btn btn-secondary btn-sm" onclick="openImportContentModal('${c.id}')">Import Content</button>
               <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
               <button class="btn btn-secondary btn-sm" onclick="openCloneCourseModal('${c.id}')">Clone</button>
             ` : ''}
@@ -2970,33 +2955,54 @@ function exportCalendarICS() {
   const items = [
     ...(appData.assignments || [])
       .filter(a => a.courseId === activeCourseId && (isStaffUser || a.status === 'published') && a.dueDate)
-      .map(a => ({ title: `[Assignment] ${a.title}`, date: new Date(a.dueDate), description: a.description || '' })),
+      .map(a => ({ id: a.id, title: `[Assignment] ${a.title}`, date: new Date(a.dueDate), description: a.description || '' })),
     ...(appData.quizzes || [])
       .filter(q => q.courseId === activeCourseId && (isStaffUser || q.status === 'published') && q.dueDate)
-      .map(q => ({ title: `[Quiz] ${q.title}`, date: new Date(q.dueDate), description: q.description || '' }))
+      .map(q => ({ id: q.id, title: `[Quiz] ${q.title}`, date: new Date(q.dueDate), description: q.description || '' }))
   ];
 
+  // Format date as UTC: 20230101T120000Z
   function icsDate(d) {
     return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
   }
 
+  // RFC 5545 text escaping
   function icsEscape(s) {
     return (s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
   }
 
-  const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}@modernlms`;
+  // RFC 5545 line folding: max 75 octets per line, fold with CRLF + space
+  function icsFold(line) {
+    if (line.length <= 75) return line;
+    let result = '';
+    let pos = 0;
+    while (pos < line.length) {
+      if (pos === 0) {
+        result += line.slice(0, 75);
+        pos = 75;
+      } else {
+        result += '\r\n ' + line.slice(pos, pos + 74);
+        pos += 74;
+      }
+    }
+    return result;
+  }
+
+  const dtstamp = icsDate(new Date());
 
   const events = items.map(item => {
     const start = icsDate(item.date);
     const end = icsDate(new Date(item.date.getTime() + 3600000)); // 1 hour duration
+    // Stable UID derived from item ID — same item always produces same UID
+    const uid = `${item.id}@modernlms`;
     return [
       'BEGIN:VEVENT',
-      `UID:${uid()}`,
-      `DTSTAMP:${icsDate(new Date())}`,
+      icsFold(`UID:${uid}`),
+      `DTSTAMP:${dtstamp}`,
       `DTSTART:${start}`,
       `DTEND:${end}`,
-      `SUMMARY:${icsEscape(item.title)}`,
-      item.description ? `DESCRIPTION:${icsEscape(item.description.slice(0, 500))}` : '',
+      icsFold(`SUMMARY:${icsEscape(item.title)}`),
+      item.description ? icsFold(`DESCRIPTION:${icsEscape(item.description.slice(0, 500))}`) : '',
       'END:VEVENT'
     ].filter(Boolean).join('\r\n');
   }).join('\r\n');
@@ -3005,8 +3011,9 @@ function exportCalendarICS() {
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//ModernLMS//EN',
-    `X-WR-CALNAME:${icsEscape(course.name)}`,
+    'METHOD:PUBLISH',
     'CALSCALE:GREGORIAN',
+    icsFold(`X-WR-CALNAME:${icsEscape(course.name)}`),
     events,
     'END:VCALENDAR'
   ].join('\r\n');
@@ -6907,9 +6914,9 @@ function renderStaffGradebook() {
               else if (atype === 'no_submission') ptLabel = `${a.points ?? 0}pts (manual)`;
               else if (atype === 'quiz') ptLabel = `${a.points ?? 0}pts (auto)`;
               else ptLabel = `${a.points ?? 0}pts`;
-              const hiddenBadge = a.visibleToStudents === false ? ' <span title="Hidden from student gradebook" style="font-size:0.7rem; color:#dc2626;">&#128065;&#824;</span>' : '';
-              const statsBadge = a.showStatsToStudents ? ' <span title="Stats visible to students" style="font-size:0.7rem; color:#2563eb;">&#x03BC;</span>' : '';
-              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' \uD83D\uDE48' : ''}${hiddenBadge}${statsBadge}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span><br><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">SpeedGrader</button></th>`;
+              const hiddenBadge = a.visibleToStudents === false ? '<span style="font-size:0.6rem; background:#fee2e2; color:#dc2626; border-radius:4px; padding:1px 4px; white-space:nowrap; display:inline-block; margin:1px 0;">hidden from students</span>' : '';
+              const statsBadge = a.showStatsToStudents ? '<span style="font-size:0.6rem; background:#dbeafe; color:#1d4ed8; border-radius:4px; padding:1px 4px; white-space:nowrap; display:inline-block; margin:1px 0;">stats visible</span>' : '';
+              return `<th style="padding:12px; text-align:center; min-width:140px;">${escapeHtml(a.title)}${a.blindGrading ? ' \uD83D\uDE48' : ''}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<span class="muted" style="font-weight:normal; display:block; margin-top:2px;">(${ptLabel})</span><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">SpeedGrader</button></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>
@@ -8104,133 +8111,164 @@ async function updateCourse() {
   showToast('Course updated', 'success');
 }
 
-function openImportContentModal() {
+function openImportContentModal(sourceCourseId) {
   ensureModalsRendered();
-  const courses = getUserCourses(appData.currentUser.id).filter(c => c.role === 'instructor' && c.id !== activeCourseId);
-  const options = courses.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-  const select = document.getElementById('importSourceCourse');
-  if (select) {
-    select.innerHTML = '<option value="">-- Select a course --</option>' + options;
+  // If sourceCourseId given (clicked from a course card), set it as the source.
+  // Destination is always activeCourseId. If no active course, switch to source first.
+  if (sourceCourseId && sourceCourseId !== activeCourseId) {
+    // source = the card's course, destination = another course the user picks
+    // We'll populate the destination dropdown instead
+    const courses = getUserCourses(appData.currentUser.id).filter(c => c.role === 'instructor' && c.id !== sourceCourseId);
+    const srcLabel = document.getElementById('importSourceLabel');
+    const destSelect = document.getElementById('importDestCourse');
+    const srcName = getCourseById(sourceCourseId)?.name || sourceCourseId;
+    if (srcLabel) srcLabel.textContent = `Source: ${srcName}`;
+    if (destSelect) {
+      destSelect.innerHTML = `<option value="">-- Select destination course --</option>` +
+        courses.map(c => `<option value="${c.id}"${c.id === activeCourseId ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    }
+    document.getElementById('importSourceCourseHidden').value = sourceCourseId;
+    document.getElementById('importSourceRow').style.display = 'none';
+    document.getElementById('importDestRow').style.display = '';
+    document.getElementById('importSourceLabel').style.display = '';
+  } else {
+    // Opened from sidebar (old path): source = dropdown, dest = activeCourseId
+    const courses = getUserCourses(appData.currentUser.id).filter(c => c.role === 'instructor' && c.id !== activeCourseId);
+    const select = document.getElementById('importSourceCourse');
+    if (select) select.innerHTML = '<option value="">-- Select source course --</option>' + courses.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    document.getElementById('importSourceCourseHidden').value = '';
+    document.getElementById('importSourceRow').style.display = '';
+    document.getElementById('importDestRow').style.display = 'none';
+    const srcLabel = document.getElementById('importSourceLabel');
+    if (srcLabel) srcLabel.style.display = 'none';
   }
+  setHTML('importItemsList', '');
   openModal('importContentModal');
+  setTimeout(() => {
+    document.querySelectorAll('.import-type-cb').forEach(cb => { cb.onchange = loadImportItems; });
+  }, 50);
 }
 
+function loadImportItems() {
+  const srcHidden = document.getElementById('importSourceCourseHidden').value;
+  const srcDropdown = document.getElementById('importSourceCourse')?.value;
+  const sourceCourseId = srcHidden || srcDropdown;
+  if (!sourceCourseId) { setHTML('importItemsList', ''); return; }
+
+  const types = Array.from(document.querySelectorAll('.import-type-cb:checked')).map(cb => cb.value);
+  if (types.length === 0) { setHTML('importItemsList', '<div class="muted" style="padding:8px;">Select at least one content type above.</div>'); return; }
+
+  let html = '';
+  const sections = {
+    assignments: appData.assignments.filter(a => a.courseId === sourceCourseId),
+    quizzes:     appData.quizzes.filter(q => q.courseId === sourceCourseId),
+    announcements: appData.announcements.filter(a => a.courseId === sourceCourseId),
+    files:       appData.files.filter(f => f.courseId === sourceCourseId && !f.isPlaceholder)
+  };
+  const labels = { assignments: 'Assignments', quizzes: 'Quizzes', announcements: 'Announcements', files: 'Files' };
+
+  types.forEach(type => {
+    const items = sections[type] || [];
+    if (items.length === 0) return;
+    html += `<div style="margin-bottom:12px;">
+      <div style="font-weight:600; font-size:0.85rem; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between;">
+        ${labels[type]}
+        <span style="font-size:0.75rem; color:var(--text-muted); cursor:pointer;" onclick="toggleImportSection('${type}', this)">select all</span>
+      </div>
+      <div id="importSection_${type}" style="display:flex; flex-direction:column; gap:4px;">
+        ${items.map(item => `
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:5px 8px; border-radius:5px; background:var(--bg-color); font-size:0.85rem;">
+            <input type="checkbox" class="import-item-cb" data-type="${type}" data-id="${item.id}" checked>
+            ${escapeHtml(item.title || item.name || '(untitled)')}
+            ${item.status && item.status !== 'published' ? `<span class="muted" style="font-size:0.75rem;">(${item.status})</span>` : ''}
+          </label>`).join('')}
+      </div>
+    </div>`;
+  });
+
+  setHTML('importItemsList', html || '<div class="muted" style="padding:8px;">No items found in this course for selected types.</div>');
+}
+window.loadImportItems = loadImportItems;
+
+function toggleImportSection(type, el) {
+  const cbs = document.querySelectorAll(`.import-item-cb[data-type="${type}"]`);
+  const allChecked = Array.from(cbs).every(cb => cb.checked);
+  cbs.forEach(cb => { cb.checked = !allChecked; });
+  el.textContent = allChecked ? 'select all' : 'deselect all';
+}
+window.toggleImportSection = toggleImportSection;
+
 async function executeImportContent() {
-  const sourceCourseId = document.getElementById('importSourceCourse').value;
-  const typesSelect = document.getElementById('importContentTypes');
-  const selectedTypes = typesSelect ? Array.from(typesSelect.selectedOptions).map(opt => opt.value) : [];
+  const srcHidden = document.getElementById('importSourceCourseHidden').value;
+  const srcDropdown = document.getElementById('importSourceCourse')?.value;
+  const sourceCourseId = srcHidden || srcDropdown;
 
-  if (!sourceCourseId) {
-    showToast('Please select a source course', 'error');
-    return;
-  }
+  const destDropdown = document.getElementById('importDestCourse')?.value;
+  const destCourseId = destDropdown || activeCourseId;
 
-  if (!activeCourseId) {
-    showToast('No active course', 'error');
-    return;
-  }
+  const selectedTypes = Array.from(document.querySelectorAll('.import-type-cb:checked')).map(cb => cb.value);
 
-  if (selectedTypes.length === 0) {
-    showToast('Select at least one content type to import', 'error');
-    return;
-  }
+  if (!sourceCourseId) { showToast('Please select a source course', 'error'); return; }
+  if (!destCourseId) { showToast('Please select a destination course', 'error'); return; }
+  if (selectedTypes.length === 0) { showToast('Select at least one content type to import', 'error'); return; }
+
+  // Collect selected item IDs per type
+  const selectedIds = {};
+  document.querySelectorAll('.import-item-cb:checked').forEach(cb => {
+    if (!selectedIds[cb.dataset.type]) selectedIds[cb.dataset.type] = new Set();
+    selectedIds[cb.dataset.type].add(cb.dataset.id);
+  });
 
   showToast('Importing content...', 'info');
   let importedCount = 0;
 
   if (selectedTypes.includes('assignments')) {
-    const assignments = appData.assignments.filter(a => a.courseId === sourceCourseId);
-    for (const assignment of assignments) {
-      const newAssignment = {
-        ...assignment,
-        id: generateId(),
-        courseId: activeCourseId,
-        status: 'draft',
-        createdAt: new Date().toISOString()
-      };
-      await supabaseCreateAssignment(newAssignment);
-      appData.assignments.push(newAssignment);
+    const ids = selectedIds['assignments'];
+    const pool = appData.assignments.filter(a => a.courseId === sourceCourseId && (!ids || ids.has(a.id)));
+    for (const assignment of pool) {
+      const newA = { ...assignment, id: generateId(), courseId: destCourseId, status: 'draft', createdAt: new Date().toISOString() };
+      await supabaseCreateAssignment(newA);
+      appData.assignments.push(newA);
       importedCount++;
     }
   }
 
   if (selectedTypes.includes('quizzes')) {
-    const quizzes = appData.quizzes.filter(q => q.courseId === sourceCourseId);
-    for (const quiz of quizzes) {
-      const newQuiz = {
-        ...quiz,
-        id: generateId(),
-        courseId: activeCourseId,
-        status: 'draft',
-        createdAt: new Date().toISOString(),
-        questions: (quiz.questions || []).map(q => ({
-          ...q,
-          id: generateId()
-        }))
-      };
-      await supabaseCreateQuiz(newQuiz);
-      appData.quizzes.push(newQuiz);
+    const ids = selectedIds['quizzes'];
+    const pool = appData.quizzes.filter(q => q.courseId === sourceCourseId && (!ids || ids.has(q.id)));
+    for (const quiz of pool) {
+      const newQ = { ...quiz, id: generateId(), courseId: destCourseId, status: 'draft', createdAt: new Date().toISOString(), questions: (quiz.questions || []).map(q => ({ ...q, id: generateId() })) };
+      await supabaseCreateQuiz(newQ);
+      appData.quizzes.push(newQ);
       importedCount++;
     }
   }
 
   if (selectedTypes.includes('announcements')) {
-    const announcements = appData.announcements.filter(a => a.courseId === sourceCourseId);
-    for (const announcement of announcements) {
-      const newAnnouncement = {
-        ...announcement,
-        id: generateId(),
-        courseId: activeCourseId,
-        authorId: appData.currentUser.id,
-        createdAt: new Date().toISOString(),
-        pinned: false
-      };
-      await supabaseCreateAnnouncement(newAnnouncement);
-      appData.announcements.push(newAnnouncement);
+    const ids = selectedIds['announcements'];
+    const pool = appData.announcements.filter(a => a.courseId === sourceCourseId && (!ids || ids.has(a.id)));
+    for (const ann of pool) {
+      const newAnn = { ...ann, id: generateId(), courseId: destCourseId, authorId: appData.currentUser.id, createdAt: new Date().toISOString(), pinned: false };
+      await supabaseCreateAnnouncement(newAnn);
+      appData.announcements.push(newAnn);
       importedCount++;
     }
   }
 
   if (selectedTypes.includes('files')) {
-    const files = appData.files.filter(f => f.courseId === sourceCourseId);
-    for (const file of files) {
-      const newFile = {
-        ...file,
-        id: generateId(),
-        courseId: activeCourseId,
-        uploadedBy: appData.currentUser.id,
-        uploadedAt: new Date().toISOString()
-      };
+    const ids = selectedIds['files'];
+    const pool = appData.files.filter(f => f.courseId === sourceCourseId && !f.isPlaceholder && (!ids || ids.has(f.id)));
+    for (const file of pool) {
+      const newFile = { ...file, id: generateId(), courseId: destCourseId, uploadedBy: appData.currentUser.id, uploadedAt: new Date().toISOString() };
       await supabaseCreateFile(newFile);
       appData.files.push(newFile);
       importedCount++;
     }
   }
 
-  if (selectedTypes.includes('categoryWeights') && appData.gradeCategories) {
-    const weights = appData.gradeCategories.filter(w => w.courseId === sourceCourseId);
-    // Remove existing categories for this course
-    const existingCategories = appData.gradeCategories.filter(w => w.courseId === activeCourseId);
-    for (const cat of existingCategories) {
-      await supabaseDeleteGradeCategory(cat.id);
-    }
-    appData.gradeCategories = appData.gradeCategories.filter(w => w.courseId !== activeCourseId);
-
-    for (const weight of weights) {
-      const newCategory = {
-        ...weight,
-        id: generateId(),
-        courseId: activeCourseId
-      };
-      await supabaseCreateGradeCategory(newCategory);
-      appData.gradeCategories.push(newCategory);
-    }
-    importedCount += weights.length;
-  }
-
   closeModal('importContentModal');
   renderAll();
-  showToast(`Imported ${importedCount} items`, 'success');
+  showToast(`Imported ${importedCount} item${importedCount !== 1 ? 's' : ''}`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -8600,38 +8638,69 @@ async function saveRubric() {
 function openCategoryWeightsModal() {
   ensureModalsRendered();
   if (!appData.gradeCategories) appData.gradeCategories = [];
-  
+
   const courseCategories = appData.gradeCategories.filter(c => c.courseId === activeCourseId);
-  const existingCategories = new Set(courseCategories.map(c => c.name));
-  
-  // Get all unique categories used in assignments
-  const allCategories = [...new Set(
-    appData.assignments
-      .filter(a => a.courseId === activeCourseId)
-      .map(a => a.category)
-  )];
-  
-  // Create category inputs
+  const assignments = appData.assignments
+    .filter(a => a.courseId === activeCourseId)
+    .sort((a, b) => {
+      const ca = a.category || '', cb = b.category || '';
+      if (ca < cb) return -1;
+      if (ca > cb) return 1;
+      return (a.title || '').localeCompare(b.title || '');
+    });
+
+  if (assignments.length === 0) {
+    setHTML('categoryWeightsList', '<p style="color:var(--text-secondary);">No assignments in this course yet.</p>');
+    updateTotalWeight();
+    openModal('categoryWeightsModal');
+    return;
+  }
+
+  // Detect if existing weights are per-assignment (name matches an assignment ID)
+  const assignmentIds = new Set(assignments.map(a => a.id));
+  const isPerAssignment = courseCategories.some(e => assignmentIds.has(e.name));
+
+  // Default weights: proportional to points
+  const totalPoints = assignments.reduce((s, a) => s + (a.points || 0), 0);
+
   let html = '';
-  allCategories.forEach(category => {
-    const existing = courseCategories.find(c => c.name === category);
-    const weight = existing ? existing.weight * 100 : 0;
-    
+  let currentCategory = null;
+
+  assignments.forEach(assignment => {
+    if ((assignment.category || '') !== currentCategory) {
+      if (currentCategory !== null) html += '</div>';
+      currentCategory = assignment.category || '';
+      const label = currentCategory
+        ? currentCategory.charAt(0).toUpperCase() + currentCategory.slice(1)
+        : 'Uncategorized';
+      html += `<div style="margin-bottom:12px;"><div style="font-size:11px;text-transform:uppercase;color:var(--text-secondary);font-weight:600;margin-bottom:6px;">${escapeHtml(label)}</div>`;
+    }
+
+    const existing = isPerAssignment ? courseCategories.find(c => c.name === assignment.id) : null;
+    const defaultWeight = totalPoints > 0
+      ? ((assignment.points || 0) / totalPoints * 100)
+      : (100 / assignments.length);
+    const weight = existing ? (existing.weight * 100) : defaultWeight;
+
     html += `
-      <div class="form-group">
-        <label class="form-label">${category.charAt(0).toUpperCase() + category.slice(1)}</label>
-        <input type="number" class="form-input category-weight" data-category="${category}" value="${weight}" min="0" max="100" step="1">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <span style="flex:1; font-size:13px;">${escapeHtml(assignment.title)}</span>
+        <span style="font-size:12px; color:var(--text-secondary);">(${assignment.points ?? 0} pts)</span>
+        <input type="number" class="form-input category-weight" data-assignment-id="${assignment.id}"
+               value="${weight.toFixed(1)}" min="0" max="100" step="0.1" style="width:80px;">
+        <span style="font-size:12px; color:var(--text-secondary);">%</span>
       </div>
     `;
   });
-  
+
+  if (currentCategory !== null) html += '</div>';
+
   setHTML('categoryWeightsList', html);
-  
-  // Update total when inputs change
+
   document.querySelectorAll('.category-weight').forEach(input => {
     input.addEventListener('input', updateTotalWeight);
   });
-  
+
   updateTotalWeight();
   openModal('categoryWeightsModal');
 }
@@ -8664,7 +8733,7 @@ async function saveCategoryWeights() {
     weights.push({
       id: generateId(),
       courseId: activeCourseId,
-      name: input.dataset.category,
+      name: input.dataset.assignmentId,
       weight: weight / 100
     });
   });
@@ -8693,51 +8762,51 @@ async function saveCategoryWeights() {
 
   closeModal('categoryWeightsModal');
   renderGradebook();
-  showToast('Category weights saved', 'success');
+  showToast('Assignment weights saved', 'success');
 }
 
 function calculateWeightedGrade(userId, courseId) {
   if (!appData.gradeCategories) return null;
-  
-  const categoryWeights = appData.gradeCategories.filter(c => c.courseId === courseId);
-  if (categoryWeights.length === 0) return null;
-  
+
+  const weightEntries = appData.gradeCategories.filter(c => c.courseId === courseId);
+  if (weightEntries.length === 0) return null;
+
   const assignments = appData.assignments.filter(a => a.courseId === courseId);
-  const categoryScores = {};
-  
-  // Calculate score for each category
-  categoryWeights.forEach(cw => {
-    const categoryAssignments = assignments.filter(a => a.category === cw.name);
-    let totalScore = 0;
-    let totalPoints = 0;
-    
-    categoryAssignments.forEach(assignment => {
+
+  // Detect per-assignment weights: any entry whose `name` is a known assignment ID
+  const assignmentIds = new Set(assignments.map(a => a.id));
+  const isPerAssignment = weightEntries.some(e => assignmentIds.has(e.name));
+
+  let weightedSum = 0, totalWeight = 0;
+
+  if (isPerAssignment) {
+    // Each weight entry references a specific assignment by ID
+    weightEntries.forEach(we => {
+      const assignment = assignments.find(a => a.id === we.name);
+      if (!assignment) return;
       const submission = appData.submissions.find(s => s.assignmentId === assignment.id && s.userId === userId);
       const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-      
-      if (grade && grade.released) {
-        totalScore += grade.score;
-        totalPoints += assignment.points;
+      if (grade && grade.released && assignment.points > 0) {
+        weightedSum += (grade.score / assignment.points) * 100 * we.weight;
+        totalWeight += we.weight;
       }
     });
-    
-    if (totalPoints > 0) {
-      categoryScores[cw.name] = {
-        percentage: (totalScore / totalPoints) * 100,
-        weight: cw.weight
-      };
-    }
-  });
-  
-  // Calculate weighted average
-  let weightedSum = 0;
-  let totalWeight = 0;
-  
-  Object.values(categoryScores).forEach(cs => {
-    weightedSum += cs.percentage * cs.weight;
-    totalWeight += cs.weight;
-  });
-  
+  } else {
+    // Legacy per-category weights
+    const categoryScores = {};
+    weightEntries.forEach(cw => {
+      const catAssignments = assignments.filter(a => a.category === cw.name);
+      let totalScore = 0, totalPoints = 0;
+      catAssignments.forEach(a => {
+        const sub = appData.submissions.find(s => s.assignmentId === a.id && s.userId === userId);
+        const grade = sub ? appData.grades.find(g => g.submissionId === sub.id) : null;
+        if (grade && grade.released) { totalScore += grade.score; totalPoints += a.points; }
+      });
+      if (totalPoints > 0) categoryScores[cw.name] = { percentage: (totalScore / totalPoints) * 100, weight: cw.weight };
+    });
+    Object.values(categoryScores).forEach(cs => { weightedSum += cs.percentage * cs.weight; totalWeight += cs.weight; });
+  }
+
   return totalWeight > 0 ? weightedSum / totalWeight : null;
 }
 
