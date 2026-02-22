@@ -230,6 +230,71 @@ AS $$
   AND    c.org_id   IS NOT NULL;
 $$;
 
+-- Legacy main-app policies may reference enrollments from courses and vice-versa.
+-- These SECURITY DEFINER helpers prevent recursion when those legacy policies
+-- are present by avoiding RLS-dependent self-reference checks.
+CREATE OR REPLACE FUNCTION is_enrolled_in_course(p_course_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM enrollments e
+    WHERE e.course_id = p_course_id
+    AND   e.user_id   = auth.uid()
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION is_instructor_in_course(p_course_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM enrollments e
+    WHERE e.course_id = p_course_id
+    AND   e.user_id   = auth.uid()
+    AND   e.role      = 'instructor'
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION is_course_creator(p_course_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM courses c
+    WHERE c.id = p_course_id
+    AND   c.created_by = auth.uid()
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION is_course_instructor(p_course_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM enrollments e
+    WHERE e.course_id = p_course_id
+    AND   e.user_id   = auth.uid()
+    AND   e.role      = 'instructor'
+  );
+$$;
+
 
 -- ============================================================
 -- STEP 9 — RLS Policies: org_members
@@ -348,6 +413,21 @@ CREATE POLICY "courses: org superadmin delete"
     AND is_org_superadmin(org_id)
   );
 
+-- If legacy course policies already exist, rewrite them in non-recursive form.
+DROP POLICY IF EXISTS "Courses visible to enrolled or created" ON courses;
+DROP POLICY IF EXISTS "Instructors can manage courses"         ON courses;
+
+CREATE POLICY "Courses visible to enrolled or created"
+  ON courses FOR SELECT
+  USING (
+    created_by = auth.uid()
+    OR is_enrolled_in_course(id)
+  );
+
+CREATE POLICY "Instructors can manage courses"
+  ON courses FOR ALL
+  USING (is_instructor_in_course(id));
+
 
 -- ============================================================
 -- STEP 13 — RLS Policies: enrollments
@@ -370,137 +450,6 @@ CREATE POLICY "enrollments: org superadmin insert"
 CREATE POLICY "enrollments: org superadmin delete"
   ON enrollments FOR DELETE
   USING (course_id IN (SELECT get_superadmin_course_ids()));
-
-
--- ============================================================
--- STEP 13B — Secure course cascade deletion helper
---
--- Deletes only rows that are explicitly tied to a course_id.
--- This intentionally avoids touching org-level or user-level rows.
--- ============================================================
-
-CREATE OR REPLACE FUNCTION delete_course_for_org_superadmin(p_course_id UUID)
-RETURNS VOID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_org_id UUID;
-BEGIN
-  SELECT c.org_id
-  INTO v_org_id
-  FROM courses c
-  WHERE c.id = p_course_id;
-
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'Course not found';
-  END IF;
-
-  IF NOT is_org_superadmin(v_org_id) THEN
-    RAISE EXCEPTION 'Not authorized to delete this course';
-  END IF;
-
-  -- Delete direct course-owned data first (if table exists).
-  IF to_regclass('public.assignment_overrides') IS NOT NULL THEN
-    DELETE FROM assignment_overrides WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.quiz_time_overrides') IS NOT NULL THEN
-    DELETE FROM quiz_time_overrides WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.discussion_replies') IS NOT NULL
-     AND to_regclass('public.discussion_threads') IS NOT NULL THEN
-    DELETE FROM discussion_replies
-    WHERE thread_id IN (SELECT id FROM discussion_threads WHERE course_id = p_course_id);
-  END IF;
-
-  IF to_regclass('public.module_items') IS NOT NULL THEN
-    DELETE FROM module_items WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.rubric_criteria') IS NOT NULL
-     AND to_regclass('public.rubrics') IS NOT NULL THEN
-    DELETE FROM rubric_criteria
-    WHERE rubric_id IN (SELECT id FROM rubrics WHERE course_id = p_course_id);
-  END IF;
-
-  IF to_regclass('public.quiz_questions') IS NOT NULL
-     AND to_regclass('public.quizzes') IS NOT NULL THEN
-    DELETE FROM quiz_questions
-    WHERE quiz_id IN (SELECT id FROM quizzes WHERE course_id = p_course_id);
-  END IF;
-
-  IF to_regclass('public.submissions') IS NOT NULL
-     AND to_regclass('public.assignments') IS NOT NULL THEN
-    DELETE FROM submissions
-    WHERE assignment_id IN (SELECT id FROM assignments WHERE course_id = p_course_id);
-  END IF;
-
-  IF to_regclass('public.grades') IS NOT NULL
-     AND to_regclass('public.assignments') IS NOT NULL THEN
-    DELETE FROM grades
-    WHERE assignment_id IN (SELECT id FROM assignments WHERE course_id = p_course_id);
-  END IF;
-
-  IF to_regclass('public.quiz_submissions') IS NOT NULL THEN
-    DELETE FROM quiz_submissions WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.files') IS NOT NULL THEN
-    DELETE FROM files WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.announcements') IS NOT NULL THEN
-    DELETE FROM announcements WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.discussion_threads') IS NOT NULL THEN
-    DELETE FROM discussion_threads WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.modules') IS NOT NULL THEN
-    DELETE FROM modules WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.quizzes') IS NOT NULL THEN
-    DELETE FROM quizzes WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.invites') IS NOT NULL THEN
-    DELETE FROM invites WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.rubrics') IS NOT NULL THEN
-    DELETE FROM rubrics WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.grade_categories') IS NOT NULL THEN
-    DELETE FROM grade_categories WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.grade_settings') IS NOT NULL THEN
-    DELETE FROM grade_settings WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.question_banks') IS NOT NULL THEN
-    DELETE FROM question_banks WHERE course_id = p_course_id;
-  END IF;
-
-  IF to_regclass('public.assignments') IS NOT NULL THEN
-    DELETE FROM assignments WHERE course_id = p_course_id;
-  END IF;
-
-  -- Keep this last among course-owned children.
-  DELETE FROM enrollments WHERE course_id = p_course_id;
-
-  -- Delete the course itself.
-  DELETE FROM courses WHERE id = p_course_id;
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION delete_course_for_org_superadmin(UUID) TO authenticated;
 
 
 -- ============================================================

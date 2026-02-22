@@ -132,76 +132,98 @@ async function adminSignInWithGoogle() {
 async function verifyAndLoad(user) {
   showScreen('loading');
 
-  const orgNumericId = sessionStorage.getItem('admin_org_id');
+  try {
+    const orgNumericId = sessionStorage.getItem('admin_org_id');
 
-  // 1. Look up the org by its URL-friendly numeric_id
-  const { data: org, error: orgErr } = await admin.sb
-    .from('orgs')
-    .select('id, name, numeric_id, type, status')
-    .eq('numeric_id', parseInt(orgNumericId, 10))
-    .maybeSingle();
-
-  if (orgErr || !org) {
-    await admin.sb.auth.signOut();
-    showScreen('error', `Organization #${escHtml(orgNumericId)} not found. Check your database setup.`);
-    return;
-  }
-
-  // 2. Verify superadmin status.
-  //    The RLS policy on org_members requires the caller to be a superadmin
-  //    to read rows WHERE org_id = org.id.  If they're not, the query returns
-  //    zero rows (empty data, no error) — we treat that as denied.
-  const { data: membership, error: memErr } = await admin.sb
-    .from('org_members')
-    .select('id, role')
-    .eq('org_id',  org.id)
-    .eq('user_id', user.id)
-    .eq('role', 'superadmin')
-    .maybeSingle();
-
-  if (memErr || !membership) {
-    await admin.sb.auth.signOut();
-    showScreen('denied',
-      `${user.email} does not have superadmin access to "${org.name}" (org #${orgNumericId}).`
+    // 1. Look up the org by its URL-friendly numeric_id
+    const { data: org, error: orgErr } = await queryWithTimeout(
+      admin.sb
+        .from('orgs')
+        .select('id, name, numeric_id, type, status')
+        .eq('numeric_id', parseInt(orgNumericId, 10))
+        .maybeSingle(),
+      'org_lookup'
     );
-    return;
+
+    if (orgErr || !org) {
+      await admin.sb.auth.signOut();
+      showScreen('error', `Organization #${escHtml(orgNumericId)} not found. Check your database setup.`);
+      return;
+    }
+
+    // 2. Verify superadmin status through RPC helper instead of org_members query.
+    //    This avoids org_members policy dependency chains during login.
+    const { data: isSuperadmin, error: superErr } = await queryWithTimeout(
+      admin.sb.rpc('is_org_superadmin', { p_org_id: org.id }),
+      'superadmin_check'
+    );
+
+    if (superErr || !isSuperadmin) {
+      await admin.sb.auth.signOut();
+      showScreen('denied',
+        `${user.email} does not have superadmin access to "${org.name}" (org #${orgNumericId}).`
+      );
+      return;
+    }
+
+    // 3. Access confirmed — populate state
+    admin.user = user;
+    admin.org  = org;
+
+    // Update top bar
+    const orgTitle = document.getElementById('adminOrgTitle');
+    if (orgTitle) orgTitle.textContent = `Admin — ${org.name}`;
+    const userEmail = document.getElementById('adminUserEmail');
+    if (userEmail) userEmail.textContent = user.email;
+
+    // 4. Show app immediately, then load data so login cannot appear hung.
+    showScreen('app');
+    await loadAdminData();
+    renderCurrentSection();
+  } catch (err) {
+    console.error('[Admin] verifyAndLoad failed:', err);
+    await admin.sb.auth.signOut();
+    showScreen('error', `Admin verification failed: ${err.message || 'Unknown error'}`);
   }
-
-  // 3. Access confirmed — populate state
-  admin.user = user;
-  admin.org  = org;
-
-  // Update top bar
-  const orgTitle = document.getElementById('adminOrgTitle');
-  if (orgTitle) orgTitle.textContent = `Admin — ${org.name}`;
-  const userEmail = document.getElementById('adminUserEmail');
-  if (userEmail) userEmail.textContent = user.email;
-
-  // 4. Load data then show the dashboard
-  await loadAdminData();
-  renderCurrentSection();
-  showScreen('app');
 }
 
 // ─── Data Loading ─────────────────────────────────────────────────────────────
 
 async function loadAdminData() {
-  await Promise.all([
+  const loadErrors = [];
+  const [membersRes, coursesRes] = await Promise.allSettled([
     loadOrgMembers(),
     loadOrgCourses()
   ]);
-  await loadEnrollments(); // depends on orgCourses being loaded first
+
+  if (membersRes.status === 'rejected') loadErrors.push(`members: ${membersRes.reason?.message || membersRes.reason}`);
+  if (coursesRes.status === 'rejected') loadErrors.push(`courses: ${coursesRes.reason?.message || coursesRes.reason}`);
+
+  // depends on orgCourses being loaded first
+  try {
+    await loadEnrollments();
+  } catch (err) {
+    loadErrors.push(`enrollments: ${err.message || err}`);
+  }
+
+  if (loadErrors.length > 0) {
+    console.error('[Admin] loadAdminData partial failure:', loadErrors.join(' | '));
+    showToast('Some admin data failed to load. Open devtools for details.', true);
+  }
 }
 
 async function loadOrgMembers() {
   // Load membership rows
-  const { data: memberships, error } = await admin.sb
-    .from('org_members')
-    .select('id, user_id, role, created_at')
-    .eq('org_id', admin.org.id)
-    .order('created_at', { ascending: true });
+  const { data: memberships, error } = await queryWithTimeout(
+    admin.sb
+      .from('org_members')
+      .select('id, user_id, role, created_at')
+      .eq('org_id', admin.org.id)
+      .order('created_at', { ascending: true }),
+    'load_org_members'
+  );
 
-  if (error) { console.error('[Admin] loadOrgMembers:', error); return; }
+  if (error) throw new Error(`[Admin] loadOrgMembers: ${error.message}`);
 
   if (!memberships || memberships.length === 0) {
     admin.orgMembers = [];
@@ -224,13 +246,16 @@ async function loadOrgMembers() {
 }
 
 async function loadOrgCourses() {
-  const { data: courses, error } = await admin.sb
-    .from('courses')
-    .select('id, name, code, description, active, term, created_at, created_by')
-    .eq('org_id', admin.org.id)
-    .order('created_at', { ascending: false });
+  const { data: courses, error } = await queryWithTimeout(
+    admin.sb
+      .from('courses')
+      .select('id, name, code, description, active, term, created_at, created_by')
+      .eq('org_id', admin.org.id)
+      .order('created_at', { ascending: false }),
+    'load_org_courses'
+  );
 
-  if (error) { console.error('[Admin] loadOrgCourses:', error); return; }
+  if (error) throw new Error(`[Admin] loadOrgCourses: ${error.message}`);
 
   if (!courses || courses.length === 0) {
     admin.orgCourses = [];
@@ -258,13 +283,16 @@ async function loadEnrollments() {
   if (admin.orgCourses.length === 0) { admin.enrollments = []; return; }
 
   const courseIds = admin.orgCourses.map(c => c.id);
-  const { data: enrollments, error } = await admin.sb
-    .from('enrollments')
-    .select('id, course_id, user_id, role, enrolled_at')
-    .in('course_id', courseIds)
-    .order('enrolled_at', { ascending: false });
+  const { data: enrollments, error } = await queryWithTimeout(
+    admin.sb
+      .from('enrollments')
+      .select('id, course_id, user_id, role, enrolled_at')
+      .in('course_id', courseIds)
+      .order('enrolled_at', { ascending: false }),
+    'load_enrollments'
+  );
 
-  if (error) { console.error('[Admin] loadEnrollments:', error); return; }
+  if (error) throw new Error(`[Admin] loadEnrollments: ${error.message}`);
 
   if (!enrollments || enrollments.length === 0) {
     admin.enrollments = [];
@@ -1095,6 +1123,17 @@ function escHtml(str) {
   const div = document.createElement('div');
   div.appendChild(document.createTextNode(String(str)));
   return div.innerHTML;
+}
+
+function queryWithTimeout(queryPromise, label, timeoutMs = 12000) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out while running ${label}`)), timeoutMs);
+  });
+
+  return Promise.race([queryPromise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function hydrateCourseTermFilter() {
