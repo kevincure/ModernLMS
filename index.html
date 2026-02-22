@@ -96,11 +96,100 @@
       </button>
 
       <div class="toolbar-spacer"></div>
+
+      <!-- Settings and logout at the bottom of the sidebar -->
+      <button class="tool-btn" onclick="openModal('settingsModal')" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+        </svg>
+      </button>
+      <button class="tool-btn" onclick="logout()" title="Logout" aria-label="Logout">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+          <path d="M10 17l5-5-5-5"/>
+          <path d="M15 12H3"/>
+        </svg>
+      </button>
     </div>
+
+    <!-- Mobile drawer backdrop -->
+    <div class="mobile-drawer-backdrop" id="mobileDrawerBackdrop" onclick="closeMobileDrawer()" aria-hidden="true"></div>
+
+    <!-- Mobile slide-in navigation drawer -->
+    <nav class="mobile-drawer" id="mobileDrawer" aria-label="Navigation menu">
+      <div class="mobile-drawer-header">
+        <span style="font-weight:600; font-size:1rem;">Menu</span>
+        <button class="modal-close" onclick="closeMobileDrawer()" aria-label="Close menu">&times;</button>
+      </div>
+      <div class="mobile-drawer-body">
+        <button class="mobile-drawer-item" data-page="courses" onclick="navigateTo('courses'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          Courses
+        </button>
+        <button class="mobile-drawer-item" data-page="home" onclick="navigateTo('home'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1v-10.5Z"/></svg>
+          Home
+        </button>
+        <button class="mobile-drawer-item" data-page="updates" onclick="navigateTo('updates'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 0h12l4 4v10H4Z"/><path d="M8 9h8M8 13h8M8 17h6"/></svg>
+          Announcements
+        </button>
+        <button class="mobile-drawer-item" data-page="assignments" onclick="navigateTo('assignments'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>
+          Assignments
+        </button>
+        <button class="mobile-drawer-item" data-page="calendar" onclick="navigateTo('calendar'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v15H4z"/><path d="M8 3v4M16 3v4M4 9h16"/></svg>
+          Calendar
+        </button>
+        <button class="mobile-drawer-item" data-page="modules" onclick="navigateTo('modules'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+          Modules
+        </button>
+        <button class="mobile-drawer-item" data-page="files" onclick="navigateTo('files'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+          Files
+        </button>
+        <button class="mobile-drawer-item" data-page="gradebook" onclick="navigateTo('gradebook'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5M8 17h10"/></svg>
+          Gradebook
+        </button>
+        <button class="mobile-drawer-item" data-page="people" onclick="navigateTo('people'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-8 0"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+          People
+        </button>
+        <button class="mobile-drawer-item" data-page="discussion" onclick="navigateTo('discussion'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Discussion
+        </button>
+        <button class="mobile-drawer-item" onclick="toggleAiOverlay(); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><path d="M7 7h10v10H7z"/></svg>
+          AI Assistant
+        </button>
+      </div>
+      <div class="mobile-drawer-footer">
+        <button class="mobile-drawer-item" onclick="openModal('settingsModal'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+          </svg>
+          Settings
+        </button>
+        <button class="mobile-drawer-item" onclick="logout()">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+            <path d="M10 17l5-5-5-5"/>
+            <path d="M15 12H3"/>
+          </svg>
+          Sign out
+        </button>
+      </div>
+    </nav>
 
     <!-- Main content -->
     <main class="main" id="main-content" tabindex="-1">
-      
+
       <!-- Top bar with user info -->
       <div class="top-bar">
         <div class="top-bar-left">
@@ -111,8 +200,9 @@
         </div>
         <div class="top-bar-right" style="display:flex; align-items:center; gap:8px;">
           <div id="viewToggleContainer"></div>
-          <button class="btn btn-secondary" style="padding:5px 10px; font-size:0.8rem;" onclick="openModal('settingsModal')" title="Settings">&#9881;</button>
-          <button class="btn btn-secondary" style="padding:5px 10px; font-size:0.8rem;" onclick="logout()" title="Logout">Sign out</button>
+          <button class="mobile-menu-btn" onclick="openMobileDrawer()" title="Menu" aria-label="Open navigation menu" aria-expanded="false" id="mobileMenuBtn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+          </button>
         </div>
       </div>
 

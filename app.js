@@ -5192,13 +5192,7 @@ function addQuizQuestion() {
   renderQuizQuestions();
 }
 
-function removeQuizQuestion(index) {
-  quizDraftQuestions.splice(index, 1);
-  if (quizDraftQuestions.length === 0) {
-    quizDraftQuestions.push(createDefaultQuestion());
-  }
-  renderQuizQuestions();
-}
+// removeQuizQuestion is defined in quiz_logic.js (canonical async version)
 
 function updateQuizPointsTotal() {
   const total = quizDraftQuestions.reduce((sum, q) => sum + (parseFloat(q.points) || 0), 0);
@@ -6437,22 +6431,7 @@ async function speedGraderDraftWithAI() {
 
   const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
   const rubric = assignment.rubric ? appData.rubrics.find(r => r.id === assignment.rubric) : null;
-
-  let rubricContext = '';
-  if (rubric && rubric.criteria) {
-    rubricContext = '\n\nRubric criteria:\n' + rubric.criteria.map(c => `- ${c.name} (${c.points} pts): ${c.description}`).join('\n');
-  }
-
-  const prompt = `Grade this student submission for the assignment "${assignment.title}".
-Assignment description: ${assignment.description}
-Max points: ${assignment.points}
-${rubricContext}
-
-Student submission:
-${current.submission.text || 'No text submitted'}
-
-Provide a score (0-${assignment.points}) and constructive feedback. Return JSON:
-{"score": <number>, "feedback": "<string>"}`;
+  const prompt = AI_PROMPTS.speedGraderDraft(assignment, current.submission, rubric);
 
   try {
     showToast('Drafting grade with AI...', 'info');
@@ -8027,6 +8006,32 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
+// ── Mobile drawer ────────────────────────────────────────────────────────────
+function openMobileDrawer() {
+  const drawer = document.getElementById('mobileDrawer');
+  const backdrop = document.getElementById('mobileDrawerBackdrop');
+  const btn = document.getElementById('mobileMenuBtn');
+  if (!drawer) return;
+  drawer.classList.add('open');
+  backdrop?.classList.add('visible');
+  btn?.setAttribute('aria-expanded', 'true');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeMobileDrawer() {
+  const drawer = document.getElementById('mobileDrawer');
+  const backdrop = document.getElementById('mobileDrawerBackdrop');
+  const btn = document.getElementById('mobileMenuBtn');
+  if (!drawer) return;
+  drawer.classList.remove('open');
+  backdrop?.classList.remove('visible');
+  btn?.setAttribute('aria-expanded', 'false');
+  document.body.style.overflow = '';
+}
+
+window.openMobileDrawer = openMobileDrawer;
+window.closeMobileDrawer = closeMobileDrawer;
+
 function saveSettings() {
   closeModal('settingsModal');
   showToast('Settings saved!', 'success');
@@ -9147,19 +9152,7 @@ async function toggleAssignmentVisibility(assignmentId) {
   showToast(shouldHide ? 'Assignment hidden from students' : 'Assignment visible to students', 'success');
 }
 
-function toggleQuizVisibility(quizId) {
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (!quiz) return;
-
-  const wasPublished = quiz.status === 'published';
-  quiz.status = wasPublished ? 'draft' : 'published';
-
-
-  renderAssignments();
-  showToast(wasPublished ? 'Quiz hidden from students' : 'Quiz published!', 'success');
-}
-
-// Note: toggleFileVisibility is defined at line ~4951 - this duplicate was removed
+// toggleQuizVisibility is defined in quiz_logic.js (canonical version with Supabase persistence)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VIEW QUIZ DETAILS (Full Preview)
@@ -9877,9 +9870,8 @@ window.toggleQuizPoolFields = toggleQuizPoolFields;
 window.updateQuizQuestion = updateQuizQuestion;
 window.updateQuizOption = updateQuizOption;
 window.addQuizQuestion = addQuizQuestion;
-window.removeQuizQuestion = removeQuizQuestion;
+// removeQuizQuestion and toggleQuizVisibility are exported by quiz_logic.js
 window.deleteQuiz = deleteQuiz;
-window.toggleQuizVisibility = toggleQuizVisibility;
 window.viewQuizDetails = viewQuizDetails;
 window.viewQuizSubmission = viewQuizSubmission;
 
