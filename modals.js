@@ -1403,6 +1403,22 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <textarea class="form-textarea" id="newAssignmentGradingNotes" rows="2" placeholder="Notes for graders (rubric guidance, key points to check, etc.)"></textarea>
           </div>
 
+          <div style="border-top:1px solid var(--border-color); margin-top:8px; padding-top:12px;">
+            <div style="font-weight:600; margin-bottom:8px; font-size:0.875rem;">Student Gradebook Options</div>
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="newAssignmentVisibleToStudents" checked>
+                Show this column to students in their gradebook
+              </label>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="newAssignmentShowStats">
+                Show class aggregate stats to students (avg, min, max)
+              </label>
+            </div>
+          </div>
+
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">Cancel</button>

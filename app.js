@@ -2364,10 +2364,12 @@ async function saveStartHere() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let announcementsSearch = '';
+let _announcementsSearchTimer = null;
 
 function updateAnnouncementsSearch(value) {
   announcementsSearch = value.toLowerCase();
-  renderUpdates();
+  clearTimeout(_announcementsSearchTimer);
+  _announcementsSearchTimer = setTimeout(renderUpdates, 200);
 }
 
 function renderUpdates() {
@@ -2622,10 +2624,12 @@ async function updateAnnouncement() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let assignmentsSearch = '';
+let _assignmentsSearchTimer = null;
 
 function updateAssignmentsSearch(value) {
   assignmentsSearch = value.toLowerCase();
-  renderAssignments();
+  clearTimeout(_assignmentsSearchTimer);
+  _assignmentsSearchTimer = setTimeout(renderAssignments, 200);
 }
 
 function renderAssignments() {
@@ -4155,6 +4159,9 @@ function openNewAssignmentModal(assignmentId = null) {
     setDateTimePair('newAssignmentAvailableFromDate', 'newAssignmentAvailableFromTime', assignment.availableFrom);
     setDateTimePair('newAssignmentAvailableUntilDate', 'newAssignmentAvailableUntilTime', assignment.availableUntil);
     setDateTimePair('newAssignmentDueDate', 'newAssignmentDueTime', assignment.dueDate);
+
+    document.getElementById('newAssignmentVisibleToStudents').checked = assignment.visibleToStudents !== false;
+    document.getElementById('newAssignmentShowStats').checked = assignment.showStatsToStudents === true;
   } else {
     resetNewAssignmentModal();
   }
@@ -4192,6 +4199,8 @@ function resetNewAssignmentModal() {
   handleGradingTypeChange('essay');
   handleGradingTypeChange('nosub');
   handleModalityChange();
+  document.getElementById('newAssignmentVisibleToStudents').checked = true;
+  document.getElementById('newAssignmentShowStats').checked = false;
 
   // Default dates: availableFrom = today, due = 1 week from now at 23:59
   const pad = n => String(n).padStart(2, '0');
@@ -4541,7 +4550,9 @@ async function saveNewAssignment() {
     allowLateSubmissions: allowLate,
     latePenaltyType,
     lateDeduction: latePenalty,
-    gradingNotes
+    gradingNotes,
+    visibleToStudents: document.getElementById('newAssignmentVisibleToStudents')?.checked !== false,
+    showStatsToStudents: document.getElementById('newAssignmentShowStats')?.checked === true
   };
 
   if (currentNewAssignmentEditId) {
@@ -5310,10 +5321,12 @@ function shuffleArray(list) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let modulesSearch = '';
+let _modulesSearchTimer = null;
 
 function updateModulesSearch(value) {
   modulesSearch = value.toLowerCase();
-  renderModules();
+  clearTimeout(_modulesSearchTimer);
+  _modulesSearchTimer = setTimeout(renderModules, 200);
 }
 
 function renderModules() {
@@ -6669,25 +6682,25 @@ function renderStudentGradebook() {
   setHTML('gradebookActions', '');
   
   const assignments = appData.assignments
-    .filter(a => isAssignmentVisibleInGradebook(a))
+    .filter(a => isAssignmentVisibleInGradebook(a) && a.visibleToStudents !== false)
     .sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
-  
+
   if (assignments.length === 0) {
     setHTML('gradebookWrap', '<div class="empty-state-text">No assignments yet</div>');
     return;
   }
-  
+
   let totalScore = 0;
   let totalPoints = 0;
-  
+
   const html = assignments.map(a => {
     const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
     const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-    
+
     let status = 'Not submitted';
     let score = '—';
     let feedback = '';
-    
+
     if (submission) {
       if (grade && grade.released) {
         status = 'Graded';
@@ -6701,7 +6714,21 @@ function renderStudentGradebook() {
         status = 'Submitted';
       }
     }
-    
+
+    // Aggregate stats shown when instructor has enabled them
+    let statsHtml = '';
+    if (a.showStatsToStudents) {
+      const allSubs = appData.submissions.filter(s => s.assignmentId === a.id);
+      const allGrades = allSubs.map(s => appData.grades.find(g => g.submissionId === s.id)).filter(g => g && g.released && g.score != null);
+      if (allGrades.length > 0) {
+        const scores = allGrades.map(g => g.score);
+        const avg = (scores.reduce((s, v) => s + v, 0) / scores.length).toFixed(1);
+        const mn = Math.min(...scores);
+        const mx = Math.max(...scores);
+        statsHtml = `<div style="margin-top:8px; font-size:0.8rem; color:var(--text-muted);">Class stats (n=${allGrades.length}): avg ${avg}, min ${mn}, max ${mx}</div>`;
+      }
+    }
+
     return `
       <div class="card">
         <div class="card-header">
@@ -6712,6 +6739,7 @@ function renderStudentGradebook() {
           <div style="font-size:1.2rem; font-weight:600;">${score}</div>
         </div>
         ${feedback ? `<div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius);"><strong>Feedback:</strong> ${feedback}</div>` : ''}
+        ${statsHtml}
       </div>
     `;
   }).join('');
@@ -6866,7 +6894,9 @@ function renderStaffGradebook() {
               else if (atype === 'no_submission') ptLabel = `${a.points ?? 0}pts (manual)`;
               else if (atype === 'quiz') ptLabel = `${a.points ?? 0}pts (auto)`;
               else ptLabel = `${a.points ?? 0}pts`;
-              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' 🙈' : ''}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span><br><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">SpeedGrader</button></th>`;
+              const hiddenBadge = a.visibleToStudents === false ? ' <span title="Hidden from student gradebook" style="font-size:0.7rem; color:#dc2626;">&#128065;&#824;</span>' : '';
+              const statsBadge = a.showStatsToStudents ? ' <span title="Stats visible to students" style="font-size:0.7rem; color:#2563eb;">&#x03BC;</span>' : '';
+              return `<th style="padding:12px; text-align:center; min-width:120px;">${escapeHtml(a.title)}${a.blindGrading ? ' \uD83D\uDE48' : ''}${hiddenBadge}${statsBadge}<br><span class="muted" style="font-weight:normal;">(${ptLabel})</span><br><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">SpeedGrader</button></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>
@@ -6957,61 +6987,141 @@ function toggleGradebookStats(headerEl) {
 
 function getLetterGrade(pct, settings) {
   if (!settings) return '—';
-  if (pct >= settings.aMin) return 'A';
-  if (pct >= settings.bMin) return 'B';
-  if (pct >= settings.cMin) return 'C';
-  if (pct >= settings.dMin) return 'D';
+  const scale = settings.gradeScale || 'letter';
+  if (scale === 'pass_fail') {
+    return pct >= (settings.passMin ?? 60) ? 'P' : 'F';
+  }
+  if (scale === 'hp_p_f') {
+    if (pct >= (settings.hpMin ?? 80)) return 'HP';
+    if (pct >= (settings.hpPassMin ?? 60)) return 'P';
+    return 'F';
+  }
+  if (scale === 'letter_plus_minus') {
+    const a = settings.aMin ?? 90, b = settings.bMin ?? 80, c = settings.cMin ?? 70, d = settings.dMin ?? 60;
+    if (pct >= a + 7) return 'A+';
+    if (pct >= a + 3) return 'A';
+    if (pct >= a)     return 'A\u2212';
+    if (pct >= b + 7) return 'B+';
+    if (pct >= b + 3) return 'B';
+    if (pct >= b)     return 'B\u2212';
+    if (pct >= c + 7) return 'C+';
+    if (pct >= c + 3) return 'C';
+    if (pct >= c)     return 'C\u2212';
+    if (pct >= d + 7) return 'D+';
+    if (pct >= d + 3) return 'D';
+    if (pct >= d)     return 'D\u2212';
+    return 'F';
+  }
+  // Standard letter
+  if (pct >= (settings.aMin ?? 90)) return 'A';
+  if (pct >= (settings.bMin ?? 80)) return 'B';
+  if (pct >= (settings.cMin ?? 70)) return 'C';
+  if (pct >= (settings.dMin ?? 60)) return 'D';
   return 'F';
 }
 
 function getGradeColor(letter) {
-  const colors = { A: '#16a34a', B: '#2563eb', C: '#d97706', D: '#dc2626', F: '#991b1b' };
-  return colors[letter] || 'inherit';
+  if (!letter || letter === '—') return 'inherit';
+  const l = String(letter);
+  if (l.startsWith('A') || l === 'HP') return '#16a34a';
+  if (l.startsWith('B') || l === 'P')  return '#2563eb';
+  if (l.startsWith('C'))               return '#d97706';
+  if (l.startsWith('D'))               return '#dc2626';
+  return '#991b1b'; // F
+}
+
+function updateGradeScaleUI() {
+  const scale = document.getElementById('gs_scale')?.value || 'letter';
+  const showLetter = scale === 'letter' || scale === 'letter_plus_minus';
+  document.getElementById('gs_letterCutoffs').style.display = showLetter ? '' : 'none';
+  document.getElementById('gs_plusMinusNote').style.display = scale === 'letter_plus_minus' ? '' : 'none';
+  document.getElementById('gs_passCutoff').style.display = scale === 'pass_fail' ? '' : 'none';
+  document.getElementById('gs_hpCutoffs').style.display = scale === 'hp_p_f' ? '' : 'none';
 }
 
 function openGradeSettingsModal() {
-  const existing = (appData.gradeSettings || []).find(gs => gs.courseId === activeCourseId) || {};
+  // Remove any existing instance to prevent duplicate-id close bug
+  const prev = document.getElementById('gradeSettingsModal');
+  if (prev) prev.remove();
+
+  const gs = (appData.gradeSettings || []).find(g => g.courseId === activeCourseId) || {};
+  const scale = gs.gradeScale || 'letter';
+  const showLetter = scale === 'letter' || scale === 'letter_plus_minus';
   const modalHtml = `
     <div class="modal-overlay" id="gradeSettingsModal" style="display:flex;">
-      <div class="modal" style="max-width:480px;">
+      <div class="modal" style="max-width:520px;">
         <div class="modal-header">
           <h2 class="modal-title">Grade Settings</h2>
-          <button class="modal-close" onclick="closeModal('gradeSettingsModal')">&times;</button>
+          <button class="modal-close" onclick="document.getElementById('gradeSettingsModal').remove()">&times;</button>
         </div>
         <div class="modal-body">
-          <div style="font-weight:600; margin-bottom:12px;">Letter Grade Cutoffs (minimum %)</div>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
-            <div class="form-group">
-              <label class="form-label">A (min %)</label>
-              <input type="number" class="form-input" id="gs_aMin" min="0" max="100" value="${existing.aMin ?? 90}">
+          <div class="form-group">
+            <label class="form-label">Grading Scale</label>
+            <select class="form-input" id="gs_scale" onchange="updateGradeScaleUI()">
+              <option value="letter" ${scale === 'letter' ? 'selected' : ''}>Standard letter grades (A, B, C, D, F)</option>
+              <option value="letter_plus_minus" ${scale === 'letter_plus_minus' ? 'selected' : ''}>Letter grades with +/\u2212 (A+, A, A\u2212, B+, \u2026)</option>
+              <option value="pass_fail" ${scale === 'pass_fail' ? 'selected' : ''}>Pass / Fail</option>
+              <option value="hp_p_f" ${scale === 'hp_p_f' ? 'selected' : ''}>High Pass / Pass / Fail</option>
+            </select>
+          </div>
+
+          <div id="gs_letterCutoffs" style="${showLetter ? '' : 'display:none;'}">
+            <div style="font-weight:600; margin-bottom:8px;">Grade Cutoffs (minimum %)</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
+              <div class="form-group">
+                <label class="form-label">A (min %)</label>
+                <input type="number" class="form-input" id="gs_aMin" min="0" max="100" value="${gs.aMin ?? 90}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">B (min %)</label>
+                <input type="number" class="form-input" id="gs_bMin" min="0" max="100" value="${gs.bMin ?? 80}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">C (min %)</label>
+                <input type="number" class="form-input" id="gs_cMin" min="0" max="100" value="${gs.cMin ?? 70}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">D (min %)</label>
+                <input type="number" class="form-input" id="gs_dMin" min="0" max="100" value="${gs.dMin ?? 60}">
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">B (min %)</label>
-              <input type="number" class="form-input" id="gs_bMin" min="0" max="100" value="${existing.bMin ?? 80}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">C (min %)</label>
-              <input type="number" class="form-input" id="gs_cMin" min="0" max="100" value="${existing.cMin ?? 70}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">D (min %)</label>
-              <input type="number" class="form-input" id="gs_dMin" min="0" max="100" value="${existing.dMin ?? 60}">
+            <div id="gs_plusMinusNote" class="hint" style="margin-bottom:12px;${scale === 'letter_plus_minus' ? '' : 'display:none;'}">
+              +/\u2212 auto-computed from the cutoffs above: A\u2212 = A min, A = A min+3%, A+ = A min+7% (and so on for B, C, D).
             </div>
           </div>
+
+          <div id="gs_passCutoff" style="${scale === 'pass_fail' ? '' : 'display:none;'}">
+            <div class="form-group">
+              <label class="form-label">Pass minimum (%)</label>
+              <input type="number" class="form-input" id="gs_passMin" min="0" max="100" value="${gs.passMin ?? 60}">
+            </div>
+          </div>
+
+          <div id="gs_hpCutoffs" style="${scale === 'hp_p_f' ? '' : 'display:none;'}">
+            <div class="form-group">
+              <label class="form-label">High Pass minimum (%)</label>
+              <input type="number" class="form-input" id="gs_hpMin" min="0" max="100" value="${gs.hpMin ?? 80}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Pass minimum (%)</label>
+              <input type="number" class="form-input" id="gs_hpPassMin" min="0" max="100" value="${gs.hpPassMin ?? 60}">
+            </div>
+          </div>
+
           <div class="form-group">
             <label class="form-label">Grade Curve (add % points to all scores)</label>
-            <input type="number" class="form-input" id="gs_curve" min="0" max="100" value="${existing.curve ?? 0}" placeholder="0 = no curve">
+            <input type="number" class="form-input" id="gs_curve" min="0" max="100" value="${gs.curve ?? 0}" placeholder="0 = no curve">
             <div class="hint">E.g. enter 5 to add 5 percentage points to everyone's score.</div>
           </div>
           <div class="form-group">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="gs_extraCredit" ${existing.extraCreditEnabled ? 'checked' : ''}>
+              <input type="checkbox" id="gs_extraCredit" ${gs.extraCreditEnabled ? 'checked' : ''}>
               Enable extra credit (scores above 100% shown as bonus)
             </label>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('gradeSettingsModal')">Cancel</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('gradeSettingsModal').remove()">Cancel</button>
           <button class="btn btn-primary" onclick="saveGradeSettings()">Save</button>
         </div>
       </div>
@@ -7021,22 +7131,32 @@ function openGradeSettingsModal() {
 }
 
 async function saveGradeSettings() {
+  const scale = document.getElementById('gs_scale')?.value || 'letter';
   const settings = {
     courseId: activeCourseId,
-    aMin: parseFloat(document.getElementById('gs_aMin').value) || 90,
-    bMin: parseFloat(document.getElementById('gs_bMin').value) || 80,
-    cMin: parseFloat(document.getElementById('gs_cMin').value) || 70,
-    dMin: parseFloat(document.getElementById('gs_dMin').value) || 60,
+    gradeScale: scale,
     curve: parseFloat(document.getElementById('gs_curve').value) || 0,
     extraCreditEnabled: document.getElementById('gs_extraCredit').checked
   };
+  if (scale === 'letter' || scale === 'letter_plus_minus') {
+    settings.aMin = parseFloat(document.getElementById('gs_aMin').value) || 90;
+    settings.bMin = parseFloat(document.getElementById('gs_bMin').value) || 80;
+    settings.cMin = parseFloat(document.getElementById('gs_cMin').value) || 70;
+    settings.dMin = parseFloat(document.getElementById('gs_dMin').value) || 60;
+  } else if (scale === 'pass_fail') {
+    settings.passMin = parseFloat(document.getElementById('gs_passMin').value) || 60;
+  } else if (scale === 'hp_p_f') {
+    settings.hpMin = parseFloat(document.getElementById('gs_hpMin').value) || 80;
+    settings.hpPassMin = parseFloat(document.getElementById('gs_hpPassMin').value) || 60;
+  }
   const result = await supabaseUpsertGradeSettings(settings);
   if (result) {
     if (!appData.gradeSettings) appData.gradeSettings = [];
     const idx = appData.gradeSettings.findIndex(gs => gs.courseId === activeCourseId);
     if (idx >= 0) appData.gradeSettings[idx] = { id: result.id, ...settings };
     else appData.gradeSettings.push({ id: result.id, ...settings });
-    closeModal('gradeSettingsModal');
+    const modal = document.getElementById('gradeSettingsModal');
+    if (modal) modal.remove();
     renderGradebook();
     showToast('Grade settings saved!', 'success');
   }
@@ -9377,13 +9497,35 @@ async function postDiscussionAiReply(threadId) {
       ? 'The user is an instructor or TA.'
       : 'The user is a student.';
 
+    // Build course content context — same visibility as student AI:
+    // announcements, assignments, and files available to students
+    const visibleAnnouncements = (appData.announcements || [])
+      .filter(a => a.courseId === activeCourseId && !a.hidden)
+      .map(a => `[Announcement] ${a.title}: ${a.content || '(no content)'}`)
+      .join('\n');
+    const visibleAssignments = (appData.assignments || [])
+      .filter(a => a.courseId === activeCourseId && a.status === 'published' && !a.hidden)
+      .map(a => `[Assignment] ${a.title} (${a.points ?? '?'}pts, due: ${a.dueDate ? new Date(a.dueDate).toLocaleDateString() : 'TBD'}): ${a.description || ''}`)
+      .join('\n');
+    const visibleFiles = (appData.files || [])
+      .filter(f => f.courseId === activeCourseId && !f.hidden && !f.isPlaceholder)
+      .map(f => `[File] ${f.name}`)
+      .join('\n');
+
+    const courseContent = [
+      visibleAnnouncements ? `ANNOUNCEMENTS:\n${visibleAnnouncements}` : '',
+      visibleAssignments ? `ASSIGNMENTS:\n${visibleAssignments}` : '',
+      visibleFiles ? `COURSE FILES: ${visibleFiles}` : ''
+    ].filter(Boolean).join('\n\n');
+
     const systemPrompt = [
       `You are a helpful academic assistant for the course "${course?.name || 'this course'}".`,
       instructorUser ? `Professor: ${instructorUser.name}.` : '',
       taUsers.length ? `Teaching Assistants: ${taUsers.map(t => t.name).join(', ')}.` : '',
       course?.description ? `Course description: ${course.description}` : '',
       roleNote,
-      'Write a reply that stands alone and would make sense posted directly in the discussion thread.',
+      courseContent ? `\n\nCOURSE CONTENT YOU CAN REFERENCE:\n${courseContent}` : '',
+      '\nWrite a reply that stands alone and would make sense posted directly in the discussion thread.',
       'Be clear, concise, and helpful. Do not mention that you are an AI in the reply body itself.'
     ].filter(Boolean).join(' ');
 
@@ -10076,6 +10218,7 @@ window.rejectAiAction = rejectAiActionFromModule;
 // Grade settings
 window.openGradeSettingsModal = openGradeSettingsModal;
 window.saveGradeSettings = saveGradeSettings;
+window.updateGradeScaleUI = updateGradeScaleUI;
 
 // Quiz time overrides
 window.openQuizTimeOverridesModal = openQuizTimeOverridesModal;

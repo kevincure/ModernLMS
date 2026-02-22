@@ -1180,7 +1180,7 @@ export async function uploadFiles() {
         id: fileId,
         courseId: activeCourseId,
         name: file.name,
-        type: file.name.split('.').pop(),
+        type: file.type || 'application/octet-stream',
         size: file.size,
         // Only store storagePath when upload actually succeeded
         storagePath: (!uploadError && uploadData?.path) ? uploadData.path : null,
