@@ -906,8 +906,31 @@ function buildGeminiHistory() {
     } else if (msg.role === 'action' && msg.rejected) {
       role = 'model';
       text = `I proposed a "${msg.actionType}" action but the instructor cancelled it.`;
+    } else if (msg.role === 'tool_step' && msg.result !== null) {
+      // Re-emit tool call + result as model/user turns so the model retains
+      // exact IDs (file IDs, assignment IDs, etc.) across follow-up messages.
+      const toolCallJson = JSON.stringify({ type: 'tool_call', tool: msg.tool });
+      let resultText;
+      if (msg.result._inlineData) {
+        // Binary file: just record name/type so the model knows it was read
+        resultText = `TOOL_RESULT(${msg.tool}): File "${msg.result.name}" (${msg.result.mimeType}) was read as binary.`;
+      } else if (msg.result._textContent !== undefined) {
+        resultText = `TOOL_RESULT(${msg.tool}): ${JSON.stringify({ name: msg.result.name, mimeType: msg.result.mimeType })}\n\n${msg.result._textContent.slice(0, 2000)}`;
+      } else {
+        resultText = `TOOL_RESULT(${msg.tool}): ${JSON.stringify(msg.result)}`;
+      }
+      // Append model turn (tool call) — merge with prior model turn if possible
+      const lastModel = history[history.length - 1];
+      if (lastModel && lastModel.role === 'model') {
+        lastModel.parts[0].text += '\n\n' + toolCallJson;
+      } else {
+        history.push({ role: 'model', parts: [{ text: toolCallJson }] });
+      }
+      // Append user turn (tool result) — always separate
+      history.push({ role: 'user', parts: [{ text: resultText }] });
+      continue;
     } else {
-      continue; // skip tool_step, pending actions, ask_user
+      continue; // skip pending actions, ask_user, incomplete tool_steps
     }
     const last = history[history.length - 1];
     if (last && last.role === role) {

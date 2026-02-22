@@ -123,8 +123,7 @@ export async function loadDataFromSupabase() {
       assignmentOverridesRes,
       quizTimeOverridesRes,
       gradeSettingsRes,
-      questionBanksRes,
-      bankQuestionsRes
+      questionBanksRes
     ] = await Promise.all([
       supabaseClient.from('profiles').select('*'),
       supabaseClient.from('courses').select('*'),
@@ -148,8 +147,7 @@ export async function loadDataFromSupabase() {
       supabaseClient.from('assignment_overrides').select('*'),
       supabaseClient.from('quiz_time_overrides').select('*'),
       supabaseClient.from('grade_settings').select('*'),
-      supabaseClient.from('question_banks').select('*'),
-      supabaseClient.from('bank_questions').select('*').order('position', { ascending: true })
+      supabaseClient.from('question_banks').select('*')
     ]);
 
     // Log any errors
@@ -176,8 +174,7 @@ export async function loadDataFromSupabase() {
       { name: 'assignment_overrides', res: assignmentOverridesRes },
       { name: 'quiz_time_overrides', res: quizTimeOverridesRes },
       { name: 'grade_settings', res: gradeSettingsRes },
-      { name: 'question_banks', res: questionBanksRes },
-      { name: 'bank_questions', res: bankQuestionsRes }
+      { name: 'question_banks', res: questionBanksRes }
     ];
 
 
@@ -461,33 +458,10 @@ export async function loadDataFromSupabase() {
       extraCreditEnabled: gs.extra_credit_enabled ?? false
     }));
 
-    // Question banks with their questions (inline JSONB cache + normalized bank_questions rows)
-    const bankQs = bankQuestionsRes.data || [];
+    // Question banks with their questions (stored as JSONB in question_banks.questions)
     appData.questionBanks = (questionBanksRes.data || []).map(b => {
-      // Prefer the normalized bank_questions rows when available; fall back to JSONB cache
-      const normalizedQs = bankQs.filter(q => q.bank_id === b.id);
-      const questions = normalizedQs.length > 0
-        ? normalizedQs.map(q => ({
-            id: q.id,
-            type: q.type,
-            prompt: q.prompt,
-            options: q.options || [],
-            correctAnswer: q.correct_answer,
-            points: q.points || 1,
-            title: q.title || null,
-            timeDependt: q.time_dependent || false,
-            timeLimit: q.time_limit || null,
-            feedbackGeneral: q.feedback_general || null,
-            feedbackCorrect: q.feedback_correct || null,
-            feedbackIncorrect: q.feedback_incorrect || null,
-            hint: q.hint || null,
-            shuffleOptions: q.shuffle_options || false,
-            partialCredit: q.partial_credit || 'all_or_nothing',
-            caseSensitive: q.case_sensitive || false,
-            position: q.position || 0
-          }))
-        : (Array.isArray(b.questions) ? b.questions
-           : (typeof b.questions === 'string' ? JSON.parse(b.questions || '[]') : []));
+      const questions = Array.isArray(b.questions) ? b.questions
+        : (typeof b.questions === 'string' ? JSON.parse(b.questions || '[]') : []);
       return {
         id: b.id,
         courseId: b.course_id,

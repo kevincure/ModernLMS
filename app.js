@@ -8041,15 +8041,6 @@ document.addEventListener('keydown', function(e) {
 });
 
 function saveSettings() {
-  // Caliper sensor configuration
-  const caliperEndpoint = document.getElementById('settingsCaliperEndpoint')?.value?.trim() || '';
-  const caliperSensorId = document.getElementById('settingsCaliperSensorId')?.value?.trim() || 'campus-lms';
-  localStorage.setItem('caliperEndpoint', caliperEndpoint);
-  localStorage.setItem('caliperSensorId', caliperSensorId);
-  if (caliperEndpoint) {
-    initCaliperSensor(caliperSensorId, caliperEndpoint);
-  }
-
   closeModal('settingsModal');
   showToast('Settings saved!', 'success');
 }
