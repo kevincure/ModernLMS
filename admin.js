@@ -419,11 +419,11 @@ function renderUsersSection() {
         <td style="text-align:right; white-space:nowrap;">
           ${isSelf ? '<span class="muted" style="font-size:0.8rem;">(you)</span>' : `
             <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;"
-              onclick="openChangeRoleModal('${escHtml(m.id)}', '${escHtml(m.profile.email)}', '${escHtml(m.role)}')">
+              onclick="openChangeRoleModal(${escHtml(JSON.stringify(m.id))}, ${escHtml(JSON.stringify(m.profile.email))}, ${escHtml(JSON.stringify(m.role))})">
               Change Role
             </button>
             <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; margin-left:4px; color:var(--danger);"
-              onclick="removeMember('${escHtml(m.id)}', '${escHtml(m.profile.email)}')">
+              onclick="removeMember(${escHtml(JSON.stringify(m.id))}, ${escHtml(JSON.stringify(m.profile.email))})">
               Remove
             </button>
           `}
@@ -496,7 +496,7 @@ function renderCoursesSection() {
         <td>${instructors}</td>
         <td style="text-align:center;">${enrollCount}</td>
         <td>${formatDate(c.created_at)}</td>
-        <td style="text-align:right;"><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);" onclick="deleteCourse('${escHtml(c.id)}','${escHtml(c.name)}')">Delete</button></td>
+        <td style="text-align:right;"><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);" onclick="deleteCourse(${escHtml(JSON.stringify(c.id))},${escHtml(JSON.stringify(c.name))})">Delete</button></td>
       </tr>`;
   }).join('');
 
@@ -565,7 +565,7 @@ function renderEnrollmentsSection() {
         <td style="text-align:right;">
           <button class="btn btn-secondary"
             style="padding:4px 10px; font-size:0.8rem; color:var(--danger);"
-            onclick="removeEnrollment('${escHtml(e.id)}', '${escHtml(e.profile.email)}', '${escHtml(course?.name || '')}')">
+            onclick="removeEnrollment(${escHtml(JSON.stringify(e.id))}, ${escHtml(JSON.stringify(e.profile.email))}, ${escHtml(JSON.stringify(course?.name || ''))})">
             Remove
           </button>
         </td>
@@ -752,24 +752,29 @@ async function commitChangeRole() {
 
 // ─── CRUD: Remove Member ──────────────────────────────────────────────────────
 
-async function removeMember(membershipId, email) {
-  if (!confirm(`Remove ${email} from this organization?\nThis will not delete their account or course enrollments.`)) return;
+function removeMember(membershipId, email) {
+  openConfirmModal(
+    'Remove Member',
+    `Remove ${email} from this organization? This will not delete their account or course enrollments.`,
+    async () => {
+      const member = admin.orgMembers.find(m => m.id === membershipId);
 
-  const member = admin.orgMembers.find(m => m.id === membershipId);
+      const { error } = await admin.sb
+        .from('org_members')
+        .delete()
+        .eq('id', membershipId)
+        .eq('org_id', admin.org.id);
 
-  const { error } = await admin.sb
-    .from('org_members')
-    .delete()
-    .eq('id', membershipId)
-    .eq('org_id', admin.org.id);
+      if (error) { showToast(`Error: ${error.message}`, true); return; }
 
-  if (error) { showToast(`Error: ${error.message}`, true); return; }
+      await auditLog('remove_org_member', 'user', member?.user_id, { email });
 
-  await auditLog('remove_org_member', 'user', member?.user_id, { email });
-
-  admin.orgMembers = admin.orgMembers.filter(m => m.id !== membershipId);
-  renderUsersSection();
-  showToast(`${email} removed from organization.`);
+      admin.orgMembers = admin.orgMembers.filter(m => m.id !== membershipId);
+      renderUsersSection();
+      showToast(`${email} removed from organization.`);
+    },
+    'Remove'
+  );
 }
 
 // ─── CRUD: Create Course ──────────────────────────────────────────────────────
@@ -859,17 +864,23 @@ async function createCourse() {
   showToast(`Course "${name}" created.`);
 }
 
-async function deleteCourse(courseId, courseName) {
-  if (!confirm(`Delete course "${courseName}" and all course-specific data (enrollments, assignments, submissions, discussions, files, quizzes, modules, etc.)?\n\nThis cannot be undone.`)) return;
-  const { error } = await admin.sb.rpc('delete_course_for_org_superadmin', { p_course_id: courseId });
-  if (error) { showToast(`Error deleting course: ${error.message}`, true); return; }
+function deleteCourse(courseId, courseName) {
+  openConfirmModal(
+    'Delete Course',
+    `Delete "${courseName}" and all course-specific data (enrollments, assignments, submissions, discussions, files, quizzes, modules, etc.)? This cannot be undone.`,
+    async () => {
+      const { error } = await admin.sb.rpc('delete_course_for_org_superadmin', { p_course_id: courseId });
+      if (error) { showToast(`Error deleting course: ${error.message}`, true); return; }
 
-  await auditLog('delete_course', 'course', courseId, { course_name: courseName });
-  await loadOrgCourses();
-  await loadEnrollments();
-  renderCoursesSection();
-  if (admin.activeSec === 'enrollments') renderEnrollmentsSection();
-  showToast(`Deleted "${courseName}".`);
+      await auditLog('delete_course', 'course', courseId, { course_name: courseName });
+      await loadOrgCourses();
+      await loadEnrollments();
+      renderCoursesSection();
+      if (admin.activeSec === 'enrollments') renderEnrollmentsSection();
+      showToast(`Deleted "${courseName}".`);
+    },
+    'Delete'
+  );
 }
 
 // ─── CRUD: Add Enrollment ─────────────────────────────────────────────────────
@@ -949,21 +960,26 @@ async function addEnrollment() {
 
 // ─── CRUD: Remove Enrollment ──────────────────────────────────────────────────
 
-async function removeEnrollment(enrollmentId, email, courseName) {
-  if (!confirm(`Remove ${email} from "${courseName}"?`)) return;
+function removeEnrollment(enrollmentId, email, courseName) {
+  openConfirmModal(
+    'Remove Enrollment',
+    `Remove ${email} from "${courseName}"?`,
+    async () => {
+      const { error } = await admin.sb
+        .from('enrollments')
+        .delete()
+        .eq('id', enrollmentId);
 
-  const { error } = await admin.sb
-    .from('enrollments')
-    .delete()
-    .eq('id', enrollmentId);
+      if (error) { showToast(`Error: ${error.message}`, true); return; }
 
-  if (error) { showToast(`Error: ${error.message}`, true); return; }
+      await auditLog('remove_enrollment', 'enrollment', enrollmentId, { email, course_name: courseName });
 
-  await auditLog('remove_enrollment', 'enrollment', enrollmentId, { email, course_name: courseName });
-
-  admin.enrollments = admin.enrollments.filter(e => e.id !== enrollmentId);
-  renderEnrollmentsSection();
-  showToast(`${email} removed from "${courseName}".`);
+      admin.enrollments = admin.enrollments.filter(e => e.id !== enrollmentId);
+      renderEnrollmentsSection();
+      showToast(`${email} removed from "${courseName}".`);
+    },
+    'Remove'
+  );
 }
 
 // ─── Audit Logging ────────────────────────────────────────────────────────────
@@ -1041,6 +1057,34 @@ function showScreen(name, message) {
   if (name === 'error' && message) {
     const el = document.getElementById('errorMessage');
     if (el) el.textContent = message;
+  }
+}
+
+// ─── Confirmation Modal ───────────────────────────────────────────────────────
+
+let _pendingConfirmAction = null;
+
+/**
+ * Opens the generic destructive-action confirmation modal.
+ * @param {string} title    - Modal header text
+ * @param {string} body     - Explanation shown to the user
+ * @param {Function} action - Async function to call if the user clicks Confirm
+ * @param {string} okLabel  - Label for the confirm button (default: 'Confirm')
+ */
+function openConfirmModal(title, body, action, okLabel = 'Confirm') {
+  document.getElementById('confirmModalTitle').textContent = title;
+  document.getElementById('confirmModalBody').textContent  = body;
+  document.getElementById('confirmModalOkBtn').textContent = okLabel;
+  _pendingConfirmAction = action;
+  openModal('modal-confirm');
+}
+
+async function executeConfirmAction() {
+  closeModal('modal-confirm');
+  if (typeof _pendingConfirmAction === 'function') {
+    const fn = _pendingConfirmAction;
+    _pendingConfirmAction = null;
+    await fn();
   }
 }
 
@@ -1205,4 +1249,5 @@ window.setEnrollmentsSort     = setEnrollmentsSort;
 window.setAuditSearch         = setAuditSearch;
 window.setAuditSort           = setAuditSort;
 window.closeModal             = closeModal;
+window.executeConfirmAction   = executeConfirmAction;
 window.loadAuditLog           = renderAuditSection;
