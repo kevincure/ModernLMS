@@ -573,8 +573,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
 
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+          <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Close</button>
         </div>
       </div>
     </div>

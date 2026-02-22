@@ -712,26 +712,7 @@ export async function supabaseCreateAssignment(assignment) {
     created_by: appData.currentUser?.id
   };
 
-  let { data, error } = await supabaseClient.from('assignments').insert(modernPayload).select().single();
-
-  if (error?.code === 'PGRST204' && /available_from|available_until|hidden/.test(error.message || '')) {
-    console.warn('[Supabase] Modern assignment columns missing, retrying create with legacy assignment schema');
-    const legacyPayload = {
-      id: assignment.id,
-      course_id: assignment.courseId,
-      title: assignment.title,
-      description: assignment.description || null,
-      points: assignment.points || 100,
-      status: assignment.status || 'draft',
-      due_date: assignment.dueDate || null,
-      allow_late_submissions: assignment.allowLateSubmissions !== false,
-      late_deduction: assignment.lateDeduction || 10,
-      allow_resubmission: assignment.allowResubmission !== false,
-      category: assignment.category || 'homework',
-      created_by: appData.currentUser?.id
-    };
-    ({ data, error } = await supabaseClient.from('assignments').insert(legacyPayload).select().single());
-  }
+  const { data, error } = await supabaseClient.from('assignments').insert(modernPayload).select().single();
 
   if (error) {
     console.error('[Supabase] Error creating assignment:', error);
@@ -777,26 +758,7 @@ export async function supabaseUpdateAssignment(assignment) {
     show_stats_to_students: assignment.showStatsToStudents === true
   };
 
-  let { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
-
-  if (error?.code === 'PGRST204' && /available_from|available_until|hidden/.test(error.message || '')) {
-    console.warn('[Supabase] Modern assignment columns missing, retrying update with legacy assignment schema');
-    const legacyPayload = {
-      title: assignment.title,
-      description: assignment.description,
-      points: assignment.points,
-      status: assignment.status,
-      due_date: assignment.dueDate,
-      allow_late_submissions: assignment.allowLateSubmissions,
-      late_deduction: assignment.lateDeduction,
-      allow_resubmission: assignment.allowResubmission,
-      submission_attempts: assignment.submissionAttempts || null,
-      grading_type: assignment.gradingType || 'points',
-      assignment_type: assignment.assignmentType || 'essay',
-      category: assignment.category
-    };
-    ({ data, error } = await supabaseClient.from('assignments').update(legacyPayload).eq('id', assignment.id).select().single());
-  }
+  const { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
 
   if (error) {
     console.error('[Supabase] Error updating assignment:', error);
@@ -1426,26 +1388,7 @@ export async function supabaseCreateFile(file) {
     hidden: file.hidden || false
   };
 
-  let { data, error } = await supabaseClient.from('files').insert(modernPayload).select().single();
-
-  if (error?.code === 'PGRST204' && /mime_type|size_bytes|storage_path/.test(error.message || '')) {
-    console.warn('[Supabase] Canonical file columns missing, retrying with legacy file schema');
-    const legacyPayload = {
-      id: file.id,
-      course_id: file.courseId,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      uploaded_by: file.uploadedBy,
-      uploaded_at: file.uploadedAt,
-      external_url: file.externalUrl,
-      description: file.description,
-      is_placeholder: file.isPlaceholder,
-      is_youtube: file.isYouTube,
-      hidden: file.hidden || false
-    };
-    ({ data, error } = await supabaseClient.from('files').insert(legacyPayload).select().single());
-  }
+  const { data, error } = await supabaseClient.from('files').insert(modernPayload).select().single();
 
   if (error) {
     console.error('[Supabase] Error creating file:', error);
@@ -1531,22 +1474,7 @@ export async function supabaseUpdateFile(file) {
     hidden: file.hidden || false
   };
 
-  let { data, error } = await supabaseClient.from('files').update(modernPayload).eq('id', file.id).select().maybeSingle();
-
-  if (error?.code === 'PGRST204' && /mime_type|size_bytes|storage_path/.test(error.message || '')) {
-    console.warn('[Supabase] Canonical file columns missing, retrying update with legacy file schema');
-    const legacyPayload = {
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      external_url: file.externalUrl,
-      description: file.description,
-      is_placeholder: file.isPlaceholder,
-      is_youtube: file.isYouTube,
-      hidden: file.hidden || false
-    };
-    ({ data, error } = await supabaseClient.from('files').update(legacyPayload).eq('id', file.id).select().maybeSingle());
-  }
+  const { data, error } = await supabaseClient.from('files').update(modernPayload).eq('id', file.id).select().maybeSingle();
 
   if (!error && !data) {
     console.warn('[Supabase] File update affected 0 rows:', file.id);
@@ -1593,13 +1521,6 @@ export async function supabaseCreateQuestionBank(bank) {
   const { data, error } = await supabaseClient.from('question_banks').insert(insertPayload).select().single();
 
   if (error) {
-    // PGRST204: column not yet in schema cache — retry without 'questions' (pre-migration fallback)
-    if (error.code === 'PGRST204' && /questions/.test(error.message || '')) {
-      console.warn('[Supabase] question_banks.questions column missing — run supabase_question_bank_questions_col.sql');
-      const { questions: _q, ...payloadWithout } = insertPayload;
-      const { data: d2, error: e2 } = await supabaseClient.from('question_banks').insert(payloadWithout).select().single();
-      if (!e2) { console.log('[Supabase] Question bank created (without questions cache)'); return d2 || bank; }
-    }
     console.error('[Supabase] Error creating question bank:', error);
     return bank;
   }
@@ -1630,13 +1551,6 @@ export async function supabaseUpdateQuestionBank(bank) {
   const { data, error } = await supabaseClient.from('question_banks').update(updatePayload).eq('id', bank.id).select().single();
 
   if (error) {
-    // PGRST204: column not yet in schema cache — retry without 'questions'
-    if (error.code === 'PGRST204' && /questions/.test(error.message || '')) {
-      console.warn('[Supabase] question_banks.questions column missing — run supabase_question_bank_questions_col.sql');
-      const { questions: _q, ...payloadWithout } = updatePayload;
-      const { data: d2, error: e2 } = await supabaseClient.from('question_banks').update(payloadWithout).eq('id', bank.id).select().single();
-      if (!e2) return d2 || bank;
-    }
     console.error('[Supabase] Error updating question bank:', error);
     return bank;
   }
@@ -2025,12 +1939,7 @@ export async function supabaseUpsertGradeSettings(settings) {
     curve: settings.curve ?? 0,
     extra_credit_enabled: settings.extraCreditEnabled ?? false
   };
-  let { data, error } = await supabaseClient.from('grade_settings').upsert(payload, { onConflict: 'course_id' }).select().single();
-  // Graceful fallback if new columns don't exist yet
-  if (error?.code === 'PGRST204' || (error?.message || '').includes('grade_scale')) {
-    const legacy = { course_id: payload.course_id, a_min: payload.a_min ?? 90, b_min: payload.b_min ?? 80, c_min: payload.c_min ?? 70, d_min: payload.d_min ?? 60, curve: payload.curve, extra_credit_enabled: payload.extra_credit_enabled };
-    ({ data, error } = await supabaseClient.from('grade_settings').upsert(legacy, { onConflict: 'course_id' }).select().single());
-  }
+  const { data, error } = await supabaseClient.from('grade_settings').upsert(payload, { onConflict: 'course_id' }).select().single();
   if (error) { console.error('[Supabase] Upsert grade settings error:', error); showToast('Failed to save grade settings', 'error'); return null; }
   return data;
 }

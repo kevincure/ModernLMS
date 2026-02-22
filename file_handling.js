@@ -3,6 +3,8 @@
 // Handles file uploads, downloads, drag-and-drop, syllabus parsing
 // ═══════════════════════════════════════════════════════════════════════════════
 
+import { AI_PROMPTS } from './constants.js';
+
 // Module dependencies (injected via init)
 let appData = null;
 let activeCourseId = null;
@@ -428,38 +430,7 @@ export async function parseSyllabus() {
   const fileInput = document.getElementById('syllabusFile');
   const textInput = document.getElementById('syllabusText').value.trim();
 
-  const systemPrompt = `You are analyzing a course syllabus. Extract all assignments, modules/units, readings, and due dates. Return ONLY valid JSON with the following structure:
-{
-  "courseInfo": {
-    "name": "Course name if found",
-    "code": "Course code if found (e.g., ECON 101)",
-    "instructor": "Instructor name if found",
-    "description": "Course description if found"
-  },
-  "modules": [
-    {
-      "name": "Module/Week/Unit name",
-      "items": [
-        {
-          "type": "assignment" | "quiz" | "reading",
-          "title": "Item title",
-          "description": "Brief description if available",
-          "dueDate": "ISO date string if available, or null",
-          "points": "number if available, or 100"
-        }
-      ]
-    }
-  ]
-}
-
-IMPORTANT RULES:
-1. Extract EACH reading/textbook chapter/article as a SEPARATE item with type "reading"
-   - If syllabus says "Read chapters 1-3", create THREE separate reading items: "Chapter 1", "Chapter 2", "Chapter 3"
-   - If syllabus lists "Smith (2020), Jones (2019)", create TWO separate reading items
-2. For exams, quizzes, midterms, finals, or tests: set type to "quiz"
-3. For homework, problem sets, essays, papers, projects: set type to "assignment"
-4. Group items by week/module/unit as presented in the syllabus
-5. Extract course metadata (name, code, instructor) if available at the top of the syllabus`;
+  const systemPrompt = AI_PROMPTS.parseSyllabus;
 
   let contents;
 
