@@ -2596,7 +2596,6 @@ function renderAssignments() {
       <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-assign-${a.id}')">☰</button>
       <div id="menu-assign-${a.id}" class="floating-menu">
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
-        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkReleaseGrades('${a.id}')">🔓 Release Grades</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleAssignmentVisibility('${a.id}')">${assignmentVisibilityText}</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); editAssignment('${a.id}')">Edit</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
@@ -4536,7 +4535,7 @@ function openSubmissionView(assignmentId) {
       </div>
     </div>
   `;
-  document.getElementById('modalsContainer').innerHTML += html;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
 }
 window.openSubmissionView = openSubmissionView;
 // Legacy alias — kept so any cached HTML with old onclick doesn't throw
@@ -4583,7 +4582,7 @@ window.viewAssignmentQuizResult = function(assignmentId) {
   viewQuizSubmission(sub.quizId || assignmentId, sub);
 };
 
-function saveSubmission() {
+async function saveSubmission() {
   const assignmentId = document.getElementById('submitModalAssignmentId').value;
   const text = document.getElementById('submissionText').value.trim();
   const fileInput = document.getElementById('submissionFile');
@@ -4646,11 +4645,10 @@ function saveSubmission() {
     // For small files (< 1MB), store as base64
     if (file.size < 1048576) {
       const reader = new FileReader();
-      reader.onload = function(e) {
+      reader.onload = async function(e) {
         submission.fileData = e.target.result;
         appData.submissions.push(submission);
-      
-        
+        supabaseCreateSubmission(submission);
         closeModal('submitModal');
         renderAssignments();
         showToast('Submission saved!', 'success');
@@ -4668,6 +4666,7 @@ function saveSubmission() {
   appData.submissions.push(submission);
   // Caliper: AssignableEvent/Submitted
   caliperAssignmentSubmit(appData.currentUser, assignment);
+  await supabaseCreateSubmission(submission);
 
   closeModal('submitModal');
   renderAssignments();
@@ -4678,7 +4677,7 @@ function saveSubmission() {
   } else {
     showToast('Submission saved!', 'success');
   }
-  
+
   document.getElementById('submissionText').value = '';
   fileInput.value = '';
 }
@@ -4789,7 +4788,7 @@ function viewSubmissions(assignmentId) {
           <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
             <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">SpeedGrader</button>
             <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">📋 Bulk Import Grades</button>
-            <button class="btn btn-secondary btn-sm" onclick="bulkReleaseGrades('${assignmentId}')">🔓 Release All Grades</button>
+            <button class="btn btn-secondary btn-sm" onclick="bulkReleaseGrades('${assignmentId}')">Release All Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="downloadAllSubmissions('${assignmentId}')">📥 Download All (ZIP)</button>
           </div>
           ${submissions.length === 0 ? '<div class="empty-state-text">No submissions yet</div>' : submissions.map(s => {
@@ -4811,7 +4810,7 @@ function viewSubmissions(assignmentId) {
                     </div>
                   </div>
                   <div style="display:flex; gap:8px; align-items:center;">
-                    ${grade ? `<span class="muted">${grade.score}/${assignment.points} ${grade.released ? '' : '🔒'}</span>` : ''}
+                    ${grade ? `<span class="muted">${grade.score}/${assignment.points}${grade.released ? '' : ' (unreleased)'}</span>` : ''}
                     <button class="btn btn-secondary btn-sm" onclick="viewSubmissionHistory('${assignmentId}', '${s.userId}')">History</button>
                     <button class="btn btn-primary btn-sm" onclick="gradeSubmission('${s.id}', '${assignmentId}')">Grade</button>
                   </div>
@@ -6645,12 +6644,22 @@ function renderStudentGradebook() {
     let feedback = '';
 
     if (submission) {
+      const gt = a.gradingType || 'points';
       if (grade && grade.released) {
         status = 'Graded';
-        score = `${grade.score}/${a.points}`;
+        if (gt === 'complete_incomplete') {
+          score = grade.score > 0 ? 'Complete' : 'Incomplete';
+          totalScore += grade.score > 0 ? a.points : 0;
+          totalPoints += a.points;
+        } else if (gt === 'letter_grade') {
+          score = String(grade.score);
+          // letter grades don't contribute to numeric total
+        } else {
+          score = `${grade.score}/${a.points}`;
+          totalScore += grade.score;
+          totalPoints += a.points;
+        }
         feedback = grade.feedback;
-        totalScore += grade.score;
-        totalPoints += a.points;
       } else if (grade && !grade.released) {
         status = 'Submitted (grading in progress)';
       } else {
@@ -6689,25 +6698,27 @@ function renderStudentGradebook() {
   
   const percentage = totalPoints > 0 ? ((totalScore / totalPoints) * 100).toFixed(1) : '—';
   const weightedGrade = calculateWeightedGrade(appData.currentUser.id, activeCourseId);
-  
-  let summary = `
-    <div class="card" style="background:var(--primary-light); border-color:var(--primary); margin-bottom:16px;">
-      <div class="card-header">
-        <div class="card-title">Overall Grade</div>
-        <div style="font-size:1.5rem; font-weight:600;">${percentage}%</div>
-      </div>
-      <div class="muted">${totalScore} / ${totalPoints} points</div>
-  `;
-  
-  if (weightedGrade !== null) {
-    summary += `<div style="margin-top:12px; padding:12px; background:white; border-radius:var(--radius);">
-      <strong>Weighted Grade:</strong> ${weightedGrade.toFixed(1)}%
-      <div class="muted" style="font-size:0.85rem; margin-top:4px;">Based on category weights</div>
-    </div>`;
+  const gradeSettings = (appData.gradeSettings || []).find(gs => gs.courseId === activeCourseId);
+
+  let summary = '';
+  if (!gradeSettings || gradeSettings.showOverallToStudents !== false) {
+    summary = `
+      <div class="card" style="background:var(--primary-light); border-color:var(--primary); margin-bottom:16px;">
+        <div class="card-header">
+          <div class="card-title">Overall Grade</div>
+          <div style="font-size:1.5rem; font-weight:600;">${weightedGrade !== null ? weightedGrade.toFixed(1) + '%' : (percentage !== '—' ? percentage + '%' : '—')}</div>
+        </div>
+        <div class="muted">${totalScore} / ${totalPoints} points</div>
+    `;
+    if (weightedGrade !== null) {
+      summary += `<div style="margin-top:12px; padding:12px; background:white; border-radius:var(--radius);">
+        <strong>Weighted Grade:</strong> ${weightedGrade.toFixed(1)}%
+        <div class="muted" style="font-size:0.85rem; margin-top:4px;">Based on category weights</div>
+      </div>`;
+    }
+    summary += '</div>';
   }
-  
-  summary += '</div>';
-  
+
   setHTML('gradebookWrap', summary + html);
 }
 
@@ -6839,7 +6850,16 @@ function renderStaffGradebook() {
               else ptLabel = `${a.points ?? 0}pts`;
               const hiddenBadge = a.visibleToStudents === false ? '<span style="font-size:0.6rem; background:#fee2e2; color:#dc2626; border-radius:4px; padding:1px 4px; white-space:nowrap; display:inline-block; margin:1px 0;">hidden from students</span>' : '';
               const statsBadge = a.showStatsToStudents ? '<span style="font-size:0.6rem; background:#dbeafe; color:#1d4ed8; border-radius:4px; padding:1px 4px; white-space:nowrap; display:inline-block; margin:1px 0;">stats visible</span>' : '';
-              return `<th style="padding:12px; text-align:center; min-width:140px;">${escapeHtml(a.title)}${a.blindGrading ? ' \uD83D\uDE48' : ''}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<span class="muted" style="font-weight:normal; display:block; margin-top:2px;">(${ptLabel})</span><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" onclick="openSpeedGrader('${a.id}')">SpeedGrader</button></th>`;
+              const colMenuId = `menu-gb-col-${a.id}`;
+              const allGrades = appData.submissions.filter(s => s.assignmentId === a.id)
+                .map(s => appData.grades.find(g => g.submissionId === s.id))
+                .filter(g => g);
+              const anyReleased = allGrades.some(g => g.released);
+              const anyUnreleased = allGrades.some(g => !g.released);
+              const releaseHideBtn = anyUnreleased
+                ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkReleaseGrades('${a.id}')">Release Grades</button>`
+                : (anyReleased ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkHideGrades('${a.id}')">Hide Grades</button>` : '');
+              return `<th style="padding:12px; text-align:center; min-width:140px; position:relative;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<span class="muted" style="font-weight:normal; display:block; margin-top:2px;">(${ptLabel})</span><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">&#9660; Actions</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">SpeedGrader</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Submissions</button></div></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>
@@ -6890,7 +6910,8 @@ function renderStaffGradebook() {
                       totalPoints += a.points;
                       cellContent = `${grade.score}`;
                     }
-                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${cellContent} ${grade.released ? '' : '🔒'}</td>`;
+                    const unreleasedBadge = grade.released ? '' : '<span style="font-size:0.65rem; background:#fee2e2; color:#dc2626; border-radius:3px; padding:1px 4px; margin-left:4px;">unreleased</span>';
+                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${cellContent}${unreleasedBadge}</td>`;
                   }
                   return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
@@ -6913,9 +6934,8 @@ function renderStaffGradebook() {
         </tbody>
       </table>
     </div>
-    <div class="muted" style="margin-top:12px; font-size:0.85rem;">🔒 = Grade not yet released to student · 🙈 = Blind grading enabled</div>
   `;
-  
+
   setHTML('gradebookWrap', statsHTML + table);
 }
 
@@ -7062,6 +7082,13 @@ function openGradeSettingsModal() {
               Enable extra credit (scores above 100% shown as bonus)
             </label>
           </div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="gs_showOverall" ${gs.showOverallToStudents !== false ? 'checked' : ''}>
+              Show overall grade calculation to students
+            </label>
+            <div class="hint">When unchecked, the overall grade summary card is hidden from the student gradebook view.</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="document.getElementById('gradeSettingsModal').remove()">Cancel</button>
@@ -7079,7 +7106,8 @@ async function saveGradeSettings() {
     courseId: activeCourseId,
     gradeScale: scale,
     curve: parseFloat(document.getElementById('gs_curve').value) || 0,
-    extraCreditEnabled: document.getElementById('gs_extraCredit').checked
+    extraCreditEnabled: document.getElementById('gs_extraCredit').checked,
+    showOverallToStudents: document.getElementById('gs_showOverall')?.checked ?? true
   };
   if (scale === 'letter' || scale === 'letter_plus_minus') {
     settings.aMin = parseFloat(document.getElementById('gs_aMin').value) || 90;
@@ -8799,7 +8827,9 @@ function calculateWeightedGrade(userId, courseId) {
       const submission = appData.submissions.find(s => s.assignmentId === assignment.id && s.userId === userId);
       const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
       if (grade && grade.released && assignment.points > 0) {
-        weightedSum += (grade.score / assignment.points) * 100 * we.weight;
+        const gt = assignment.gradingType || 'points';
+        const pct = gt === 'complete_incomplete' ? (grade.score > 0 ? 100 : 0) : (grade.score / assignment.points) * 100;
+        weightedSum += pct * we.weight;
         totalWeight += we.weight;
       }
     });
@@ -8812,7 +8842,11 @@ function calculateWeightedGrade(userId, courseId) {
       catAssignments.forEach(a => {
         const sub = appData.submissions.find(s => s.assignmentId === a.id && s.userId === userId);
         const grade = sub ? appData.grades.find(g => g.submissionId === sub.id) : null;
-        if (grade && grade.released) { totalScore += grade.score; totalPoints += a.points; }
+        if (grade && grade.released) {
+          const gt = a.gradingType || 'points';
+          totalScore += gt === 'complete_incomplete' ? (grade.score > 0 ? a.points : 0) : grade.score;
+          totalPoints += a.points;
+        }
       });
       if (totalPoints > 0) categoryScores[cw.name] = { percentage: (totalScore / totalPoints) * 100, weight: cw.weight };
     });
@@ -8929,6 +8963,25 @@ function bulkReleaseGrades(assignmentId) {
     showToast(`Released ${released} grade${released !== 1 ? 's' : ''} to students`, 'success');
   });
 }
+
+function bulkHideGrades(assignmentId) {
+  ensureModalsRendered();
+  showConfirmDialog('Hide all grades for this assignment from students?', async () => {
+    const submissions = appData.submissions.filter(s => s.assignmentId === assignmentId);
+    let hidden = 0;
+    for (const submission of submissions) {
+      const grade = appData.grades.find(g => g.submissionId === submission.id);
+      if (grade && grade.released) {
+        grade.released = false;
+        hidden++;
+        await supabaseUpsertGrade(grade);
+      }
+    }
+    renderGradebook();
+    showToast(`Hidden ${hidden} grade${hidden !== 1 ? 's' : ''} from students`, 'success');
+  });
+}
+window.bulkHideGrades = bulkHideGrades;
 
 function viewSubmissionHistory(assignmentId, userId) {
   const submissions = appData.submissions

@@ -457,7 +457,8 @@ export async function loadDataFromSupabase() {
       hpMin: gs.hp_min ?? 80,
       hpPassMin: gs.hp_pass_min ?? 60,
       curve: gs.curve ?? 0,
-      extraCreditEnabled: gs.extra_credit_enabled ?? false
+      extraCreditEnabled: gs.extra_credit_enabled ?? false,
+      showOverallToStudents: gs.show_overall_to_students ?? true
     }));
 
     // Question banks with their questions (stored as JSONB in question_banks.questions)
@@ -1997,7 +1998,8 @@ export async function supabaseUpsertGradeSettings(settings) {
     hp_min: settings.hpMin ?? null,
     hp_pass_min: settings.hpPassMin ?? null,
     curve: settings.curve ?? 0,
-    extra_credit_enabled: settings.extraCreditEnabled ?? false
+    extra_credit_enabled: settings.extraCreditEnabled ?? false,
+    show_overall_to_students: settings.showOverallToStudents ?? true
   };
   const { data, error } = await supabaseClient.from('grade_settings').upsert(payload, { onConflict: 'course_id' }).select().single();
   if (error) { console.error('[Supabase] Upsert grade settings error:', error); showToast('Failed to save grade settings', 'error'); return null; }
