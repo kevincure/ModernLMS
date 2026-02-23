@@ -1161,12 +1161,17 @@ function showToast(msg, isError = false) {
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
-/** HTML-escape user data before injecting into innerHTML */
+/** HTML-escape user data before injecting into innerHTML or onclick attributes.
+ *  Encodes &, <, >, ", and ' so the result is safe in both text content and
+ *  double-quoted HTML attribute values (e.g. onclick="fn(&quot;…&quot;)"). */
 function escHtml(str) {
   if (str === null || str === undefined) return '';
-  const div = document.createElement('div');
-  div.appendChild(document.createTextNode(String(str)));
-  return div.innerHTML;
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function queryWithTimeout(queryPromise, label, timeoutMs = 12000) {
