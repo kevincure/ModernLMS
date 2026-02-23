@@ -98,22 +98,22 @@ export function generateModals() {
             💡 YouTube links are automatically converted to embeds for inline viewing.
           </div>
           <div class="form-group">
-            <label class="form-label">Title</label>
+            <label class="form-label" for="externalLinkTitle">Title</label>
             <input type="text" class="form-input" id="externalLinkTitle" placeholder="e.g., Lecture Video #1">
           </div>
           <div class="form-group">
-            <label class="form-label">URL</label>
+            <label class="form-label" for="externalLinkUrl">URL</label>
             <input type="url" class="form-input" id="externalLinkUrl" placeholder="https://...">
           </div>
           <div class="form-group">
-            <label class="form-label">Add to</label>
+            <label class="form-label" for="externalLinkType">Add to</label>
             <select class="form-select" id="externalLinkType" onchange="document.getElementById('externalLinkModuleGroup').style.display = this.value === 'module' ? 'block' : 'none';">
               <option value="file">Files (as external link)</option>
               <option value="module">Module item</option>
             </select>
           </div>
           <div class="form-group" id="externalLinkModuleGroup" style="display:none;">
-            <label class="form-label">Select Module</label>
+            <label class="form-label" for="externalLinkModuleSelect">Select Module</label>
             <select class="form-select" id="externalLinkModuleSelect">
               ${moduleOptions}
             </select>
@@ -135,15 +135,15 @@ export function generateModals() {
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Title</label>
+            <label class="form-label" for="announcementTitle">Title</label>
             <input type="text" class="form-input" id="announcementTitle" placeholder="Enter title">
           </div>
           <div class="form-group">
-            <label class="form-label">Content</label>
-            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('announcementContent')" title="Insert Link">🔗 Link</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('announcementContent')" title="Insert File">📄 File</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('announcementContent')" title="Insert Video">📹 Video</button>
+            <label class="form-label" for="announcementContent">Content</label>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;" role="toolbar" aria-label="Text formatting">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('announcementContent')" title="Insert Link">Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('announcementContent')" title="Insert File">File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('announcementContent')" title="Insert Video">Video</button>
             </div>
             <textarea class="form-textarea" id="announcementContent" placeholder="Write your update... (supports Markdown)"></textarea>
             <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
@@ -172,40 +172,42 @@ export function generateModals() {
         </div>
         <div class="modal-body">
           <div class="form-group" style="padding:12px; background:var(--primary-light); border-radius:var(--radius); margin-bottom:16px;">
-            <label class="form-label" style="margin-bottom:8px;">Quick Start: Upload Syllabus (optional)</label>
+            <label class="form-label" for="syllabusDropZone" style="margin-bottom:8px;">Quick Start: Upload Syllabus (optional)</label>
             <div id="syllabusDropZone" class="drop-zone"
+                 role="button" tabindex="0"
+                 aria-label="Upload syllabus file — drag and drop or press Enter to browse"
                  ondragover="handleDragOver(event, 'syllabusDropZone')"
                  ondragleave="handleDragLeave(event, 'syllabusDropZone')"
                  ondrop="handleSyllabusDrop(event)"
                  onclick="document.getElementById('courseCreationSyllabus').click()"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('courseCreationSyllabus').click();}"
                  style="border:2px dashed var(--border-color); border-radius:var(--radius); padding:24px; text-align:center; cursor:pointer; transition:all 0.2s;">
-              <div style="margin-bottom:8px;">📄</div>
               <div style="font-weight:500;">Drag & drop syllabus here</div>
-              <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
+              <div class="muted" style="font-size:0.85rem;">or press Enter to browse (PDF, DOC, TXT)</div>
               <input type="file" id="courseCreationSyllabus" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusFileSelected()">
             </div>
             <div id="courseCreationSyllabusStatus" style="margin-top:8px;"></div>
           </div>
           <div class="form-group">
-            <label class="form-label">Course Name</label>
+            <label class="form-label" for="courseName">Course Name</label>
             <input type="text" class="form-input" id="courseName" placeholder="e.g., ECON 101 - Introduction to Economics">
           </div>
           <div class="form-group">
-            <label class="form-label">Course Code</label>
+            <label class="form-label" for="courseCode">Course Code</label>
             <input type="text" class="form-input" id="courseCode" placeholder="e.g., ECON101">
           </div>
           <div class="form-group">
-            <label class="form-label">Description (optional)</label>
+            <label class="form-label" for="courseDescription">Description (optional)</label>
             <textarea class="form-textarea" id="courseDescription" placeholder="Course description..." rows="2"></textarea>
           </div>
           <div class="form-group">
-            <label class="form-label">Student Emails (optional)</label>
+            <label class="form-label" for="courseEmails">Student Emails (optional)</label>
             <textarea class="form-textarea" id="courseEmails" placeholder="Enter emails separated by commas, semicolons, or newlines:
 student1@university.edu, student2@university.edu" rows="3"></textarea>
             <div class="hint">Students will be invited to join the course</div>
           </div>
           <div id="courseCreationModulesPreview" style="display:none;">
-            <label class="form-label">Modules to Create from Syllabus</label>
+            <label class="form-label" for="courseCreationModulesList">Modules to Create from Syllabus</label>
             <div id="courseCreationModulesList" style="max-height:200px; overflow-y:auto; border:1px solid var(--border-light); border-radius:var(--radius); padding:8px;"></div>
           </div>
         </div>
@@ -242,21 +244,21 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Title</label>
+            <label class="form-label" for="assignmentTitle">Title</label>
             <input type="text" class="form-input" id="assignmentTitle" placeholder="Enter title">
           </div>
           <div class="form-group">
-            <label class="form-label">Description</label>
-            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('assignmentDescription')" title="Insert Link">🔗 Link</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('assignmentDescription')" title="Insert File">📄 File</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('assignmentDescription')" title="Insert Video">📹 Video</button>
+            <label class="form-label" for="assignmentDescription">Description</label>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;" role="toolbar" aria-label="Text formatting">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('assignmentDescription')" title="Insert Link">Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('assignmentDescription')" title="Insert File">File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('assignmentDescription')" title="Insert Video">Video</button>
             </div>
             <textarea class="form-textarea" id="assignmentDescription" placeholder="Describe the assignment... (supports Markdown)"></textarea>
             <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
           </div>
           <div class="form-group">
-            <label class="form-label">Category</label>
+            <label class="form-label" for="assignmentCategory">Category</label>
             <select class="form-select" id="assignmentCategory">
               <option value="quiz">Quiz</option>
               <option value="exam">Exam</option>
@@ -266,11 +268,11 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Points</label>
+            <label class="form-label" for="assignmentPoints">Points</label>
             <input type="number" class="form-input" id="assignmentPoints" value="100" min="1">
           </div>
           <div class="form-group">
-            <label class="form-label">Due Date</label>
+            <label class="form-label" for="assignmentDueDate">Due Date</label>
             <input type="date" class="form-input" id="assignmentDueDate" style="margin-bottom:8px;">
             <div style="display:flex; gap:8px; align-items:center;">
               <select class="form-select" id="assignmentDueHour" style="width:auto;">
@@ -287,7 +289,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Status</label>
+            <label class="form-label" for="assignmentStatus">Status</label>
             <select class="form-select" id="assignmentStatus">
               <option value="draft">Draft (not visible to students)</option>
               <option value="published">Published</option>
@@ -300,7 +302,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             </label>
           </div>
           <div class="form-group" id="lateDeductionGroup">
-            <label class="form-label">Late Deduction (% per day)</label>
+            <label class="form-label" for="assignmentLateDeduction">Late Deduction (% per day)</label>
             <input type="number" class="form-input" id="assignmentLateDeduction" value="10" min="0" max="100">
           </div>
           <div class="form-group">
@@ -332,16 +334,16 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Quiz Title</label>
+            <label class="form-label" for="quizTitle">Quiz Title</label>
             <input type="text" class="form-input" id="quizTitle" placeholder="e.g., Week 2 Quiz">
           </div>
           <div class="form-group">
-            <label class="form-label">Description (optional)</label>
+            <label class="form-label" for="quizDescription">Description (optional)</label>
             <textarea class="form-textarea" id="quizDescription" placeholder="Add instructions..." rows="3"></textarea>
           </div>
           <div class="form-grid">
             <div class="form-group">
-              <label class="form-label">Due Date</label>
+              <label class="form-label" for="quizDueDate">Due Date</label>
               <input type="date" class="form-input" id="quizDueDate" style="margin-bottom:8px;">
               <div style="display:flex; gap:8px; align-items:center;">
                 <select class="form-select" id="quizDueHour" style="width:auto;">
@@ -358,18 +360,18 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">Status</label>
+              <label class="form-label" for="quizStatus">Status</label>
               <select class="form-select" id="quizStatus">
                 <option value="draft">Draft</option>
                 <option value="published">Published</option>
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">Time Limit (minutes)</label>
+              <label class="form-label" for="quizTimeLimit">Time Limit (minutes)</label>
               <input type="number" class="form-input" id="quizTimeLimit" min="0" placeholder="e.g., 30">
             </div>
             <div class="form-group">
-              <label class="form-label">Attempts Allowed</label>
+              <label class="form-label" for="quizAttempts">Attempts Allowed</label>
               <input type="number" class="form-input" id="quizAttempts" min="0" placeholder="Leave blank for unlimited">
             </div>
           </div>
@@ -386,7 +388,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             </label>
           </div>
           <div class="form-group" id="quizPoolCountGroup" style="display:none;">
-            <label class="form-label">Questions to show</label>
+            <label class="form-label" for="quizPoolCount">Questions to show</label>
             <input type="number" class="form-input" id="quizPoolCount" min="1" placeholder="e.g., 5">
           </div>
           <div class="card" style="padding:16px; margin-top:16px;">
@@ -457,11 +459,11 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
           <input type="hidden" id="quizGradeQuizId">
           <div id="quizGradeAnswers" class="quiz-grade-list"></div>
           <div class="form-group">
-            <label class="form-label">Score</label>
+            <label class="form-label" for="quizGradeScore">Score</label>
             <input type="number" class="form-input" id="quizGradeScore" min="0" placeholder="Enter score">
           </div>
           <div class="form-group">
-            <label class="form-label">Feedback (optional)</label>
+            <label class="form-label" for="quizGradeFeedback">Feedback (optional)</label>
             <textarea class="form-textarea" id="quizGradeFeedback" rows="3" placeholder="Leave feedback..."></textarea>
           </div>
         </div>
@@ -498,11 +500,11 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         <div class="modal-body">
           <input type="hidden" id="submitModalAssignmentId">
           <div class="form-group">
-            <label class="form-label">Submission Text</label>
+            <label class="form-label" for="submissionText">Submission Text</label>
             <textarea class="form-textarea" id="submissionText" placeholder="Enter your submission..."></textarea>
           </div>
           <div class="form-group">
-            <label class="form-label">Upload File (optional)</label>
+            <label class="form-label" for="submissionFile">Upload File (optional)</label>
             <input type="file" class="form-input" id="submissionFile">
             <div class="hint">Files under 1MB stored locally. Larger files: metadata only.</div>
           </div>
@@ -523,16 +525,18 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Select Files (up to 50)</label>
+            <label class="form-label" for="fileDropZone">Select Files (up to 50)</label>
             <div id="fileDropZone"
+                 role="button" tabindex="0"
+                 aria-label="Upload files — drag and drop or press Enter to browse"
                  style="border:2px dashed var(--border-color); border-radius:var(--radius); padding:32px; text-align:center; cursor:pointer; transition: all 0.2s;"
                  ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'; this.style.background='var(--primary-light)';"
                  ondragleave="this.style.borderColor='var(--border-color)'; this.style.background='';"
                  ondrop="handleFilesDrop(event)"
-                 onclick="document.getElementById('fileUpload').click()">
-              <div style="font-size:2rem; margin-bottom:8px; opacity:0.5;">📁</div>
+                 onclick="document.getElementById('fileUpload').click()"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('fileUpload').click();}">
               <div style="font-weight:500; margin-bottom:4px;">Drag and drop files here</div>
-              <div class="muted">or click to browse</div>
+              <div class="muted">or press Enter to browse</div>
             </div>
             <input type="file" class="form-input" id="fileUpload" accept=".pdf,.doc,.docx,.txt,.tex,.png,.jpg,.jpeg,.gif,.webp,.svg,.ppt,.pptx,.xls,.xlsx,.zip" multiple style="display:none;" onchange="updateFileUploadPreview()">
             <div id="fileUploadPreview" style="margin-top:12px;"></div>
@@ -584,21 +588,21 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         <div class="modal-body">
           <input type="hidden" id="startHereCourseId">
           <div class="form-group">
-            <label class="form-label">Title</label>
+            <label class="form-label" for="startHereTitle">Title</label>
             <input type="text" class="form-input" id="startHereTitle" placeholder="Start Here">
           </div>
           <div class="form-group">
-            <label class="form-label">Intro content (supports Markdown)</label>
-            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('startHereContent')" title="Insert Link">🔗 Link</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('startHereContent')" title="Insert File">📄 File</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('startHereContent')" title="Insert Video">📹 Video</button>
+            <label class="form-label" for="startHereContent">Intro content (supports Markdown)</label>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;" role="toolbar" aria-label="Text formatting">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('startHereContent')" title="Insert Link">Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('startHereContent')" title="Insert File">File</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('startHereContent')" title="Insert Video">Video</button>
             </div>
             <textarea class="form-textarea" id="startHereContent" rows="4" placeholder="Welcome message..."></textarea>
             <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
           </div>
           <div class="form-group">
-            <label class="form-label">Pinned essentials</label>
+            <label class="form-label" for="startHereLinksEditor">Pinned essentials</label>
             <div class="hint" style="margin-bottom:8px;">Add essential links for students (syllabus, office hours, etc.)</div>
             <div id="startHereLinksEditor"></div>
             <button type="button" class="btn btn-secondary btn-sm" onclick="addStartHereLink()" style="margin-top:8px;">+ Add link</button>
@@ -620,7 +624,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         <div class="modal-body">
           <div class="form-grid">
             <div class="form-group">
-              <label class="form-label">Create</label>
+              <label class="form-label" for="aiCreateType">Create</label>
               <select class="form-select" id="aiCreateType" onchange="updateAiCreateType()">
                 <option value="announcement">Announcement</option>
                 <option value="quiz">Quiz</option>
@@ -628,16 +632,16 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               </select>
             </div>
             <div class="form-group" id="aiQuizGroup">
-              <label class="form-label">Question count</label>
+              <label class="form-label" for="aiQuestionCount">Question count</label>
               <input type="number" class="form-input" id="aiQuestionCount" min="1" value="5">
             </div>
           </div>
           <div class="form-group" id="aiRubricGroup" style="display:none;">
-            <label class="form-label">Assignment</label>
+            <label class="form-label" for="aiRubricAssignment">Assignment</label>
             <select class="form-select" id="aiRubricAssignment"></select>
           </div>
           <div class="form-group">
-            <label class="form-label">Prompt</label>
+            <label class="form-label" for="aiCreatePrompt">Prompt</label>
             <textarea class="form-textarea" id="aiCreatePrompt" rows="4" placeholder="Describe what you want the AI to draft..."></textarea>
           </div>
           <div class="card" style="padding:16px; margin-top:12px;">
@@ -679,15 +683,15 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Course Name</label>
+            <label class="form-label" for="editCourseName">Course Name</label>
             <input type="text" class="form-input" id="editCourseName" placeholder="e.g., ECON 101 - Introduction to Economics">
           </div>
           <div class="form-group">
-            <label class="form-label">Course Code</label>
+            <label class="form-label" for="editCourseCode">Course Code</label>
             <input type="text" class="form-input" id="editCourseCode" placeholder="e.g., ECON101">
           </div>
           <div class="form-group">
-            <label class="form-label">Description (optional)</label>
+            <label class="form-label" for="editCourseDescription">Description (optional)</label>
             <textarea class="form-textarea" id="editCourseDescription" placeholder="Course description..." rows="3"></textarea>
           </div>
           <div class="form-group">
@@ -721,16 +725,16 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
 
           <!-- Source course dropdown (pick which course to import FROM) -->
           <div class="form-group">
-            <label class="form-label">Import from course</label>
+            <label class="form-label" for="importSourceCourse">Import from course</label>
             <select class="form-input" id="importSourceCourse" onchange="loadImportItems()">
               <option value="">-- Select a source course --</option>
             </select>
           </div>
 
           <!-- Content type checkboxes -->
-          <div class="form-group">
-            <label class="form-label">Content to import</label>
-            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          <fieldset class="form-group" style="border:none; padding:0; margin:0;">
+            <legend class="form-label">Content to import</legend>
+            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">
               <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
                 <input type="checkbox" class="import-type-cb" value="assignments" checked> Assignments
               </label>
@@ -748,7 +752,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               </label>
             </div>
             <div class="hint" style="margin-top:8px;">By default this clones the course — its files, assignments, question banks, and modules. Announcements are unchecked and can be optionally included.</div>
-          </div>
+          </fieldset>
 
           <!-- Per-item selection list -->
           <div id="importItemsList" style="max-height:260px; overflow-y:auto;"></div>
@@ -773,7 +777,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             <input type="email" class="form-input" id="addPersonEmail" placeholder="student@university.edu" autocomplete="email">
           </div>
           <div class="form-group">
-            <label class="form-label">Role</label>
+            <label class="form-label" for="addPersonRole">Role</label>
             <select class="form-select" id="addPersonRole">
               <option value="student">Student</option>
               <option value="ta">Teaching Assistant</option>
@@ -800,11 +804,11 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             Upload a file with email addresses (comma-delimited or one per row).
           </div>
           <div class="form-group">
-            <label class="form-label">CSV File</label>
+            <label class="form-label" for="bulkStudentFile">CSV File</label>
             <input type="file" class="form-input" id="bulkStudentFile" accept=".csv,text/csv">
           </div>
           <div class="form-group">
-            <label class="form-label">Role</label>
+            <label class="form-label" for="bulkStudentRole">Role</label>
             <select class="form-select" id="bulkStudentRole">
               <option value="student" selected>Student</option>
               <option value="ta">Teaching Assistant</option>
@@ -831,7 +835,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             Paste data from spreadsheet. Format: Student Email, Score, Feedback (one per line)
           </div>
           <div class="form-group">
-            <label class="form-label">Paste Grade Data</label>
+            <label class="form-label" for="bulkGradeData">Paste Grade Data</label>
             <textarea class="form-textarea" id="bulkGradeData" placeholder="student1@example.com, 95, Excellent work
 student2@example.com, 87, Good job
 student3@example.com, 92, Well done" rows="10"></textarea>
@@ -908,7 +912,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         <div class="modal-body">
           <input type="hidden" id="moduleId">
           <div class="form-group">
-            <label class="form-label">Module Name</label>
+            <label class="form-label" for="moduleName">Module Name</label>
             <input type="text" class="form-input" id="moduleName" placeholder="e.g., Week 1: Introduction">
           </div>
         </div>
@@ -929,7 +933,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         <div class="modal-body">
           <input type="hidden" id="addItemModuleId">
           <div class="form-group">
-            <label class="form-label">Item Type</label>
+            <label class="form-label" for="addItemType">Item Type</label>
             <select class="form-select" id="addItemType" onchange="updateAddItemOptions()">
               <option value="assignment">Assignment</option>
               <option value="quiz">Quiz</option>
@@ -937,7 +941,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Select Item</label>
+            <label class="form-label" for="addItemRef">Select Item</label>
             <select class="form-select" id="addItemRef"></select>
           </div>
         </div>
@@ -960,21 +964,23 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             Upload a syllabus file or paste syllabus text. AI will extract modules, assignments, and quizzes as drafts.
           </div>
           <div class="form-group">
-            <label class="form-label">Upload Syllabus</label>
+            <label class="form-label" for="syllabusParserDropZone">Upload Syllabus</label>
             <div id="syllabusParserDropZone" class="drop-zone"
+                 role="button" tabindex="0"
+                 aria-label="Upload syllabus file — drag and drop or press Enter to browse"
                  ondragover="handleDragOver(event, 'syllabusParserDropZone')"
                  ondragleave="handleDragLeave(event, 'syllabusParserDropZone')"
                  ondrop="handleSyllabusParserDrop(event)"
                  onclick="document.getElementById('syllabusFile').click()"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('syllabusFile').click();}"
                  style="border:2px dashed var(--border-color); border-radius:var(--radius); padding:24px; text-align:center; cursor:pointer; transition:all 0.2s;">
-              <div style="margin-bottom:8px;">📄</div>
               <div style="font-weight:500;">Drag & drop syllabus here</div>
-              <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
+              <div class="muted" style="font-size:0.85rem;">or press Enter to browse (PDF, DOC, TXT)</div>
               <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="onSyllabusParserFileSelected()">
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Or Paste Syllabus Text</label>
+            <label class="form-label" for="syllabusText">Or Paste Syllabus Text</label>
             <textarea class="form-textarea" id="syllabusText" rows="6" placeholder="Paste syllabus content here..."></textarea>
           </div>
           <button class="btn btn-primary" onclick="parseSyllabus()" style="margin-bottom:16px;">Parse with AI</button>
@@ -1001,14 +1007,14 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             Record or upload audio to create announcements or quizzes. Say things like "send an announcement at midnight tomorrow about the exam" or "create a quiz with five questions, due at 2pm on Dec 18".
           </div>
           <div class="form-group">
-            <label class="form-label">Output Type</label>
+            <label class="form-label" for="audioOutputType">Output Type</label>
             <select class="form-select" id="audioOutputType">
               <option value="announcement">Announcement</option>
               <option value="quiz">Quiz</option>
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Record Audio</label>
+            <label class="form-label" for="audioStartRecording">Record Audio</label>
             <div style="display:flex; gap:8px; margin-bottom:12px;">
               <button class="btn btn-primary" id="audioStartRecording" onclick="startAudioRecording()">🎤 Start Recording</button>
               <button class="btn btn-secondary" id="audioStopRecording" onclick="stopAudioRecording()" style="display:none;">⏹️ Stop Recording</button>
@@ -1016,12 +1022,12 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <div id="audioPreview"></div>
           </div>
           <div class="form-group">
-            <label class="form-label">Or Upload Audio File</label>
+            <label class="form-label" for="audioFile">Or Upload Audio File</label>
             <input type="file" class="form-input" id="audioFile" accept="audio/*">
           </div>
           <button class="btn btn-primary" onclick="transcribeAudio()" style="margin-bottom:16px;">Transcribe with AI</button>
           <div class="form-group">
-            <label class="form-label">Transcription</label>
+            <label class="form-label" for="audioTranscription">Transcription</label>
             <textarea class="form-textarea" id="audioTranscription" rows="3" readonly placeholder="Transcription will appear here..."></textarea>
           </div>
           <div class="card" style="padding:16px;">
@@ -1055,14 +1061,14 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <div style="width:350px; display:flex; flex-direction:column; gap:16px; overflow-y:auto;">
               <div id="speedGraderRubric"></div>
               <div class="form-group">
-                <label class="form-label">Score</label>
+                <label class="form-label" for="speedGraderScoreSection">Score</label>
                 <div id="speedGraderScoreSection" style="display:flex; align-items:center; gap:8px;">
                   <input type="number" class="form-input" id="speedGraderScore" min="0" style="width:100px;">
                   <span id="speedGraderScoreMax">/ 100</span>
                 </div>
               </div>
               <div class="form-group">
-                <label class="form-label">Feedback</label>
+                <label class="form-label" for="speedGraderFeedback">Feedback</label>
                 <textarea class="form-textarea" id="speedGraderFeedback" rows="5" placeholder="Provide feedback..."></textarea>
               </div>
               <div class="form-group">
@@ -1109,16 +1115,16 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div style="background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:20px;">
             <h4 style="margin-bottom:14px; font-size:0.95rem;">Bank Settings</h4>
             <div class="form-group">
-              <label class="form-label">Bank Title *</label>
+              <label class="form-label" for="questionBankName">Bank Title *</label>
               <input type="text" class="form-input" id="questionBankName" placeholder="e.g., Chapter 1 Questions">
             </div>
             <div class="form-group">
-              <label class="form-label">Description (optional)</label>
+              <label class="form-label" for="questionBankDescription">Description (optional)</label>
               <textarea class="form-textarea" id="questionBankDescription" rows="2" placeholder="Brief description of this question bank..."></textarea>
             </div>
             <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
               <div class="form-group" style="margin-bottom:0;">
-                <label class="form-label">Default Points Per Question</label>
+                <label class="form-label" for="questionBankDefaultPoints">Default Points Per Question</label>
                 <input type="number" class="form-input" id="questionBankDefaultPoints" value="1" min="0.5" step="0.5" placeholder="1">
                 <div class="hint">Auto-fills new questions to save time</div>
               </div>
@@ -1134,7 +1140,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <!-- Questions list -->
           <div class="form-group">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-              <label class="form-label" style="margin:0;">Questions <span id="questionBankPointsTotal" class="muted" style="font-size:0.85rem; font-weight:400;"></span></label>
+              <label class="form-label" for="questionBankPointsTotal" style="margin:0;">Questions <span id="questionBankPointsTotal" class="muted" style="font-size:0.85rem; font-weight:400;"></span></label>
               <button class="btn btn-secondary btn-sm" onclick="addQuestionToBankForm()">+ Add Question</button>
             </div>
             <div id="questionBankQuestionsContainer">
@@ -1160,7 +1166,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
 
           <!-- ── Universal Fields ─────────────────────────────── -->
           <div class="form-group">
-            <label class="form-label">Assignment Type *</label>
+            <label class="form-label" for="atype-essay-label">Assignment Type *</label>
             <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;">
               <label id="atype-essay-label" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; cursor:pointer; border-right:1px solid var(--border); background:var(--primary); color:#fff; font-size:0.85rem;" onclick="setAssignmentType('essay')">
                 <input type="radio" name="newAssignmentType" id="newAssignmentTypeEssay" value="essay" style="display:none;" checked>
@@ -1178,15 +1184,15 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Title *</label>
+            <label class="form-label" for="newAssignmentTitle">Title *</label>
             <input type="text" class="form-input" id="newAssignmentTitle" placeholder="Enter assignment title">
           </div>
 
           <div class="form-group">
-            <label class="form-label">Description / Prompt *</label>
-            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('newAssignmentDescription')" title="Insert Link">🔗 Link</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('newAssignmentDescription')" title="Insert File">📄 File</button>
+            <label class="form-label" for="newAssignmentDescription">Description / Prompt *</label>
+            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;" role="toolbar" aria-label="Text formatting">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('newAssignmentDescription')" title="Insert Link">Link</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('newAssignmentDescription')" title="Insert File">File</button>
               <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('newAssignmentDescription')" title="Insert Video">📹 Video</button>
             </div>
             <textarea class="form-textarea" id="newAssignmentDescription" placeholder="Describe the assignment prompt... (supports Markdown)" rows="4"></textarea>
@@ -1196,8 +1202,8 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div id="essaySection">
             <div style="background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:16px;">
               <h4 style="margin-bottom:12px; font-size:0.9rem;">Submission Settings</h4>
-              <div class="form-group" style="margin-bottom:10px;">
-                <label class="form-label" style="margin-bottom:6px;">Submission Modality (at least one) *</label>
+              <fieldset class="form-group" style="border:none; padding:0; margin-bottom:10px;">
+                <legend class="form-label" style="margin-bottom:6px;">Submission Modality (at least one) *</legend>
                 <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
                   <input type="checkbox" id="newAssignmentModalityText" checked onchange="handleModalityChange()">
                   <span>Online Text Entry</span>
@@ -1206,16 +1212,16 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                   <input type="checkbox" id="newAssignmentModalityFile" onchange="handleModalityChange()">
                   <span>File Upload</span>
                 </label>
-              </div>
+              </fieldset>
               <div id="fileUploadSettings" style="display:none; padding-left:24px;">
                 <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
                   <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label" style="font-size:0.85rem;">Allowed File Types</label>
+                    <label class="form-label" for="newAssignmentFileTypes" style="font-size:0.85rem;">Allowed File Types</label>
                     <input type="text" class="form-input" id="newAssignmentFileTypes" placeholder=".pdf, .docx, .png">
                     <div class="hint">Comma-separated extensions, or leave blank for any type</div>
                   </div>
                   <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label" style="font-size:0.85rem;">Max File Size (MB)</label>
+                    <label class="form-label" for="newAssignmentMaxFileSize" style="font-size:0.85rem;">Max File Size (MB)</label>
                     <input type="number" class="form-input" id="newAssignmentMaxFileSize" value="50" min="1" max="500">
                   </div>
                 </div>
@@ -1224,7 +1230,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
 
             <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
               <div class="form-group">
-                <label class="form-label">Grading Type</label>
+                <label class="form-label" for="essayGradingType">Grading Type</label>
                 <select class="form-select" id="essayGradingType" onchange="handleGradingTypeChange('essay')">
                   <option value="points">Points</option>
                   <option value="complete_incomplete">Complete / Incomplete</option>
@@ -1232,7 +1238,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                 </select>
               </div>
               <div class="form-group" id="essayPointsGroup">
-                <label class="form-label">Total Points Possible</label>
+                <label class="form-label" for="newAssignmentPoints">Total Points Possible</label>
                 <input type="number" class="form-input" id="newAssignmentPoints" value="100" min="0" step="0.5">
               </div>
             </div>
@@ -1254,7 +1260,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <div style="background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:16px;">
               <h4 style="margin-bottom:12px; font-size:0.9rem;">Quiz Settings</h4>
               <div class="form-group">
-                <label class="form-label">Question Bank *</label>
+                <label class="form-label" for="newAssignmentQuestionBank">Question Bank *</label>
                 <select class="form-select" id="newAssignmentQuestionBank" onchange="updateQuizPointsFromBank()">
                   <option value="">-- Select a question bank --</option>
                 </select>
@@ -1262,13 +1268,13 @@ student3@example.com, 92, Well done" rows="10"></textarea>
               </div>
               <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
                 <div class="form-group" style="margin-bottom:0;">
-                  <label class="form-label">Total Points Possible</label>
+                  <label class="form-label" for="newAssignmentQuizPoints">Total Points Possible</label>
                   <input type="number" class="form-input" id="newAssignmentQuizPoints" value="" readonly
                     style="background:var(--bg-color); color:var(--text-secondary);" placeholder="Auto-calculated">
                   <div class="hint">Read-only — sum of question points</div>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
-                  <label class="form-label">Time Limit (minutes)</label>
+                  <label class="form-label" for="newAssignmentTimeLimit">Time Limit (minutes)</label>
                   <div style="display:flex; gap:8px; align-items:center;">
                     <input type="number" class="form-input" id="newAssignmentTimeLimit" value="" min="1" placeholder="e.g. 60" style="flex:1;">
                     <label style="display:flex; align-items:center; gap:4px; white-space:nowrap; font-size:0.85rem; cursor:pointer;">
@@ -1279,7 +1285,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
               </div>
               <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
                 <div class="form-group" style="margin-bottom:0;">
-                  <label class="form-label">Submission Attempts</label>
+                  <label class="form-label" for="newAssignmentQuizAttempts">Submission Attempts</label>
                   <div style="display:flex; gap:8px; align-items:center;">
                     <input type="number" class="form-input" id="newAssignmentQuizAttempts" value="1" min="1" style="flex:1;">
                     <label style="display:flex; align-items:center; gap:4px; white-space:nowrap; font-size:0.85rem; cursor:pointer;">
@@ -1301,7 +1307,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div id="noSubSection" style="display:none;">
             <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
               <div class="form-group">
-                <label class="form-label">Gradebook Category</label>
+                <label class="form-label" for="noSubGradingType">Gradebook Category</label>
                 <select class="form-select" id="noSubGradingType" onchange="handleGradingTypeChange('nosub')">
                   <option value="points">Points</option>
                   <option value="complete_incomplete">Complete / Incomplete</option>
@@ -1309,7 +1315,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                 </select>
               </div>
               <div class="form-group" id="noSubPointsGroup">
-                <label class="form-label">Points Possible</label>
+                <label class="form-label" for="newAssignmentNoSubPoints">Points Possible</label>
                 <input type="number" class="form-input" id="newAssignmentNoSubPoints" value="100" min="0" step="0.5">
               </div>
             </div>
@@ -1318,7 +1324,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <!-- ── Universal: Dates (hidden for no_submission) ────── -->
           <div id="assignmentDatesSection">
             <div class="form-group">
-              <label class="form-label">Due Date &amp; Time <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
+              <label class="form-label" for="newAssignmentDueDate">Due Date &amp; Time <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
               <div style="display:flex; gap:8px;">
                 <input type="date" class="form-input" id="newAssignmentDueDate" style="flex:1;"
                   onchange="syncAvailableUntilToDueDate(); updateAvailabilityConstraints();">
@@ -1330,11 +1336,11 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             </div>
 
             <div class="form-group">
-              <label class="form-label" style="margin-bottom:4px;">Availability Window <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
+              <label class="form-label" for="newAssignmentAvailableFromDate" style="margin-bottom:4px;">Availability Window <span class="muted" style="font-size:0.8rem;">(Eastern Time)</span></label>
               <div class="hint" style="margin-bottom:8px;">Available From = when submit button unlocks. Available To = when it hard-locks.</div>
               <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
                 <div>
-                  <label class="form-label">Available From</label>
+                  <label class="form-label" for="newAssignmentAvailableFromDate">Available From</label>
                   <div style="display:flex; flex-direction:column; gap:4px;">
                     <input type="date" class="form-input" id="newAssignmentAvailableFromDate"
                       onchange="updateAvailabilityConstraints();">
@@ -1345,7 +1351,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                   </div>
                 </div>
                 <div>
-                  <label class="form-label">Available To</label>
+                  <label class="form-label" for="newAssignmentAvailableUntilDate">Available To</label>
                   <div style="display:flex; flex-direction:column; gap:4px;">
                     <input type="date" class="form-input" id="newAssignmentAvailableUntilDate"
                       onchange="updateAvailabilityConstraints();">
@@ -1360,7 +1366,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
 
           <!-- ── Universal: Status + Late ─────────────────────── -->
           <div class="form-group" id="assignmentStatusSection">
-            <label class="form-label">Status</label>
+            <label class="form-label" for="newAssignmentStatus">Status</label>
             <select class="form-select" id="newAssignmentStatus">
               <option value="draft">Draft (not visible to students)</option>
               <option value="published">Published</option>
@@ -1383,21 +1389,21 @@ student3@example.com, 92, Well done" rows="10"></textarea>
           <div id="latePenaltySection">
             <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
               <div class="form-group">
-                <label class="form-label">Late Penalty Type</label>
+                <label class="form-label" for="newAssignmentLatePenaltyType">Late Penalty Type</label>
                 <select class="form-select" id="newAssignmentLatePenaltyType">
                   <option value="per_day">Percentage per day late</option>
                   <option value="flat">Flat percentage overall</option>
                 </select>
               </div>
               <div class="form-group">
-                <label class="form-label">Penalty Amount (%)</label>
+                <label class="form-label" for="newAssignmentLatePenalty">Penalty Amount (%)</label>
                 <input type="number" class="form-input" id="newAssignmentLatePenalty" value="10" min="0" max="100">
               </div>
             </div>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Grading Notes (private — instructors only)</label>
+            <label class="form-label" for="newAssignmentGradingNotes">Grading Notes (private — instructors only)</label>
             <textarea class="form-textarea" id="newAssignmentGradingNotes" rows="2" placeholder="Notes for graders (rubric guidance, key points to check, etc.)"></textarea>
           </div>
 
