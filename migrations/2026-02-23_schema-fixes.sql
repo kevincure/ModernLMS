@@ -321,6 +321,48 @@ COMMENT ON COLUMN public.quiz_submissions.assignment_id IS
   'carry a value.';
 
 
+-- ────────────────────────────────────────────────────────────
+-- SECTION 1-FIX  Security — break RLS recursion in profiles
+--
+-- profiles: course peers read queries enrollments directly.
+-- enrollments RLS policies in turn reference profiles (e.g.
+-- the invite-check branch joins profiles to look up the current
+-- user's email). PostgreSQL detects the cycle and the query
+-- hangs, causing the admin "verifying access" screen to freeze.
+--
+-- Fix: wrap the enrollments sub-query in a SECURITY DEFINER
+-- function (runs as the DB owner, bypasses RLS completely),
+-- then reference that function from the policy. No data or
+-- behavioural change — just breaks the evaluation cycle.
+-- ────────────────────────────────────────────────────────────
+
+-- Helper: returns UUIDs of all users co-enrolled with the
+-- current user in at least one course, without triggering
+-- enrollments' own RLS (SECURITY DEFINER bypasses it).
+CREATE OR REPLACE FUNCTION public.get_peer_user_ids()
+  RETURNS SETOF uuid
+  LANGUAGE sql
+  STABLE
+  SECURITY DEFINER
+  SET search_path = public
+AS $$
+  SELECT DISTINCT e2.user_id
+  FROM   public.enrollments e1
+  JOIN   public.enrollments e2 ON e1.course_id = e2.course_id
+  WHERE  e1.user_id = auth.uid()
+    AND  e2.user_id <> auth.uid();
+$$;
+
+-- Rebuild the policy to call the helper instead of querying
+-- enrollments inline.
+DROP POLICY IF EXISTS "profiles: course peers read" ON public.profiles;
+
+CREATE POLICY "profiles: course peers read"
+  ON public.profiles
+  FOR SELECT
+  USING (id IN (SELECT public.get_peer_user_ids()));
+
+
 -- ============================================================
 -- End of migration.
 -- Non-SQL items requiring separate action:
