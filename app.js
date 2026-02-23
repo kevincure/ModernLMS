@@ -1279,13 +1279,13 @@ function renderAll() {
 }
 
 function renderTopBarActions() {
-  // Hide People and Files sidebar buttons in student view mode OR for actual students
-  const peopleBtn = document.querySelector('[data-page="people"]');
-  const filesBtn = document.querySelector('[data-page="files"]');
+  // Hide People in student view (actual students or staff preview mode); Files stays visible for all
   const isStaffUser = activeCourseId && isStaff(appData.currentUser?.id, activeCourseId);
-  const shouldHide = studentViewMode || (activeCourseId && !isStaffUser);
-  if (peopleBtn) peopleBtn.style.display = shouldHide ? 'none' : 'inline-flex';
-  if (filesBtn) filesBtn.style.display = shouldHide ? 'none' : 'inline-flex';
+  const shouldHidePeople = studentViewMode || (activeCourseId && !isStaffUser);
+  // Hide all [data-page="people"] buttons (toolbar + mobile drawer)
+  document.querySelectorAll('[data-page="people"]').forEach(btn => {
+    btn.style.display = shouldHidePeople ? 'none' : '';
+  });
 }
 
 function renderTopBarCourse() {
@@ -4524,7 +4524,7 @@ function openSubmissionView(assignmentId) {
           <div class="muted" style="margin-bottom:12px;">Submitted: ${formatDate(submission.submittedAt)}</div>
           <div style="padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-color);">
             ${submission.text ? `<div>${escapeHtml(submission.text)}</div>` : '<em class="muted">No text submitted</em>'}
-            ${submission.fileName ? `<div style="margin-top:8px;" class="muted">📎 ${escapeHtml(submission.fileName)}</div>` : ''}
+            ${submission.fileName ? `<div style="margin-top:8px;" class="muted">Attachment: ${escapeHtml(submission.fileName)}</div>` : ''}
           </div>
           ${gradeHtml}
         </div>
@@ -4780,16 +4780,16 @@ function viewSubmissions(assignmentId) {
     <div class="modal-overlay visible" id="submissionsModal">
       <div class="modal" style="max-width:900px;">
         <div class="modal-header">
-          <h2 class="modal-title">Submissions: ${assignment.title}</h2>
+          <h2 class="modal-title">Analytics: ${assignment.title}</h2>
           <button class="modal-close" onclick="closeModal('submissionsModal')">&times;</button>
         </div>
         <div class="modal-body">
           ${metadataHtml}
           <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
             <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">SpeedGrader</button>
-            <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">📋 Bulk Import Grades</button>
+            <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">Bulk Import Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="bulkReleaseGrades('${assignmentId}')">Release All Grades</button>
-            <button class="btn btn-secondary btn-sm" onclick="downloadAllSubmissions('${assignmentId}')">📥 Download All (ZIP)</button>
+            <button class="btn btn-secondary btn-sm" onclick="downloadAllSubmissions('${assignmentId}')">Download All (ZIP)</button>
           </div>
           ${submissions.length === 0 ? '<div class="empty-state-text">No submissions yet</div>' : submissions.map(s => {
             const student = getUserById(s.userId);
@@ -4798,12 +4798,12 @@ function viewSubmissions(assignmentId) {
             const submitDate = new Date(s.submittedAt);
             const isLate = submitDate > dueDate;
             const lateDeduction = calculateLateDeduction(assignment, s.submittedAt);
-            
+
             return `
               <div class="card">
                 <div class="card-header">
                   <div>
-                    <div class="card-title">${student ? student.name : 'Unknown'} ${isLate ? '⚠️ LATE' : ''}</div>
+                    <div class="card-title">${student ? student.name : 'Unknown'}${isLate ? '<span style="margin-left:8px; font-size:0.75rem; background:var(--warning-light); color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">LATE</span>' : ''}</div>
                     <div class="muted">
                       Submitted ${formatDate(s.submittedAt)}
                       ${isLate && lateDeduction > 0 ? ` · ${lateDeduction}% late penalty` : ''}
@@ -4816,7 +4816,7 @@ function viewSubmissions(assignmentId) {
                   </div>
                 </div>
                 <div>${s.text || '<em class="muted">No text submission</em>'}</div>
-                ${s.fileName ? `<div class="muted" style="margin-top:8px;">📎 ${s.fileName}</div>` : ''}
+                ${s.fileName ? `<div class="muted" style="margin-top:8px;">Attachment: ${escapeHtml(s.fileName)}</div>` : ''}
               </div>
             `;
           }).join('')}
@@ -6268,8 +6268,8 @@ function renderSpeedGrader() {
     document.getElementById('speedGraderSubmission').innerHTML = `
       <div class="submission-header">
         <span>Submitted: ${formatDate(submission.submittedAt)}</span>
-        ${isLate ? `<span class="status-badge" style="background:var(--warning);">⚠️ LATE (-${lateDeduction}%)</span>` : ''}
-        ${submission.fileName ? `<span class="muted">📎 ${submission.fileName}</span>` : ''}
+        ${isLate ? `<span class="status-badge" style="background:var(--warning-light); color:#92400e;">LATE (-${lateDeduction}%)</span>` : ''}
+        ${submission.fileName ? `<span class="muted">Attachment: ${escapeHtml(submission.fileName)}</span>` : ''}
       </div>
       <div class="submission-content">${submission.text || '<em class="muted">No text submission</em>'}</div>
     `;
@@ -6776,61 +6776,7 @@ function renderStaffGradebook() {
     return;
   }
   
-  // Calculate statistics for each assignment
-  const assignmentStats = assignments.map(assignment => {
-    const grades = [];
-    students.forEach(student => {
-      const submission = appData.submissions.find(s => s.assignmentId === assignment.id && s.userId === student.id);
-      const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-      if (grade) grades.push(grade.score);
-    });
-    
-    if (grades.length === 0) {
-      return { assignment, average: 0, median: 0, min: 0, max: 0, count: 0 };
-    }
-    
-    grades.sort((a, b) => a - b);
-    const average = grades.reduce((sum, g) => sum + g, 0) / grades.length;
-    const median = grades.length % 2 === 0 
-      ? (grades[grades.length / 2 - 1] + grades[grades.length / 2]) / 2
-      : grades[Math.floor(grades.length / 2)];
-    
-    return {
-      assignment,
-      average: average.toFixed(1),
-      median: median.toFixed(1),
-      min: Math.min(...grades),
-      max: Math.max(...grades),
-      count: grades.length
-    };
-  });
-  
-  // Display statistics cards (collapsed by default)
-  let statsHTML = `
-    <div class="card" style="margin-bottom:20px;">
-      <div class="card-header" style="cursor:pointer; user-select:none;" onclick="toggleGradebookStats(this)">
-        <div class="card-title" style="margin:0;">Assignment Statistics</div>
-        <span id="gradebookStatsChevron" style="font-size:0.85rem; color:var(--text-muted);">&#9654; Show</span>
-      </div>
-      <div id="gradebookStatsBody" style="display:none; padding-top:12px;">
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
-  `;
-
-  assignmentStats.forEach(stat => {
-    statsHTML += `
-      <div style="padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-color);">
-        <div style="font-weight:600; font-size:0.9rem; margin-bottom:8px;">${stat.assignment.title}</div>
-        <div style="font-size:0.85rem; color:var(--text-muted);">
-          <div>Average: <strong>${stat.average}/${stat.assignment.points}</strong></div>
-          <div>Median: ${stat.median}</div>
-          <div>Range: ${stat.min}&ndash;${stat.max}</div>
-          <div>Graded: ${stat.count}/${students.length}</div>
-        </div>
-      </div>
-    `;
-  });
-
-  statsHTML += '</div></div></div>';
+  // (stats box removed — analytics available per column header)
   
   // For the gradebook header, flag which assignments have blind grading on
   const table = `
@@ -6859,7 +6805,7 @@ function renderStaffGradebook() {
               const releaseHideBtn = anyUnreleased
                 ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkReleaseGrades('${a.id}')">Release Grades</button>`
                 : (anyReleased ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkHideGrades('${a.id}')">Hide Grades</button>` : '');
-              return `<th style="padding:12px; text-align:center; min-width:140px; position:relative;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<span class="muted" style="font-weight:normal; display:block; margin-top:2px;">(${ptLabel})</span><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">&#9660; Actions</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">SpeedGrader</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Submissions</button></div></th>`;
+              return `<th style="padding:12px; text-align:center; min-width:140px; position:relative;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<span class="muted" style="font-weight:normal; display:block; margin-top:2px;">(${ptLabel})</span><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">&#9660; Actions</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">SpeedGrader</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button></div></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>
@@ -6900,8 +6846,9 @@ function renderStaffGradebook() {
                     const gt = a.gradingType || 'points';
                     let cellContent = '';
                     if (gt === 'complete_incomplete') {
-                      cellContent = grade.score > 0 ? '<span style="color:var(--success);">✓ Complete</span>' : '<span style="color:var(--danger);">✗ Incomplete</span>';
-                      // Don't add to points-based total
+                      cellContent = grade.score > 0 ? '<span style="color:var(--success);">Complete</span>' : '<span style="color:var(--danger);">Incomplete</span>';
+                      totalScore += grade.score > 0 ? a.points : 0;
+                      totalPoints += a.points;
                     } else if (gt === 'letter_grade') {
                       cellContent = `<span style="font-weight:700; color:${getGradeColor(grade.score)}">${grade.score}</span>`;
                       // Score stored as letter — don't add to numeric total
@@ -6936,17 +6883,9 @@ function renderStaffGradebook() {
     </div>
   `;
 
-  setHTML('gradebookWrap', statsHTML + table);
+  setHTML('gradebookWrap', table);
 }
 
-function toggleGradebookStats(headerEl) {
-  const body = document.getElementById('gradebookStatsBody');
-  const chevron = document.getElementById('gradebookStatsChevron');
-  if (!body) return;
-  const isHidden = body.style.display === 'none';
-  body.style.display = isHidden ? 'block' : 'none';
-  if (chevron) chevron.innerHTML = isHidden ? '&#9660; Hide' : '&#9654; Show';
-}
 
 function getLetterGrade(pct, settings) {
   if (!settings) return '—';
@@ -7926,6 +7865,27 @@ function ensureModalsRendered() {
 // Track the element that was focused before modal opened (for accessibility)
 let modalPreviousFocus = null;
 
+// ── WCAG-compliant modal helpers ──────────────────────────────────────────────
+const FOCUSABLE_SELECTORS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function getFocusableElements(container) {
+  return Array.from(container.querySelectorAll(FOCUSABLE_SELECTORS));
+}
+
+function trapFocus(e, container) {
+  const focusable = getFocusableElements(container);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.key === 'Tab') {
+    if (e.shiftKey) {
+      if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+    } else {
+      if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
+}
+
 function openModal(id) {
   if (!document.getElementById(id)) {
     generateModals();
@@ -7954,9 +7914,13 @@ function openModal(id) {
 
     // Focus first focusable element (WCAG 2.4.3)
     setTimeout(() => {
-      const focusable = modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      const focusable = getFocusableElements(modal);
       if (focusable.length > 0) focusable[0].focus();
     }, 50);
+
+    // Attach focus trap for this modal
+    modal._trapHandler = (e) => trapFocus(e, modal);
+    modal.addEventListener('keydown', modal._trapHandler);
   }
 }
 
@@ -7966,6 +7930,11 @@ function closeModal(id) {
     modal.classList.remove('visible');
     // Also clear inline display style (used by dynamically-injected modals like overrides)
     if (modal.style.display) modal.style.display = '';
+    // Remove focus trap
+    if (modal._trapHandler) {
+      modal.removeEventListener('keydown', modal._trapHandler);
+      modal._trapHandler = null;
+    }
   }
 
   if (id === 'quizTakeModal' && quizTimerInterval) {
@@ -7980,13 +7949,15 @@ function closeModal(id) {
   }
 }
 
-// Escape key handler for modals (WCAG 2.1.1 - Keyboard)
+// Unified Escape key handler — closes topmost visible modal OR AI panel (WCAG 2.1.1)
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
+    // Check modals first
     const visibleModal = document.querySelector('.modal-overlay.visible');
-    if (visibleModal) {
-      closeModal(visibleModal.id);
-    }
+    if (visibleModal) { closeModal(visibleModal.id); return; }
+    // Then AI overlay
+    const aiOverlay = document.getElementById('aiOverlay');
+    if (aiOverlay && aiOverlay.style.display !== 'none') { toggleAiOverlay(); }
   }
 });
 
@@ -9006,13 +8977,13 @@ function viewSubmissionHistory(assignmentId, userId) {
               <div class="card" style="background:${idx === 0 ? 'var(--primary-light)' : 'var(--bg-color)'};">
                 <div class="card-header">
                   <div>
-                    <div class="card-title">${idx === 0 ? '📌 Current Submission' : `Submission ${submissions.length - idx}`}</div>
+                    <div class="card-title">${idx === 0 ? 'Current Submission' : `Submission ${submissions.length - idx}`}</div>
                     <div class="muted">Submitted ${formatDate(s.submittedAt)}</div>
                   </div>
                   ${grade ? `<span class="muted">${grade.score}/${assignment.points}</span>` : ''}
                 </div>
                 <div>${s.text || '<em class="muted">No text submission</em>'}</div>
-                ${s.fileName ? `<div class="muted" style="margin-top:8px;">📎 ${s.fileName}</div>` : ''}
+                ${s.fileName ? `<div class="muted" style="margin-top:8px;">Attachment: ${escapeHtml(s.fileName)}</div>` : ''}
                 ${grade && grade.feedback ? `<div style="margin-top:12px; padding:12px; background:var(--bg-card); border-radius:var(--radius);"><strong>Feedback:</strong> ${grade.feedback}</div>` : ''}
               </div>
             `;
@@ -9756,23 +9727,55 @@ function deleteDiscussionReply(replyId, threadId) {
 // AI OVERLAY PANEL
 // ═══════════════════════════════════════════════════════════════════════════════
 
+let aiOverlayPreviousFocus = null;
+let aiOverlayTrapHandler = null;
+
 function toggleAiOverlay() {
   const overlay = document.getElementById('aiOverlay');
+  const panel = document.getElementById('aiPanel');
   if (!overlay) return;
   const isOpen = overlay.style.display !== 'none';
-  overlay.style.display = isOpen ? 'none' : 'block';
 
-  // Update toolbar button active state
-  const btn = document.getElementById('aiOverlayBtn');
-  if (btn) btn.classList.toggle('active', !isOpen);
-
-  if (!isOpen) {
-    // Focus the input when opening
+  if (isOpen) {
+    // Closing
+    overlay.style.display = 'none';
+    // Remove focus trap
+    if (aiOverlayTrapHandler && panel) {
+      panel.removeEventListener('keydown', aiOverlayTrapHandler);
+      aiOverlayTrapHandler = null;
+    }
+    // Restore focus to trigger button
+    if (aiOverlayPreviousFocus && typeof aiOverlayPreviousFocus.focus === 'function') {
+      aiOverlayPreviousFocus.focus();
+      aiOverlayPreviousFocus = null;
+    }
+  } else {
+    // Opening
+    aiOverlayPreviousFocus = document.activeElement;
+    overlay.style.display = 'block';
+    // Make background content inert
+    const appContainer = document.getElementById('appContainer');
+    if (appContainer) appContainer.setAttribute('inert', '');
+    // Set up focus trap
+    if (panel) {
+      aiOverlayTrapHandler = (e) => trapFocus(e, panel);
+      panel.addEventListener('keydown', aiOverlayTrapHandler);
+    }
     setTimeout(() => {
       const input = document.getElementById('aiInput');
       if (input) input.focus();
     }, 50);
   }
+
+  // Remove inert when closing
+  if (isOpen) {
+    const appContainer = document.getElementById('appContainer');
+    if (appContainer) appContainer.removeAttribute('inert');
+  }
+
+  // Update toolbar button active state
+  const btn = document.getElementById('aiOverlayBtn');
+  if (btn) btn.classList.toggle('active', !isOpen);
 }
 
 /**
