@@ -710,7 +710,6 @@ export async function supabaseCreateAssignment(assignment) {
     allow_resubmission: assignment.allowResubmission !== false,
     hidden: assignment.hidden || false,
     category: assignment.category || 'homework',
-    time_allowed: assignment.timeAllowed || null,
     created_by: appData.currentUser?.id
   };
 
@@ -755,7 +754,6 @@ export async function supabaseUpdateAssignment(assignment) {
     assignment_type: assignment.assignmentType || 'essay',
     hidden: assignment.hidden || false,
     category: assignment.category,
-    time_allowed: assignment.timeAllowed || null,
     visible_to_students: assignment.visibleToStudents !== false,
     show_stats_to_students: assignment.showStatsToStudents === true
   };
@@ -1175,6 +1173,66 @@ export async function supabaseDeleteInvite(inviteId) {
     if (showToast) showToast('Failed to revoke invite', 'error');
     return false;
   }
+}
+
+export async function supabaseUpdateInviteStatus(inviteId, status) {
+  if (!supabaseClient) return false;
+  console.log('[Supabase] Updating invite status:', inviteId, '->', status);
+  const { error } = await supabaseClient.from('invites').update({ status }).eq('id', inviteId);
+  if (error) {
+    console.error('[Supabase] Error updating invite status:', error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Copy a file within Supabase Storage and create a new file record.
+ * Returns the new file object (app-format) or null on failure.
+ */
+export async function supabaseCopyStorageFile(sourceFile, destCourseId, uploadedBy) {
+  if (!supabaseClient) return null;
+  const newId = crypto.randomUUID();
+  const newStoragePath = sourceFile.storagePath
+    ? sourceFile.storagePath.replace(/^[^/]+\//, `${destCourseId}/`) + `-${Date.now()}`
+    : null;
+
+  if (sourceFile.storagePath && newStoragePath) {
+    // Download blob then re-upload under the new path
+    try {
+      const { data: blob, error: dlErr } = await supabaseClient.storage
+        .from('course-files').download(sourceFile.storagePath);
+      if (dlErr || !blob) {
+        console.warn('[Supabase] Could not download file for copy, creating record-only:', dlErr?.message);
+      } else {
+        const { error: ulErr } = await supabaseClient.storage
+          .from('course-files').upload(newStoragePath, blob, { contentType: sourceFile.mimeType || 'application/octet-stream', upsert: false });
+        if (ulErr) {
+          console.warn('[Supabase] Could not re-upload file copy:', ulErr.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[Supabase] Exception during file copy:', e);
+    }
+  }
+
+  const newFile = {
+    id: newId,
+    courseId: destCourseId,
+    name: sourceFile.name,
+    mimeType: sourceFile.mimeType,
+    sizeBytes: sourceFile.sizeBytes,
+    storagePath: newStoragePath || sourceFile.storagePath, // fallback: share path (read-only duplicate)
+    externalUrl: sourceFile.externalUrl || null,
+    description: sourceFile.description || null,
+    isPlaceholder: sourceFile.isPlaceholder || false,
+    isYouTube: sourceFile.isYouTube || false,
+    hidden: false,
+    uploadedBy,
+    uploadedAt: new Date().toISOString()
+  };
+  await supabaseCreateFile(newFile);
+  return newFile;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

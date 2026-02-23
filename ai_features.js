@@ -131,14 +131,15 @@ export function buildAiContext() {
 
       // Counts only — IDs and content are fetched via tools at query time.
       // This keeps the context small and forces fresh lookups for accurate IDs.
-      const assignments   = (appData.assignments   || []).filter(a => a.courseId === activeCourseId);
-      const quizzes       = (appData.quizzes       || []).filter(q => q.courseId === activeCourseId);
+      const aiCtxIsStaff = isStaffCallback && isStaffCallback(appData.currentUser?.id, activeCourseId) && !studentViewMode;
+      const assignments   = (appData.assignments   || []).filter(a => a.courseId === activeCourseId && (aiCtxIsStaff || (a.status === 'published' && !a.hidden && (a.assignmentType || 'essay') !== 'no_submission')));
+      const quizzes       = (appData.quizzes       || []).filter(q => q.courseId === activeCourseId && (aiCtxIsStaff || q.status === 'published'));
       const questionBanks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
-      const files         = (appData.files         || []).filter(f => f.courseId === activeCourseId && !f.isPlaceholder);
-      const modules       = (appData.modules       || []).filter(m => m.courseId === activeCourseId);
-      const announcements = (appData.announcements || []).filter(a => a.courseId === activeCourseId);
+      const files         = (appData.files         || []).filter(f => f.courseId === activeCourseId && !f.isPlaceholder && (aiCtxIsStaff || !f.hidden));
+      const modules       = (appData.modules       || []).filter(m => m.courseId === activeCourseId && (aiCtxIsStaff || !m.hidden));
+      const announcements = (appData.announcements || []).filter(a => a.courseId === activeCourseId && (aiCtxIsStaff || !a.hidden));
       const enrolled      = (appData.enrollments   || []).filter(e => e.courseId === activeCourseId);
-      const invites       = (appData.invites       || []).filter(i => i.courseId === activeCourseId && i.status === 'pending');
+      const invites       = aiCtxIsStaff ? (appData.invites || []).filter(i => i.courseId === activeCourseId && i.status === 'pending') : [];
       const qTotal        = questionBanks.reduce((s, b) => s + (b.questions?.length || 0), 0);
 
       context += `\nCOURSE CONTENTS — call the relevant tool to get IDs, titles, and full content:\n`;
@@ -545,25 +546,33 @@ async function extractPptxText(base64) {
 async function executeAiTool(toolName, params = {}) {
   if (!activeCourseId) return { error: 'No active course selected' };
 
+  // Determine if the current user is effectively staff (controls visibility of hidden items)
+  const isStaffUser = isStaffCallback && isStaffCallback(appData.currentUser?.id, activeCourseId);
+  const effectiveIsStaff = isStaffUser && !studentViewMode;
+
   switch (toolName) {
     case 'list_assignments':
       return (appData.assignments || [])
         .filter(a => a.courseId === activeCourseId)
+        .filter(a => effectiveIsStaff || (a.status === 'published' && !a.hidden && (a.assignmentType || 'essay') !== 'no_submission'))
         .map(a => ({ id: a.id, title: a.title, type: a.assignmentType || 'essay', gradingType: a.gradingType || 'points', status: a.status, points: a.points, dueDate: a.dueDate }));
 
     case 'list_quizzes':
       return (appData.quizzes || [])
         .filter(q => q.courseId === activeCourseId)
+        .filter(q => effectiveIsStaff || q.status === 'published')
         .map(q => ({ id: q.id, title: q.title, status: q.status, dueDate: q.dueDate, questionCount: (q.questions || []).length }));
 
     case 'list_files':
       return (appData.files || [])
         .filter(f => f.courseId === activeCourseId)
+        .filter(f => effectiveIsStaff || !f.hidden)
         .map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size }));
 
     case 'list_modules':
       return (appData.modules || [])
         .filter(m => m.courseId === activeCourseId)
+        .filter(m => effectiveIsStaff || !m.hidden)
         .map(m => ({
           id: m.id, name: m.name,
           items: (m.items || []).map(i => ({
@@ -596,6 +605,7 @@ async function executeAiTool(toolName, params = {}) {
     case 'list_announcements':
       return (appData.announcements || [])
         .filter(a => a.courseId === activeCourseId)
+        .filter(a => effectiveIsStaff || !a.hidden)
         .map(a => ({ id: a.id, title: a.title, content: (a.content || a.body || ''), pinned: !!a.pinned, hidden: !!a.hidden, createdAt: a.createdAt }));
 
     case 'get_grade_categories':
