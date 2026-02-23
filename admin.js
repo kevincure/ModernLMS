@@ -52,6 +52,8 @@ const admin = {
   }
 };
 
+let adminVerifyInFlight = null;
+
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', initAdminApp);
@@ -84,23 +86,62 @@ async function initAdminApp() {
   admin.sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
 
   // 4. React to auth state (fires immediately with INITIAL_SESSION)
-  admin.sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'INITIAL_SESSION') {
-      if (session?.user) {
-        await verifyAndLoad(session.user);
-      } else {
-        showScreen('login');
-      }
-    } else if (event === 'SIGNED_IN' && session?.user && !admin.user) {
-      // Handles the callback after Google OAuth redirect
-      await verifyAndLoad(session.user);
-    } else if (event === 'SIGNED_OUT') {
-      admin.user = null;
-      admin.org  = null;
+  admin.sb.auth.onAuthStateChange((event, session) => {
+    setTimeout(() => handleAdminAuthStateChange(event, session), 0);
+  });
+}
+
+async function handleAdminAuthStateChange(event, session) {
+  if (event === 'INITIAL_SESSION') {
+    if (session?.user) {
+      await verifyAndLoadWithGuard(session.user);
+    } else {
       showScreen('login');
     }
-    // TOKEN_REFRESHED: existing user already verified — no action needed
-  });
+  } else if (event === 'SIGNED_IN' && session?.user) {
+    // Handles the callback after Google OAuth redirect
+    if (!admin.user || admin.user.id !== session.user.id) {
+      await verifyAndLoadWithGuard(session.user);
+    }
+  } else if (event === 'SIGNED_OUT') {
+    adminVerifyInFlight = null;
+    admin.user = null;
+    admin.org  = null;
+    showScreen('login');
+  }
+  // TOKEN_REFRESHED: existing user already verified — no action needed
+}
+
+async function verifyAndLoadWithGuard(user) {
+  if (!user) return;
+  if (admin.user && admin.user.id === user.id) return;
+
+  if (adminVerifyInFlight) {
+    if (adminVerifyInFlight.userId === user.id) {
+      await adminVerifyInFlight.promise;
+      return;
+    }
+
+    await adminVerifyInFlight.promise;
+    if (admin.user && admin.user.id === user.id) return;
+  }
+
+  const verifyPromise = (async () => {
+    try {
+      await verifyAndLoad(user);
+    } finally {
+      if (adminVerifyInFlight && adminVerifyInFlight.promise === verifyPromise) {
+        adminVerifyInFlight = null;
+      }
+    }
+  })();
+
+  adminVerifyInFlight = {
+    userId: user.id,
+    promise: verifyPromise
+  };
+
+  await verifyPromise;
 }
 
 // ─── Google OAuth ─────────────────────────────────────────────────────────────
