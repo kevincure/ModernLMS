@@ -846,3 +846,98 @@ Source: `remote_schema.sql` exported from Supabase/Postgres.
 
 
  |
+
+---
+
+## Schema Quality Review
+
+_Last reviewed: 2026-02-22_
+
+### Issues & Recommendations
+
+#### 1. `question_type` enum — deprecated values present
+
+The enum contains **8 values** that fall into two overlapping generations:
+
+| Old (deprecated) | Superseded by |
+|---|---|
+| `multiple_choice` | `mc_single`, `mc_multi` |
+| `true_false` | (no typed replacement — treated as `mc_single` with two options) |
+| `short_answer` | `essay` |
+
+**Recommendation:** Migrate rows using the old values, then remove them from the enum. Until migration is complete, any code handling `question_type` must branch on all 8 values, which is a maintenance burden.
+
+---
+
+#### 2. Mixed UUID generators across tables
+
+Some tables default to `uuid_generate_v4()` (requires the `uuid-ossp` extension), others to `gen_random_uuid()` (built into PostgreSQL ≥ 13, no extension needed).
+
+- `uuid_generate_v4()`: courses, enrollments, files, modules, module_items, assignments, quizzes, question_banks, submissions, grade_categories, grades, quiz_questions, quiz_submissions, rubrics, rubric_criteria, invites, announcements
+- `gen_random_uuid()`: admin_audit_log, org_members, assignment_overrides, grade_settings, quiz_time_overrides
+
+**Recommendation:** Standardise on `gen_random_uuid()` for new tables and migrate existing defaults when convenient. Both produce cryptographically random v4 UUIDs; the difference is only the dependency on `uuid-ossp`.
+
+---
+
+#### 3. OneRoster fields spread across core tables
+
+`oneroster_status` and `date_last_modified` appear on `courses`, `enrollments`, and `org_members`. `sourced_id` appears on `profiles`, `orgs`, and `org_members`. These fields serve a narrow integration use-case (OneRoster rostering sync) and are coupled into the core schema with NOT NULL constraints and defaults of `'active'`.
+
+**Recommendation:** Consider isolating OneRoster sync state into a separate `oneroster_sync` side-table keyed by entity type + entity id, so the core tables stay clean. At minimum, relax the NOT NULL constraint on `oneroster_status` so non-OneRoster deployments do not carry meaningless placeholder values.
+
+---
+
+#### 4. `files` table — boolean type discriminators instead of enum
+
+`files` has two boolean flags: `is_placeholder` and `is_youtube`. This pattern breaks as soon as a third file type is needed (e.g. Google Drive links, Vimeo). It also permits logically invalid states (`is_placeholder = true AND is_youtube = true`).
+
+**Recommendation:** Replace both booleans with a `type` column using a new enum: `file_type AS ENUM ('storage', 'youtube', 'external_link', 'placeholder')`. Existing rows map straightforwardly.
+
+---
+
+#### 5. `assignment_overrides` — redundant `time_allowed` and `time_limit` columns
+
+The table has both `time_allowed integer` and `time_limit integer`. The parent `assignments` table similarly has both. Neither column is documented, and they represent the same concept (maximum duration).
+
+**Recommendation:** Remove one of the two. `time_limit` is used in `quiz_time_overrides` and `quizzes`, so standardising on `time_limit` across all tables (and dropping `time_allowed`) is the lower-friction migration.
+
+---
+
+#### 6. `submissions` — single-file limitation baked into schema
+
+`submissions` stores `file_name text` and `file_path text` directly on the row, meaning each submission can have at most one uploaded file.
+
+**Recommendation:** Add a `submission_files` child table (`submission_id`, `file_name`, `storage_path`, `size_bytes`, `uploaded_at`) and deprecate the flat columns when multi-file submission becomes a requirement.
+
+---
+
+#### 7. `profiles` — full name redundancy with no sync trigger
+
+`profiles` stores `name text` (full name), `given_name text`, and `family_name text`. If `name` is derived from the other two, it will drift on updates unless a trigger keeps them in sync. No such trigger is documented.
+
+**Recommendation:** Either make `name` a generated column (`given_name || ' ' || family_name`), or drop `given_name`/`family_name` and reconstruct at the application layer. Verify that `handle_new_user()` handles all three consistently and that profile-update paths do not leave them out of sync.
+
+---
+
+#### 8. `quiz_submissions.assignment_id` — mixed-concern FK
+
+`quiz_submissions` has both a `quiz_id` FK and an `assignment_id` FK. Quizzes already belong to a course via `quizzes.course_id`; linking quiz submissions directly to assignments creates a second path to the course and an implicit coupling between quiz delivery and assignment grading records.
+
+**Recommendation:** Document why `assignment_id` exists on `quiz_submissions` (presumably to attach a quiz result to an assignment grade row). If that is the intent, enforce it with a NOT NULL constraint and an explanatory comment. If it is vestigial, drop the column.
+
+---
+
+#### 9. `courses.code` — NOT NULL with no client-side enforcement
+
+The schema marks `courses.code text NOT NULL` but the admin `createCourse()` function passes `code: code || null`, which will hit a constraint violation if the user leaves the field blank. The error surfaces only after the DB rejects the insert.
+
+**Recommendation:** Add a required-field check in `createCourse()` before the insert (matching the existing pattern for `name` and `term`), or change the column to `text NULL` if a course code is genuinely optional.
+
+---
+
+#### 10. No `updated_at` on several mutable tables
+
+`submissions`, `grades`, `quiz_submissions`, `module_items`, `rubric_criteria` have no `updated_at` column, making it difficult to detect stale cache entries or support incremental sync.
+
+**Recommendation:** Add `updated_at timestamptz NOT NULL DEFAULT now()` with a `BEFORE UPDATE` trigger (reusing the existing `update_updated_at()` function already present in the schema) on any table where rows are expected to be edited after creation.

@@ -125,7 +125,9 @@ export async function loadDataFromSupabase() {
       gradeSettingsRes,
       questionBanksRes
     ] = await Promise.all([
-      supabaseClient.from('profiles').select('*'),
+      // Exclude gemini_key: sensitive, fetched separately only for own profile.
+      // Row-level RLS (Section 1 migration) limits which profiles are visible.
+      supabaseClient.from('profiles').select('id, email, name, avatar, given_name, family_name, created_at, updated_at'),
       supabaseClient.from('courses').select('*'),
       supabaseClient.from('enrollments').select('*'),
       supabaseClient.from('assignments').select('*'),
