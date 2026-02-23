@@ -59,6 +59,8 @@ import {
   supabaseDeleteQuestionBank,
   supabaseCreateInvite,
   supabaseDeleteInvite,
+  supabaseUpdateInviteStatus,
+  supabaseCopyStorageFile,
   supabaseCreateDiscussionThread,
   supabaseUpdateDiscussionThread,
   supabaseDeleteDiscussionThread,
@@ -1227,6 +1229,9 @@ function initApp() {
   renderAll();
   navigateTo('courses');
 
+  // Check for pending course invitations after a short delay (modals must be ready)
+  setTimeout(() => checkPendingInvites(), 500);
+
   console.log('[App] App initialized successfully');
 }
 
@@ -1396,7 +1401,6 @@ function renderCourses() {
 
   const actionsHTML = `
     <button class="btn btn-primary" onclick="openModal('createCourseModal')">Create Course</button>
-    <button class="btn btn-secondary" onclick="openModal('joinCourseModal')">Join Course</button>
   `;
   setHTML('coursesActions', actionsHTML);
 
@@ -1420,7 +1424,6 @@ function renderCourses() {
             ${c.role === 'instructor' ? `
               <button class="btn btn-secondary btn-sm" onclick="openImportContentModal('${c.id}')">Import Content</button>
               <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" onclick="openCloneCourseModal('${c.id}')">Clone</button>
             ` : ''}
           </div>
         </div>
@@ -1432,7 +1435,7 @@ function renderCourses() {
   let html = '';
 
   if (activeCourses.length === 0 && !showInactiveCourses) {
-    html = '<div class="empty-state"><div class="empty-state-title">No active courses</div><div class="empty-state-text">Create a course or join one with an invite code</div></div>';
+    html = '<div class="empty-state"><div class="empty-state-title">No active courses</div><div class="empty-state-text">Create a course or wait for an instructor to invite you</div></div>';
   } else {
     html = activeCourses.map(c => courseCard(c, false)).join('');
   }
@@ -1460,188 +1463,16 @@ function renderCourses() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CLONE COURSE
+// DRAG AND DROP HANDLERS (clone functionality removed — use Import Content instead)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-let cloneSourceCourseId = null;
-
+// Stub kept so any leftover references don't throw; redirect to import
 function openCloneCourseModal(courseId) {
-  cloneSourceCourseId = courseId;
-  const source = getCourseById(courseId);
-  if (!source) return;
-  ensureModalsRendered();
-  const nameEl = document.getElementById('cloneCourseNameInput');
-  const codeEl = document.getElementById('cloneCourseCodeInput');
-  const infoEl = document.getElementById('cloneCourseSourceInfo');
-  if (nameEl) nameEl.value = `${source.name} (Copy)`;
-  if (codeEl) codeEl.value = `${source.code}-COPY`;
-  if (infoEl) infoEl.textContent = `Cloning from: ${source.name} (${source.code})`;
-  openModal('cloneCourseModal');
-}
-
-async function cloneCourse() {
-  const name = document.getElementById('cloneCourseNameInput')?.value.trim();
-  const code = document.getElementById('cloneCourseCodeInput')?.value.trim();
-  const cloneAssignments = document.getElementById('cloneAssignments')?.checked !== false;
-  const cloneQuizzes = document.getElementById('cloneQuizzes')?.checked !== false;
-  const cloneModules = document.getElementById('cloneModules')?.checked !== false;
-  const cloneQBanks = document.getElementById('cloneQBanks')?.checked !== false;
-  const cloneAnnouncements = document.getElementById('cloneAnnouncements')?.checked || false;
-
-  if (!name || !code) {
-    showToast('Please fill in course name and code', 'error');
-    return;
-  }
-
-  const source = getCourseById(cloneSourceCourseId);
-  if (!source) { showToast('Source course not found', 'error'); return; }
-
-  const newCourseId = generateId();
-  const newInviteCode = generateInviteCode();
-
-  const newCourse = {
-    id: newCourseId,
-    name,
-    code,
-    description: source.description || '',
-    inviteCode: newInviteCode,
-    createdBy: appData.currentUser.id,
-    startHereTitle: source.startHereTitle || 'Start Here',
-    startHereContent: source.startHereContent || `Welcome to ${name}.`
-  };
-
-  await supabaseCreateCourse(newCourse);
-  appData.courses.push(newCourse);
-
-  const enrollment = { userId: appData.currentUser.id, courseId: newCourseId, role: 'instructor' };
-  await supabaseCreateEnrollment(enrollment);
-  appData.enrollments.push(enrollment);
-
-  // Build ID maps for cross-referencing
-  const assignmentIdMap = {};
-  const quizIdMap = {};
-  const bankIdMap = {};
-
-  // Clone question banks first (quizzes may reference them)
-  if (cloneQBanks) {
-    const banks = (appData.questionBanks || []).filter(b => b.courseId === cloneSourceCourseId);
-    for (const bank of banks) {
-      const newBankId = generateId();
-      bankIdMap[bank.id] = newBankId;
-      const newBank = {
-        id: newBankId,
-        courseId: newCourseId,
-        name: bank.name,
-        questions: (bank.questions || []).map(q => ({ ...q, id: generateId(), bankId: newBankId })),
-        createdAt: new Date().toISOString()
-      };
-      if (!appData.questionBanks) appData.questionBanks = [];
-      await supabaseCreateQuestionBank(newBank);
-      appData.questionBanks.push(newBank);
-    }
-  }
-
-  // Clone assignments
-  if (cloneAssignments) {
-    const assignments = (appData.assignments || []).filter(a => a.courseId === cloneSourceCourseId);
-    for (const a of assignments) {
-      const newId = generateId();
-      assignmentIdMap[a.id] = newId;
-      const newAssignment = {
-        ...a,
-        id: newId,
-        courseId: newCourseId,
-        status: 'draft',
-        dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
-        createdAt: new Date().toISOString(),
-        // remap question bank if cloned
-        questionBankId: a.questionBankId && bankIdMap[a.questionBankId] ? bankIdMap[a.questionBankId] : a.questionBankId
-      };
-      await supabaseCreateAssignment(newAssignment);
-      appData.assignments.push(newAssignment);
-    }
-  }
-
-  // Clone quizzes
-  if (cloneQuizzes) {
-    const quizzes = (appData.quizzes || []).filter(q => q.courseId === cloneSourceCourseId);
-    for (const q of quizzes) {
-      const newId = generateId();
-      quizIdMap[q.id] = newId;
-      const newQuiz = {
-        ...q,
-        id: newId,
-        courseId: newCourseId,
-        status: 'draft',
-        dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
-        createdAt: new Date().toISOString(),
-        questions: (q.questions || []).map(qq => ({ ...qq, id: generateId() }))
-      };
-      await supabaseCreateQuiz(newQuiz);
-      appData.quizzes.push(newQuiz);
-    }
-  }
-
-  // Clone announcements (as drafts/hidden)
-  if (cloneAnnouncements) {
-    const announcements = (appData.announcements || []).filter(a => a.courseId === cloneSourceCourseId);
-    for (const ann of announcements) {
-      const newAnn = {
-        ...ann,
-        id: generateId(),
-        courseId: newCourseId,
-        hidden: true,
-        pinned: false,
-        authorId: appData.currentUser.id,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      await supabaseCreateAnnouncement(newAnn);
-      appData.announcements.push(newAnn);
-    }
-  }
-
-  // Clone modules (and remap item references)
-  if (cloneModules) {
-    const modules = (appData.modules || []).filter(m => m.courseId === cloneSourceCourseId)
-      .sort((a, b) => a.position - b.position);
-    for (const mod of modules) {
-      const newMod = {
-        id: generateId(),
-        courseId: newCourseId,
-        name: mod.name,
-        position: mod.position,
-        hidden: mod.hidden || false,
-        items: []
-      };
-      await supabaseCreateModule(newMod);
-      // Clone items, remapping IDs
-      for (const item of (mod.items || [])) {
-        let newRefId = item.refId;
-        if (item.type === 'assignment' && assignmentIdMap[item.refId]) newRefId = assignmentIdMap[item.refId];
-        if (item.type === 'quiz' && quizIdMap[item.refId]) newRefId = quizIdMap[item.refId];
-        const newItem = {
-          id: generateId(),
-          type: item.type,
-          refId: newRefId,
-          title: item.title,
-          url: item.url,
-          position: item.position
-        };
-        await supabaseCreateModuleItem(newItem, newMod.id);
-        newMod.items.push(newItem);
-      }
-      appData.modules.push(newMod);
-    }
-  }
-
-  closeModal('cloneCourseModal');
-  renderCourses();
-  showToast(`Course "${name}" created successfully! It's hidden from students until you publish it.`, 'success');
+  openImportContentModal(courseId);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DRAG AND DROP HANDLERS
+// SYLLABUS / DRAG-AND-DROP HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -1990,7 +1821,7 @@ async function createCourse() {
   renderAll();
   navigateTo('home');
 
-  let toastMsg = `Course created! Invite code: ${inviteCode}`;
+  let toastMsg = `Course created successfully!`;
   if (modulesImported > 0) {
     toastMsg += ` (${modulesImported} modules, ${itemsImported} items imported)`;
   }
@@ -2015,53 +1846,96 @@ async function createCourse() {
   clearCourseCreationSyllabusData();
 }
 
-async function joinCourse() {
-  const code = document.getElementById('joinCode').value.trim().toUpperCase();
+/**
+ * Check for pending invites for the current user and show the accept/reject dialog.
+ * Called after app data loads successfully.
+ */
+async function checkPendingInvites() {
+  const userEmail = appData.currentUser?.email?.toLowerCase();
+  if (!userEmail) return;
 
-  if (!code) {
-    showToast('Please enter an invite code', 'error');
-    return;
-  }
-
-  const course = appData.courses.find(c => c.inviteCode === code);
-
-  if (!course) {
-    showToast('Invalid invite code', 'error');
-    return;
-  }
-
-  const existing = appData.enrollments.find(e =>
-    e.userId === appData.currentUser.id && e.courseId === course.id
+  const pending = (appData.invites || []).filter(
+    i => i.email?.toLowerCase() === userEmail && i.status === 'pending'
   );
+  if (pending.length === 0) return;
 
-  if (existing) {
-    showToast('You are already enrolled in this course', 'error');
-    return;
-  }
+  ensureModalsRendered();
+  const listEl = document.getElementById('pendingInvitesList');
+  if (!listEl) return;
 
+  listEl.innerHTML = pending.map(invite => {
+    const course = appData.courses.find(c => c.id === invite.courseId);
+    const courseName = course ? escapeHtml(course.name) : `Course (${invite.courseId})`;
+    const roleLabel = { student: 'Student', ta: 'Teaching Assistant', instructor: 'Instructor' }[invite.role] || invite.role;
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px; border:1px solid var(--border-color); border-radius:var(--radius); margin-bottom:8px;">
+        <div>
+          <div style="font-weight:600;">${courseName}</div>
+          <div class="muted" style="font-size:0.85rem;">Role: ${roleLabel}</div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary btn-sm" onclick="acceptInvite('${invite.id}')">Accept</button>
+          <button class="btn btn-secondary btn-sm" style="color:var(--danger);" onclick="rejectInvite('${invite.id}')">Decline</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  openModal('pendingInvitesModal');
+}
+window.checkPendingInvites = checkPendingInvites;
+
+async function acceptInvite(inviteId) {
+  const invite = (appData.invites || []).find(i => i.id === inviteId);
+  if (!invite) return;
+
+  // Create enrollment
   const enrollment = {
     userId: appData.currentUser.id,
-    courseId: course.id,
-    role: 'student'
+    courseId: invite.courseId,
+    role: invite.role || 'student'
   };
-
-  // Save to Supabase
   const result = await supabaseCreateEnrollment(enrollment);
   if (!result) {
     showToast('Failed to join course', 'error');
     return;
   }
-
-  // Update local state
   appData.enrollments.push(enrollment);
-  activeCourseId = course.id;
-  updateModuleActiveCourse(course.id);
 
-  closeModal('joinCourseModal');
+  // Mark invite accepted
+  await supabaseUpdateInviteStatus(inviteId, 'accepted');
+  const inv = appData.invites.find(i => i.id === inviteId);
+  if (inv) inv.status = 'accepted';
+
+  // Refresh invite list in modal
+  const remaining = (appData.invites || []).filter(
+    i => i.email?.toLowerCase() === appData.currentUser.email?.toLowerCase() && i.status === 'pending'
+  );
+  if (remaining.length === 0) closeModal('pendingInvitesModal');
+  else checkPendingInvites();
+
+  // Switch to the newly joined course
+  activeCourseId = invite.courseId;
+  updateModuleActiveCourse(invite.courseId);
   renderAll();
   navigateTo('home');
-  showToast('Successfully joined course!', 'success');
+  showToast('You have joined the course!', 'success');
 }
+window.acceptInvite = acceptInvite;
+
+async function rejectInvite(inviteId) {
+  await supabaseUpdateInviteStatus(inviteId, 'rejected');
+  const inv = (appData.invites || []).find(i => i.id === inviteId);
+  if (inv) inv.status = 'rejected';
+
+  const remaining = (appData.invites || []).filter(
+    i => i.email?.toLowerCase() === appData.currentUser.email?.toLowerCase() && i.status === 'pending'
+  );
+  if (remaining.length === 0) closeModal('pendingInvitesModal');
+  else checkPendingInvites();
+  showToast('Invitation declined', 'info');
+}
+window.rejectInvite = rejectInvite;
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2084,9 +1958,12 @@ function renderHome() {
 
   renderStartHere(course);
   
+  const isStaffOnHome = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+
   // Upcoming assignments + quizzes
   const upcomingAssignments = appData.assignments
     .filter(a => a.courseId === activeCourseId && a.status === 'published')
+    .filter(a => isStaffOnHome || (!a.hidden && (a.assignmentType || 'essay') !== 'no_submission'))
     .filter(a => new Date(a.dueDate) > new Date())
     .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate }))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
@@ -2121,9 +1998,10 @@ function renderHome() {
     setHTML('homeUpcoming', html);
   }
 
-  // Recent announcements — pinned first, then by date descending
+  // Recent announcements — pinned first, then by date descending; hide hidden ones from students
   const updates = appData.announcements
     .filter(a => a.courseId === activeCourseId)
+    .filter(a => isStaffOnHome || !a.hidden)
     .sort((a, b) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
@@ -2718,6 +2596,7 @@ function renderAssignments() {
       <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-assign-${a.id}')">☰</button>
       <div id="menu-assign-${a.id}" class="floating-menu">
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkReleaseGrades('${a.id}')">🔓 Release Grades</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleAssignmentVisibility('${a.id}')">${assignmentVisibilityText}</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); editAssignment('${a.id}')">Edit</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
@@ -2773,11 +2652,12 @@ function renderAssignments() {
       } else if (atype === 'no_submission') {
         studentAction = ''; // No action — instructor grades manually
       } else {
-        // Essay / Free Text
+        // Essay / Free Text — single consolidated button
         if (mySubmission) {
-          studentAction = `<button class="btn btn-secondary btn-sm" onclick="viewMySubmission('${a.id}')">View Submission</button>`;
           if (isAvailable && a.allowResubmission) {
-            studentAction += ` <button class="btn btn-secondary btn-sm" onclick="submitAssignment('${a.id}')">Resubmit</button>`;
+            studentAction = `<button class="btn btn-secondary btn-sm" onclick="openSubmissionView('${a.id}')">View / Resubmit</button>`;
+          } else {
+            studentAction = `<button class="btn btn-secondary btn-sm" onclick="openSubmissionView('${a.id}')">View Submission</button>`;
           }
         } else if (isAvailable) {
           studentAction = `<button class="btn btn-primary btn-sm" onclick="submitAssignment('${a.id}')">Submit</button>`;
@@ -4607,6 +4487,60 @@ function submitAssignment(assignmentId) {
   openModal('submitModal');
   document.getElementById('submitModalAssignmentId').value = assignmentId;
 }
+
+/**
+ * Show the student's existing submission and optionally let them resubmit.
+ * Replaces the old undefined viewMySubmission function.
+ */
+function openSubmissionView(assignmentId) {
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  const submission = appData.submissions.find(s => s.assignmentId === assignmentId && s.userId === appData.currentUser?.id);
+  if (!assignment || !submission) {
+    showToast('Submission not found', 'error');
+    return;
+  }
+
+  const grade = appData.grades.find(g => g.submissionId === submission.id);
+  const canResubmit = assignment.allowResubmission &&
+    assignment.status === 'published' &&
+    (!assignment.availableUntil || new Date() <= new Date(assignment.availableUntil));
+
+  const gradeHtml = grade && grade.released
+    ? `<div style="margin-top:12px; padding:12px; background:var(--primary-light); border-radius:var(--radius);">
+        <strong>Grade: ${grade.score}/${assignment.points}</strong>
+        ${grade.feedback ? `<div style="margin-top:6px;">${escapeHtml(grade.feedback)}</div>` : ''}
+      </div>`
+    : grade
+      ? `<div class="muted" style="margin-top:8px; font-size:0.85rem;">Grade pending release</div>`
+      : '';
+
+  const html = `
+    <div class="modal-overlay visible" id="submissionViewModal">
+      <div class="modal" style="max-width:680px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Your Submission: ${escapeHtml(assignment.title)}</h2>
+          <button class="modal-close" onclick="closeModal('submissionViewModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="muted" style="margin-bottom:12px;">Submitted: ${formatDate(submission.submittedAt)}</div>
+          <div style="padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-color);">
+            ${submission.text ? `<div>${escapeHtml(submission.text)}</div>` : '<em class="muted">No text submitted</em>'}
+            ${submission.fileName ? `<div style="margin-top:8px;" class="muted">📎 ${escapeHtml(submission.fileName)}</div>` : ''}
+          </div>
+          ${gradeHtml}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('submissionViewModal')">Close</button>
+          ${canResubmit ? `<button class="btn btn-primary" onclick="closeModal('submissionViewModal'); submitAssignment('${assignmentId}')">Resubmit</button>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').innerHTML += html;
+}
+window.openSubmissionView = openSubmissionView;
+// Legacy alias — kept so any cached HTML with old onclick doesn't throw
+window.viewMySubmission = openSubmissionView;
 
 // ── Quiz-type Assignment: start quiz from a linked question bank ──────────────
 let currentAssignmentQuizId = null;  // tracks which assignment this quiz belongs to
@@ -6679,9 +6613,19 @@ function debugGradebookAssignmentVisibility() {
 
 function renderStudentGradebook() {
   setHTML('gradebookActions', '');
-  
+
   const assignments = appData.assignments
-    .filter(a => isAssignmentVisibleInGradebook(a) && a.visibleToStudents !== false)
+    .filter(a => {
+      if (!isAssignmentVisibleInGradebook(a)) return false;
+      if (a.visibleToStudents === false) return false;
+      // For no_submission assignments: only show once a released grade exists
+      if ((a.assignmentType || 'essay') === 'no_submission') {
+        const sub = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
+        const grade = sub ? appData.grades.find(g => g.submissionId === sub.id) : null;
+        return !!(grade && grade.released);
+      }
+      return true;
+    })
     .sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
 
   if (assignments.length === 0) {
@@ -7529,7 +7473,6 @@ function renderPeople() {
       ${isStaffUser ? `
         <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
         <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
-        <div class="muted">Invite code: <strong>${course.inviteCode}</strong></div>
       ` : ''}
     </div>
   `);
@@ -8107,37 +8050,28 @@ async function updateCourse() {
   showToast('Course updated', 'success');
 }
 
-function openImportContentModal(sourceCourseId) {
+function openImportContentModal(destCourseId) {
   ensureModalsRendered();
-  // If sourceCourseId given (clicked from a course card), set it as the source.
-  // Destination is always activeCourseId. If no active course, switch to source first.
-  if (sourceCourseId && sourceCourseId !== activeCourseId) {
-    // source = the card's course, destination = another course the user picks
-    // We'll populate the destination dropdown instead
-    const courses = getUserCourses(appData.currentUser.id).filter(c => c.role === 'instructor' && c.id !== sourceCourseId);
-    const srcLabel = document.getElementById('importSourceLabel');
-    const destSelect = document.getElementById('importDestCourse');
-    const srcName = getCourseById(sourceCourseId)?.name || sourceCourseId;
-    if (srcLabel) srcLabel.textContent = `Source: ${srcName}`;
-    if (destSelect) {
-      destSelect.innerHTML = `<option value="">-- Select destination course --</option>` +
-        courses.map(c => `<option value="${c.id}"${c.id === activeCourseId ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
-    }
-    document.getElementById('importSourceCourseHidden').value = sourceCourseId;
-    document.getElementById('importSourceRow').style.display = 'none';
-    document.getElementById('importDestRow').style.display = '';
-    document.getElementById('importSourceLabel').style.display = '';
-  } else {
-    // Opened from sidebar (old path): source = dropdown, dest = activeCourseId
-    const courses = getUserCourses(appData.currentUser.id).filter(c => c.role === 'instructor' && c.id !== activeCourseId);
-    const select = document.getElementById('importSourceCourse');
-    if (select) select.innerHTML = '<option value="">-- Select source course --</option>' + courses.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
-    document.getElementById('importSourceCourseHidden').value = '';
-    document.getElementById('importSourceRow').style.display = '';
-    document.getElementById('importDestRow').style.display = 'none';
-    const srcLabel = document.getElementById('importSourceLabel');
-    if (srcLabel) srcLabel.style.display = 'none';
+  // destCourseId = the course we clicked "Import Content" on — content goes INTO this course.
+  // User picks which course to import FROM via the source dropdown.
+  const dest = getCourseById(destCourseId || activeCourseId);
+  if (!dest) { showToast('No course selected', 'error'); return; }
+  const effectiveDestId = dest.id;
+
+  const destNameEl = document.getElementById('importDestCourseName');
+  const destHidden = document.getElementById('importDestCourseHidden');
+  if (destNameEl) destNameEl.textContent = dest.name;
+  if (destHidden) destHidden.value = effectiveDestId;
+
+  // Populate source course dropdown (all instructor courses except the destination)
+  const sourceCourses = getUserCourses(appData.currentUser.id)
+    .filter(c => c.role === 'instructor' && c.id !== effectiveDestId);
+  const select = document.getElementById('importSourceCourse');
+  if (select) {
+    select.innerHTML = '<option value="">-- Select a source course --</option>' +
+      sourceCourses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
   }
+
   setHTML('importItemsList', '');
   openModal('importContentModal');
   setTimeout(() => {
@@ -8146,22 +8080,30 @@ function openImportContentModal(sourceCourseId) {
 }
 
 function loadImportItems() {
-  const srcHidden = document.getElementById('importSourceCourseHidden').value;
-  const srcDropdown = document.getElementById('importSourceCourse')?.value;
-  const sourceCourseId = srcHidden || srcDropdown;
+  const sourceCourseId = document.getElementById('importSourceCourse')?.value;
   if (!sourceCourseId) { setHTML('importItemsList', ''); return; }
 
   const types = Array.from(document.querySelectorAll('.import-type-cb:checked')).map(cb => cb.value);
-  if (types.length === 0) { setHTML('importItemsList', '<div class="muted" style="padding:8px;">Select at least one content type above.</div>'); return; }
+  if (types.length === 0) {
+    setHTML('importItemsList', '<div class="muted" style="padding:8px;">Select at least one content type above.</div>');
+    return;
+  }
 
   let html = '';
   const sections = {
-    assignments: appData.assignments.filter(a => a.courseId === sourceCourseId),
-    quizzes:     appData.quizzes.filter(q => q.courseId === sourceCourseId),
-    announcements: appData.announcements.filter(a => a.courseId === sourceCourseId),
-    files:       appData.files.filter(f => f.courseId === sourceCourseId && !f.isPlaceholder)
+    assignments:    appData.assignments.filter(a => a.courseId === sourceCourseId),
+    question_banks: (appData.questionBanks || []).filter(b => b.courseId === sourceCourseId),
+    modules:        (appData.modules || []).filter(m => m.courseId === sourceCourseId),
+    files:          appData.files.filter(f => f.courseId === sourceCourseId && !f.isPlaceholder),
+    announcements:  appData.announcements.filter(a => a.courseId === sourceCourseId)
   };
-  const labels = { assignments: 'Assignments', quizzes: 'Quizzes', announcements: 'Announcements', files: 'Files' };
+  const labels = {
+    assignments: 'Assignments',
+    question_banks: 'Question Banks',
+    modules: 'Modules',
+    files: 'Files',
+    announcements: 'Announcements'
+  };
 
   types.forEach(type => {
     const items = sections[type] || [];
@@ -8195,17 +8137,13 @@ function toggleImportSection(type, el) {
 window.toggleImportSection = toggleImportSection;
 
 async function executeImportContent() {
-  const srcHidden = document.getElementById('importSourceCourseHidden').value;
-  const srcDropdown = document.getElementById('importSourceCourse')?.value;
-  const sourceCourseId = srcHidden || srcDropdown;
-
-  const destDropdown = document.getElementById('importDestCourse')?.value;
-  const destCourseId = destDropdown || activeCourseId;
+  const sourceCourseId = document.getElementById('importSourceCourse')?.value;
+  const destCourseId = document.getElementById('importDestCourseHidden')?.value || activeCourseId;
 
   const selectedTypes = Array.from(document.querySelectorAll('.import-type-cb:checked')).map(cb => cb.value);
 
   if (!sourceCourseId) { showToast('Please select a source course', 'error'); return; }
-  if (!destCourseId) { showToast('Please select a destination course', 'error'); return; }
+  if (!destCourseId) { showToast('No destination course', 'error'); return; }
   if (selectedTypes.length === 0) { showToast('Select at least one content type to import', 'error'); return; }
 
   // Collect selected item IDs per type
@@ -8215,56 +8153,134 @@ async function executeImportContent() {
     selectedIds[cb.dataset.type].add(cb.dataset.id);
   });
 
-  showToast('Importing content...', 'info');
+  showToast('Importing content…', 'info');
   let importedCount = 0;
 
+  // Build ID maps for cross-referencing (e.g. modules reference assignments)
+  const assignmentIdMap = {};
+  const bankIdMap = {};
+  const fileIdMap = {};
+
+  // 1. Question banks first (assignments may reference them)
+  if (selectedTypes.includes('question_banks')) {
+    const ids = selectedIds['question_banks'];
+    const pool = (appData.questionBanks || []).filter(b => b.courseId === sourceCourseId && (!ids || ids.has(b.id)));
+    for (const bank of pool) {
+      const newBankId = generateId();
+      bankIdMap[bank.id] = newBankId;
+      const newBank = {
+        id: newBankId,
+        courseId: destCourseId,
+        name: bank.name,
+        questions: (bank.questions || []).map(q => ({ ...q, id: generateId(), bankId: newBankId })),
+        createdAt: new Date().toISOString()
+      };
+      await supabaseCreateQuestionBank(newBank);
+      if (!appData.questionBanks) appData.questionBanks = [];
+      appData.questionBanks.push(newBank);
+      importedCount++;
+    }
+  }
+
+  // 2. Assignments (remap question bank IDs if banks were also imported)
   if (selectedTypes.includes('assignments')) {
     const ids = selectedIds['assignments'];
     const pool = appData.assignments.filter(a => a.courseId === sourceCourseId && (!ids || ids.has(a.id)));
     for (const assignment of pool) {
-      const newA = { ...assignment, id: generateId(), courseId: destCourseId, status: 'draft', createdAt: new Date().toISOString() };
+      const newId = generateId();
+      assignmentIdMap[assignment.id] = newId;
+      const newA = {
+        ...assignment,
+        id: newId,
+        courseId: destCourseId,
+        status: 'draft',
+        dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
+        createdAt: new Date().toISOString(),
+        questionBankId: assignment.questionBankId && bankIdMap[assignment.questionBankId]
+          ? bankIdMap[assignment.questionBankId]
+          : assignment.questionBankId
+      };
       await supabaseCreateAssignment(newA);
       appData.assignments.push(newA);
       importedCount++;
     }
   }
 
-  if (selectedTypes.includes('quizzes')) {
-    const ids = selectedIds['quizzes'];
-    const pool = appData.quizzes.filter(q => q.courseId === sourceCourseId && (!ids || ids.has(q.id)));
-    for (const quiz of pool) {
-      const newQ = { ...quiz, id: generateId(), courseId: destCourseId, status: 'draft', createdAt: new Date().toISOString(), questions: (quiz.questions || []).map(q => ({ ...q, id: generateId() })) };
-      await supabaseCreateQuiz(newQ);
-      appData.quizzes.push(newQ);
+  // 3. Files — actually duplicate storage objects
+  if (selectedTypes.includes('files')) {
+    const ids = selectedIds['files'];
+    const pool = appData.files.filter(f => f.courseId === sourceCourseId && !f.isPlaceholder && (!ids || ids.has(f.id)));
+    for (const file of pool) {
+      const newFile = await supabaseCopyStorageFile(file, destCourseId, appData.currentUser.id);
+      if (newFile) {
+        fileIdMap[file.id] = newFile.id;
+        appData.files.push(newFile);
+        importedCount++;
+      }
+    }
+  }
+
+  // 4. Modules (remap item references to newly-imported assignments/files)
+  if (selectedTypes.includes('modules')) {
+    const ids = selectedIds['modules'];
+    const pool = (appData.modules || [])
+      .filter(m => m.courseId === sourceCourseId && (!ids || ids.has(m.id)))
+      .sort((a, b) => a.position - b.position);
+    for (const mod of pool) {
+      const newMod = {
+        id: generateId(),
+        courseId: destCourseId,
+        name: mod.name,
+        position: mod.position,
+        hidden: mod.hidden || false,
+        items: []
+      };
+      await supabaseCreateModule(newMod);
+      for (const item of (mod.items || [])) {
+        let newRefId = item.refId;
+        if (item.type === 'assignment' && assignmentIdMap[item.refId]) newRefId = assignmentIdMap[item.refId];
+        if (item.type === 'file' && fileIdMap[item.refId]) newRefId = fileIdMap[item.refId];
+        const newItem = {
+          id: generateId(),
+          type: item.type,
+          refId: newRefId,
+          title: item.title,
+          url: item.url,
+          position: item.position
+        };
+        await supabaseCreateModuleItem(newItem, newMod.id);
+        newMod.items.push(newItem);
+      }
+      if (!appData.modules) appData.modules = [];
+      appData.modules.push(newMod);
       importedCount++;
     }
   }
 
+  // 5. Announcements (imported as hidden)
   if (selectedTypes.includes('announcements')) {
     const ids = selectedIds['announcements'];
     const pool = appData.announcements.filter(a => a.courseId === sourceCourseId && (!ids || ids.has(a.id)));
     for (const ann of pool) {
-      const newAnn = { ...ann, id: generateId(), courseId: destCourseId, authorId: appData.currentUser.id, createdAt: new Date().toISOString(), pinned: false };
+      const newAnn = {
+        ...ann,
+        id: generateId(),
+        courseId: destCourseId,
+        authorId: appData.currentUser.id,
+        hidden: true,
+        pinned: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
       await supabaseCreateAnnouncement(newAnn);
       appData.announcements.push(newAnn);
       importedCount++;
     }
   }
 
-  if (selectedTypes.includes('files')) {
-    const ids = selectedIds['files'];
-    const pool = appData.files.filter(f => f.courseId === sourceCourseId && !f.isPlaceholder && (!ids || ids.has(f.id)));
-    for (const file of pool) {
-      const newFile = { ...file, id: generateId(), courseId: destCourseId, uploadedBy: appData.currentUser.id, uploadedAt: new Date().toISOString() };
-      await supabaseCreateFile(newFile);
-      appData.files.push(newFile);
-      importedCount++;
-    }
-  }
-
   closeModal('importContentModal');
   renderAll();
-  showToast(`Imported ${importedCount} item${importedCount !== 1 ? 's' : ''}`, 'success');
+  showToast(`Imported ${importedCount} item${importedCount !== 1 ? 's' : ''} successfully`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -8896,22 +8912,21 @@ async function processBulkGrades() {
 
 function bulkReleaseGrades(assignmentId) {
   ensureModalsRendered();
-  showConfirmDialog('Release all grades for this assignment to students?', () => {
+  showConfirmDialog('Release all grades for this assignment to students?', async () => {
     const submissions = appData.submissions.filter(s => s.assignmentId === assignmentId);
     let released = 0;
-    
-    submissions.forEach(submission => {
+
+    for (const submission of submissions) {
       const grade = appData.grades.find(g => g.submissionId === submission.id);
       if (grade && !grade.released) {
         grade.released = true;
         released++;
-        
+        await supabaseUpsertGrade(grade); // persist released flag
       }
-    });
-    
-  
+    }
+
     renderGradebook();
-    showToast(`Released ${released} grades`, 'success');
+    showToast(`Released ${released} grade${released !== 1 ? 's' : ''} to students`, 'success');
   });
 }
 
@@ -9797,7 +9812,6 @@ window.openLinkedFile = openLinkedFile;
 
 // Course management
 window.createCourse = createCourse;
-window.joinCourse = joinCourse;
 window.updateCourse = updateCourse;
 window.switchCourse = switchCourse;
 window.showInactiveCoursesSection = showInactiveCoursesSection;
@@ -9941,9 +9955,8 @@ window.openEditCourseModal = openEditCourseModal;
 window.downloadOneRosterExport = downloadOneRosterExport;
 window._appData = appData; // reference for modal inline handlers (e.g. OneRoster export)
 
-// Clone course
+// Clone course (stub — redirects to Import Content)
 window.openCloneCourseModal = openCloneCourseModal;
-window.cloneCourse = cloneCourse;
 
 // Calendar export
 window.exportCalendarICS = exportCalendarICS;

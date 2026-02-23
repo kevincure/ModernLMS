@@ -216,22 +216,19 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       </div>
     </div>
 
-    <!-- Join Course Modal -->
-    <div class="modal-overlay" id="joinCourseModal">
-      <div class="modal">
+    <!-- Pending Invites Modal (for students who log in with unaccepted invites) -->
+    <div class="modal-overlay" id="pendingInvitesModal">
+      <div class="modal" style="max-width:500px;">
         <div class="modal-header">
-          <h2 class="modal-title">Join Course</h2>
-          <button class="modal-close" onclick="closeModal('joinCourseModal')">&times;</button>
+          <h2 class="modal-title">Course Invitations</h2>
+          <button class="modal-close" onclick="closeModal('pendingInvitesModal')">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">Invite Code</label>
-            <input type="text" class="form-input" id="joinCode" placeholder="Enter 6-character code" style="text-transform:uppercase;">
-          </div>
+          <p class="muted" style="margin-bottom:16px;">You have been invited to the following courses. Accept to enroll or decline to remove the invitation.</p>
+          <div id="pendingInvitesList"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('joinCourseModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="joinCourse()">Join</button>
+          <button class="btn btn-secondary" onclick="closeModal('pendingInvitesModal')">Close</button>
         </div>
       </div>
     </div>
@@ -710,54 +707,51 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
 
     <!-- Import Content Modal -->
     <div class="modal-overlay" id="importContentModal">
-      <div class="modal" style="max-width:560px;">
+      <div class="modal" style="max-width:580px;">
         <div class="modal-header">
           <h2 class="modal-title">Import Content</h2>
           <button class="modal-close" onclick="closeModal('importContentModal')">&times;</button>
         </div>
         <div class="modal-body">
-          <input type="hidden" id="importSourceCourseHidden">
-
-          <!-- Source label when opened from a course card -->
-          <div id="importSourceLabel" style="display:none; font-weight:600; margin-bottom:12px; color:var(--text-muted); font-size:0.9rem;"></div>
-
-          <!-- Source dropdown (shown when opened from sidebar) -->
-          <div id="importSourceRow" class="form-group">
-            <label class="form-label">Source Course</label>
-            <select class="form-input" id="importSourceCourse" onchange="loadImportItems()">
-              <option value="">-- Select a course --</option>
-            </select>
+          <!-- Destination course (the card we clicked) -->
+          <input type="hidden" id="importDestCourseHidden">
+          <div id="importDestLabel" style="margin-bottom:12px; padding:8px 12px; background:var(--primary-light); border-radius:var(--radius); font-size:0.9rem;">
+            Importing into: <strong id="importDestCourseName"></strong>
           </div>
 
-          <!-- Destination dropdown (shown when opened from a course card) -->
-          <div id="importDestRow" class="form-group" style="display:none;">
-            <label class="form-label">Import into</label>
-            <select class="form-input" id="importDestCourse" onchange="loadImportItems()">
-              <option value="">-- Select destination course --</option>
-            </select>
-          </div>
-
-          <!-- Step 2: content type checkboxes -->
+          <!-- Source course dropdown (pick which course to import FROM) -->
           <div class="form-group">
-            <label class="form-label">Content Types</label>
+            <label class="form-label">Import from course</label>
+            <select class="form-input" id="importSourceCourse" onchange="loadImportItems()">
+              <option value="">-- Select a source course --</option>
+            </select>
+          </div>
+
+          <!-- Content type checkboxes -->
+          <div class="form-group">
+            <label class="form-label">Content to import</label>
             <div style="display:flex; flex-wrap:wrap; gap:8px;">
               <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
                 <input type="checkbox" class="import-type-cb" value="assignments" checked> Assignments
               </label>
               <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
-                <input type="checkbox" class="import-type-cb" value="quizzes" checked> Quizzes
+                <input type="checkbox" class="import-type-cb" value="question_banks" checked> Question Banks
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
+                <input type="checkbox" class="import-type-cb" value="modules" checked> Modules
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
+                <input type="checkbox" class="import-type-cb" value="files" checked> Files
               </label>
               <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
                 <input type="checkbox" class="import-type-cb" value="announcements"> Announcements
               </label>
-              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; background:var(--bg-color); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; font-size:0.875rem;">
-                <input type="checkbox" class="import-type-cb" value="files"> Files
-              </label>
             </div>
+            <div class="hint" style="margin-top:8px;">By default this clones the course — its files, assignments, question banks, and modules. Announcements are unchecked and can be optionally included.</div>
           </div>
 
-          <!-- Step 3: per-item selection -->
-          <div id="importItemsList" style="max-height:280px; overflow-y:auto;"></div>
+          <!-- Per-item selection list -->
+          <div id="importItemsList" style="max-height:260px; overflow-y:auto;"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('importContentModal')">Cancel</button>
@@ -1433,57 +1427,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
     </div>
 
     <!-- Clone Course Modal -->
-    <div class="modal-overlay" id="cloneCourseModal">
-      <div class="modal" style="max-width:520px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Clone Course</h2>
-          <button class="modal-close" onclick="closeModal('cloneCourseModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div id="cloneCourseSourceInfo" class="muted" style="margin-bottom:16px; font-size:0.9rem;"></div>
-          <div class="form-group">
-            <label class="form-label">New Course Name *</label>
-            <input type="text" class="form-input" id="cloneCourseNameInput" placeholder="e.g. ECON 101 - Spring 2027">
-          </div>
-          <div class="form-group">
-            <label class="form-label">New Course Code *</label>
-            <input type="text" class="form-input" id="cloneCourseCodeInput" placeholder="e.g. ECON101-SP27">
-          </div>
-          <div class="form-group">
-            <label class="form-label">What to copy into the new course</label>
-            <div style="display:flex; flex-direction:column; gap:10px; margin-top:8px;">
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="cloneAssignments" checked>
-                <span>Assignments <span class="muted" style="font-size:0.85rem;">(copied as drafts)</span></span>
-              </label>
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="cloneQuizzes" checked>
-                <span>Quizzes <span class="muted" style="font-size:0.85rem;">(copied as drafts)</span></span>
-              </label>
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="cloneQBanks" checked>
-                <span>Question Banks <span class="muted" style="font-size:0.85rem;">(all questions copied)</span></span>
-              </label>
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="cloneModules" checked>
-                <span>Modules &amp; structure <span class="muted" style="font-size:0.85rem;">(links remapped to cloned items)</span></span>
-              </label>
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="cloneAnnouncements">
-                <span>Announcements <span class="muted" style="font-size:0.85rem;">(copied as hidden drafts)</span></span>
-              </label>
-            </div>
-          </div>
-          <div class="hint" style="padding:12px; background:var(--primary-light); border-radius:var(--radius); font-size:0.85rem;">
-            💡 The cloned course starts hidden from students. Students, grades, and submissions are never copied.
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('cloneCourseModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="cloneCourse()">Clone Course</button>
-        </div>
-      </div>
-    </div>
   `);
 }
 
