@@ -6708,14 +6708,7 @@ function renderStudentGradebook() {
           <div class="card-title">Overall Grade</div>
           <div style="font-size:1.5rem; font-weight:600;">${weightedGrade !== null ? weightedGrade.toFixed(1) + '%' : (percentage !== '—' ? percentage + '%' : '—')}</div>
         </div>
-        <div class="muted">${totalScore} / ${totalPoints} points</div>
     `;
-    if (weightedGrade !== null) {
-      summary += `<div style="margin-top:12px; padding:12px; background:white; border-radius:var(--radius);">
-        <strong>Weighted Grade:</strong> ${weightedGrade.toFixed(1)}%
-        <div class="muted" style="font-size:0.85rem; margin-top:4px;">Based on category weights</div>
-      </div>`;
-    }
     summary += '</div>';
   }
 
@@ -6807,7 +6800,6 @@ function renderStaffGradebook() {
                 : (anyReleased ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkHideGrades('${a.id}')">Hide Grades</button>` : '');
               return `<th style="padding:12px; text-align:center; min-width:140px; position:relative;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<span class="muted" style="font-weight:normal; display:block; margin-top:2px;">(${ptLabel})</span><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">&#9660; Actions</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">SpeedGrader</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button></div></th>`;
             }).join('')}
-            <th style="padding:12px; text-align:center;">Total</th>
             <th style="padding:12px; text-align:center;">%</th>
             ${gradeSettings ? '<th style="padding:12px; text-align:center;">Grade</th>' : ''}
           </tr>
@@ -6815,7 +6807,7 @@ function renderStaffGradebook() {
         <tbody>
           ${students.length === 0 ? `
             <tr>
-              <td colspan="${assignments.length + 2 + (gradeSettings ? 1 : 0)}" style="padding:24px; text-align:center; color:var(--text-muted);">
+              <td colspan="${assignments.length + 1 + (gradeSettings ? 1 : 0)}" style="padding:24px; text-align:center; color:var(--text-muted);">
                 No students enrolled yet
               </td>
             </tr>
@@ -6863,9 +6855,16 @@ function renderStaffGradebook() {
                   return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
                 ${student.isPendingInvite
-                  ? `<td style="padding:12px; text-align:center;">—</td><td style="padding:12px; text-align:center;">—</td>${gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : ''}`
-                  : `<td style="padding:12px; text-align:center; font-weight:600;">${totalPoints > 0 ? `${totalScore}/${totalPoints}` : '—'}</td>
-                ${(() => {
+                  ? `<td style="padding:12px; text-align:center;">—</td>${gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : ''}`
+                  : `${(() => {
+                  const weightedGrade = calculateWeightedGrade(student.id, activeCourseId);
+                  if (weightedGrade !== null) {
+                    const pct = Math.min(weightedGrade + (gradeSettings?.curve || 0), 100);
+                    const pctStr = pct.toFixed(1) + '%' + (gradeSettings?.curve ? ` (+${gradeSettings.curve}% curve)` : '');
+                    const letterGrade = gradeSettings ? getLetterGrade(pct, gradeSettings) : null;
+                    return '<td style="padding:12px; text-align:center; font-weight:600;">' + pctStr + '</td>' +
+                      (gradeSettings ? '<td style="padding:12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
+                  }
                   if (totalPoints === 0) return '<td style="padding:12px; text-align:center;">—</td>' + (gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : '');
                   const curvedScore = Math.min(totalScore + (gradeSettings ? (gradeSettings.curve || 0) * totalPoints / 100 : 0), totalPoints);
                   const pct = (curvedScore / totalPoints) * 100;
