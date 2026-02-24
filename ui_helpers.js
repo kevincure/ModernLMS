@@ -335,14 +335,16 @@ export function closeModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
   modal.classList.remove('visible');
-  // Also clear any inline display style (used by dynamically inserted modals)
+  // Clear any inline overrides (display, elevated z-index)
   if (modal.style.display) modal.style.display = '';
+  if (modal.style.zIndex) modal.style.zIndex = '';
 }
 
 // Confirmation dialog helper
 let confirmCallback = null;
 
 export function confirm(message, onConfirm) {
+  const modal = document.getElementById('confirmModal');
   const msgEl = document.getElementById('confirmMessage');
   const btnEl = document.getElementById('confirmButton');
 
@@ -354,6 +356,8 @@ export function confirm(message, onConfirm) {
     };
   }
 
+  // Elevate above any other open modal (all share z-index:999 by default)
+  if (modal) modal.style.zIndex = '1500';
   openModal('confirmModal');
 }
 

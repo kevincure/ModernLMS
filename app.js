@@ -4557,14 +4557,22 @@ function startAssignmentQuiz(assignmentId) {
   }
 
   // Build a virtual quiz object from the assignment + bank
+  let questions = bank.questions.map(q => ({ ...q }));
+  const randomize = assignment.randomizeQuestions || bank.randomize || false;
+  if (randomize) questions = questions.sort(() => Math.random() - 0.5);
+  const numQ = assignment.numQuestions && assignment.numQuestions > 0
+    ? Math.min(assignment.numQuestions, questions.length)
+    : questions.length;
+  questions = questions.slice(0, numQ);
+
   const virtualQuiz = {
     id: `assign_${assignmentId}`,
     title: assignment.title,
     dueDate: assignment.dueDate,
     timeLimit: assignment.timeLimit,
     attempts: assignment.submissionAttempts,
-    randomizeQuestions: assignment.randomizeQuestions || bank.randomize || false,
-    questions: bank.questions.map(q => ({ ...q }))  // deep-ish copy
+    randomizeQuestions: false,  // already shuffled above if needed
+    questions
   };
 
   currentAssignmentQuizId = assignmentId;
@@ -9794,6 +9802,9 @@ function toggleAiOverlay() {
 function navigateAndClose(page) {
   const overlay = document.getElementById('aiOverlay');
   if (overlay) overlay.style.display = 'none';
+  // Must remove inert — toggleAiOverlay sets it when opening, navigateAndClose bypasses the close path
+  const appContainer = document.getElementById('appContainer');
+  if (appContainer) appContainer.removeAttribute('inert');
   const btn = document.getElementById('aiOverlayBtn');
   if (btn) btn.classList.remove('active');
   navigateTo(page);
