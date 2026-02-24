@@ -8797,11 +8797,16 @@ function calculateWeightedGrade(userId, courseId) {
       if (!assignment) return;
       const submission = appData.submissions.find(s => s.assignmentId === assignment.id && s.userId === userId);
       const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-      if (grade && grade.released && assignment.points > 0) {
+      if (grade && grade.released) {
         const gt = assignment.gradingType || 'points';
-        const pct = gt === 'complete_incomplete' ? (grade.score > 0 ? 100 : 0) : (grade.score / assignment.points) * 100;
-        weightedSum += pct * we.weight;
-        totalWeight += we.weight;
+        if (gt === 'complete_incomplete') {
+          // complete/incomplete: 100% or 0% regardless of points value (may be 0)
+          weightedSum += (grade.score > 0 ? 100 : 0) * we.weight;
+          totalWeight += we.weight;
+        } else if (assignment.points > 0) {
+          weightedSum += (grade.score / assignment.points) * 100 * we.weight;
+          totalWeight += we.weight;
+        }
       }
     });
   } else {
@@ -8815,8 +8820,14 @@ function calculateWeightedGrade(userId, courseId) {
         const grade = sub ? appData.grades.find(g => g.submissionId === sub.id) : null;
         if (grade && grade.released) {
           const gt = a.gradingType || 'points';
-          totalScore += gt === 'complete_incomplete' ? (grade.score > 0 ? a.points : 0) : grade.score;
-          totalPoints += a.points;
+          if (gt === 'complete_incomplete') {
+            // Treat as 1-point binary so it contributes to the category average
+            totalScore += grade.score > 0 ? 1 : 0;
+            totalPoints += 1;
+          } else if (a.points > 0) {
+            totalScore += grade.score;
+            totalPoints += a.points;
+          }
         }
       });
       if (totalPoints > 0) categoryScores[cw.name] = { percentage: (totalScore / totalPoints) * 100, weight: cw.weight };
