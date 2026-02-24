@@ -467,7 +467,7 @@ CLARIFICATION RULE — minimize ask_user:
 - NEVER use ask_user to say "I need to call list_people" or "can you tell me the ID?" — JUST CALL THE TOOL instead. Calling tools is always available to you.
 
 DEFAULTS (use unless user specifies otherwise):
-- Assignment: assignmentType:"essay", gradingType:"points", points:100, dueDate:1 week from now, status:"draft", allowLateSubmissions:true, latePenaltyType:"per_day", lateDeduction:10, allowResubmission:true, submissionAttempts:null
+- Assignment: assignmentType:"essay", gradingType:"points", points:100, dueDate:1 week from now, status:"draft", allowLateSubmissions:true, latePenaltyType:"per_day", lateDeduction:10, allowResubmission:true, submissionAttempts:null, description: always write a concise one-sentence description summarising what students must do — never leave it blank
 - no_submission type: no dueDate, no availability dates, always status:"draft"
 - Quiz: attempts:1, randomizeQuestions:false, randomizeAnswers:true, timeLimit:null
 - Announcement: pinned:false, status:"draft"
@@ -2845,10 +2845,24 @@ function renderActionPreview(msg, idx) {
 
   // ─── QUESTION BANK (create) ──────────────────────────────────────────────
   if (msg.actionType === 'question_bank_create') {
+    const qs = d.questions || [];
+    const qHtml = qs.map((q, i) => {
+      const opts = (q.options || []).map((opt, oi) => {
+        const isCorrect = q.correctAnswer === oi || q.correctAnswer === opt || q.correctAnswer === String(oi);
+        return `<div style="padding:2px 0; padding-left:16px; color:${isCorrect ? 'var(--success, #059669)' : 'var(--text-muted)'};">${isCorrect ? '✓' : '✗'} ${escapeHtml(String(opt))}</div>`;
+      }).join('');
+      return `
+        <div style="padding:8px 0; border-bottom:1px solid var(--border-light);">
+          <div style="font-size:0.85rem; font-weight:500;">${i + 1}. ${escapeHtml(q.prompt || q.question || '')}</div>
+          ${opts}
+          ${q.correctAnswer !== undefined && !q.options?.length ? `<div style="padding-left:16px; color:var(--success, #059669); font-size:0.82rem;">Answer: ${escapeHtml(String(q.correctAnswer))}</div>` : ''}
+        </div>`;
+    }).join('');
     return `
       ${field('Bank Name', textInput('name', d.name))}
       ${field('Description', textarea('description', d.description, 2))}
-      <div class="muted" style="font-size:0.85rem; margin-bottom:4px;">${(d.questions || []).length} question${(d.questions || []).length !== 1 ? 's' : ''} included</div>
+      <div style="font-size:0.82rem; font-weight:600; margin-bottom:6px; color:var(--text-muted);">${qs.length} QUESTION${qs.length !== 1 ? 'S' : ''}</div>
+      ${qs.length ? `<div style="max-height:260px; overflow-y:auto; border:1px solid var(--border-light); border-radius:var(--radius); padding:0 10px; font-size:0.83rem;">${qHtml}</div>` : ''}
     `;
   }
 

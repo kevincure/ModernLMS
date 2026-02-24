@@ -665,6 +665,7 @@ body {
 .page {
   display: none;
   padding: 28px;
+  overflow-x: hidden;
 }
 
 .page.active {
