@@ -28,6 +28,18 @@
 
 'use strict';
 
+// ── Style Theme — match the main app's Editorial look ────────────────────────
+(function initStyleTheme() {
+  document.documentElement.classList.add('style-1');
+  if (document.body) {
+    document.body.classList.add('style-1');
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      document.body.classList.add('style-1');
+    });
+  }
+})();
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const admin = {
