@@ -6802,10 +6802,14 @@ function renderStaffGradebook() {
   }
   
   // (stats box removed — analytics available per column header)
-  
+
   // For the gradebook header, flag which assignments have blind grading on
   const table = `
-    <div style="overflow-x:auto;">
+    <div class="gb-scroll-btns">
+      <button id="gbScrollLeft" class="gb-scroll-btn" onclick="gbScroll(-1)" title="Scroll left" disabled>&#8592;</button>
+      <button id="gbScrollRight" class="gb-scroll-btn" onclick="gbScroll(1)" title="Scroll right">&#8594;</button>
+    </div>
+    <div id="gradebookScrollWrap" style="overflow-x:auto;" onscroll="gbUpdateScrollBtns()">
       <table style="width:100%; border-collapse:collapse;">
         <thead>
           <tr style="background:var(--bg-color); border-bottom:2px solid var(--border-color);">
@@ -6915,7 +6919,26 @@ function renderStaffGradebook() {
   `;
 
   setHTML('gradebookWrap', table);
+  requestAnimationFrame(gbUpdateScrollBtns);
 }
+
+function gbUpdateScrollBtns() {
+  const wrap = document.getElementById('gradebookScrollWrap');
+  const left = document.getElementById('gbScrollLeft');
+  const right = document.getElementById('gbScrollRight');
+  if (!wrap || !left || !right) return;
+  const atLeft = wrap.scrollLeft <= 2;
+  const atRight = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2;
+  left.disabled = atLeft;
+  right.disabled = atRight;
+}
+window.gbUpdateScrollBtns = gbUpdateScrollBtns;
+
+function gbScroll(dir) {
+  const wrap = document.getElementById('gradebookScrollWrap');
+  if (wrap) wrap.scrollBy({ left: dir * 320, behavior: 'smooth' });
+}
+window.gbScroll = gbScroll;
 
 
 function getLetterGrade(pct, settings) {
