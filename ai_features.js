@@ -12,10 +12,12 @@ import {
   supabaseCreateAnnouncement, supabaseUpdateAnnouncement, supabaseDeleteAnnouncement,
   supabaseCreateQuiz, supabaseUpdateQuiz, supabaseDeleteQuiz,
   supabaseCreateAssignment, supabaseUpdateAssignment, supabaseDeleteAssignment,
-  supabaseCreateModule, supabaseCreateModuleItem, supabaseDeleteModuleItem,
+  supabaseCreateModule, supabaseUpdateModule, supabaseCreateModuleItem, supabaseDeleteModuleItem,
   supabaseCreateInvite, supabaseDeleteInvite,
   supabaseDeleteEnrollment,
   supabaseUpdateCourse,
+  supabaseUpdateFile,
+  supabaseCreateQuestionBank, supabaseUpdateQuestionBank, supabaseDeleteQuestionBank,
   supabaseDownloadFileBlob
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
@@ -195,9 +197,19 @@ function normalizeAiOperationAction(action) {
     update_assignment: 'assignment_update',
     delete_assignment: 'assignment_delete',
     create_module: 'module',
+    update_module: 'module_update',
+    set_module_visibility: 'module_visibility',
     add_to_module: 'module_add_item',
     remove_from_module: 'module_remove_item',
     move_to_module: 'module_move_item',
+    rename_file: 'file_rename',
+    set_file_visibility: 'file_visibility',
+    create_question_bank: 'question_bank_create',
+    update_question_bank: 'question_bank_update',
+    add_questions_to_bank: 'question_bank_add_questions',
+    delete_question_bank: 'question_bank_delete',
+    delete_question_from_bank: 'question_delete_from_bank',
+    update_start_here: 'start_here_update',
     create_invite: 'invite_create',
     revoke_invite: 'invite_revoke',
     set_course_visibility: 'course_visibility'
@@ -402,14 +414,19 @@ MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT
 - Before update/delete assignment: call list_assignments → use the returned id
 - Before update/delete announcement: call list_announcements → use the returned id
 - Before update/delete quiz: call list_quizzes → use the returned id
-- Before update/delete module/item: call list_modules → use the returned moduleId/itemId
+- Before update_module or set_module_visibility: call list_modules → use the returned module id
+- Before add_to_module/remove_from_module/move_to_module: call list_modules → use the returned moduleId/itemId
+- Before rename_file or set_file_visibility: call list_files → use the returned file id
+- Before update_question_bank, add_questions_to_bank, delete_question_bank: call list_question_banks → use the returned bank id
+- Before delete_question_from_bank: call list_question_banks → then call get_question_bank(bank_id) → use the returned question id
 - Before ANY invite/person action (revoke_invite, remove_person): call list_people → use the returned inviteId/userId
 - Before creating a quiz/exam from a bank: call list_question_banks → use the returned id
+- Before get_student_grades: call list_people → use the returned userId for the student
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
 - NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
   ❌ WRONG: "There are two announcements: 'Andy' (ID: f42c0e22-...) and 'Chad' (ID: 65570f8d-...)"
   ✓ RIGHT: "There are two guest lecture announcements: one for Andy Esteves and one for Chad Kogar. Which did you mean?"
-- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include the real database "id" (or inviteId/userId/moduleId) field in every action JSON payload. These are machine fields, not shown to users. The COURSE CONTEXT only shows counts — you MUST call the relevant list tool first to obtain the real ID.
+- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include the real database "id" (or inviteId/userId/moduleId/fileId/bankId) field in every action JSON payload. These are machine fields, not shown to users. The COURSE CONTEXT only shows counts — you MUST call the relevant list tool first to obtain the real ID.
   ❌ WRONG update_assignment: {"type":"action","action":"update_assignment","title":"New Title"}  ← missing id; call list_assignments first
   ✓ RIGHT update_assignment: {"type":"action","action":"update_assignment","id":"the-uuid-from-list_assignments","title":"New Title"}
   ❌ WRONG update_announcement: {"type":"action","action":"update_announcement","title":"New Title"}  ← missing id; call list_announcements first
@@ -422,6 +439,26 @@ ALWAYS include human-readable label fields alongside every ID in action payloads
 - userId → also include name and email (from list_people result)
 - moduleId → also include moduleName (from list_modules result)
 - itemId → also include itemTitle (from list_modules or list_assignments/quizzes/files)
+- fileId → also include fileName (from list_files result)
+- bankId → also include bankName (from list_question_banks result)
+- questionId → also include questionPrompt (from get_question_bank result)
+
+OUT-OF-SCOPE REQUESTS — respond with an answer, do NOT use an action:
+- Creating a new course, importing content from another course, or editing course name/code/description/metadata: tell the instructor these must be done manually in Course Settings.
+- Editing the gradebook (grade categories, weights, letter thresholds, or changing a student's grade): tell the instructor "For security reasons, grade and gradebook changes must be made directly in the Gradebook." Do NOT use any grade-editing action.
+
+VIEWING ANALYTICS AND GRADES — use tools then answer, no action needed:
+- To show analytics for an assignment: call get_assignment_analytics(assignment_id) → then answer with the stats
+- To show a student's grades: call list_people → get the userId → call get_student_grades(user_id) → then answer with their grades. Never emit an action for viewing read-only data.
+
+QUESTION BANK QUESTION TYPES (7 supported types for create_question_bank / add_questions_to_bank):
+- multiple_choice: options array + correctAnswer (index or value)
+- true_false: correctAnswer:"true" or "false"
+- short_answer: correctAnswer is a string or array of acceptable answers
+- essay: no correctAnswer (manually graded)
+- fill_in_blank: correctAnswer is the expected text
+- matching: options array of {left,right} pairs
+- ordering: options array to put in correct order, correctAnswer is the ordered array
 
 CLARIFICATION RULE — minimize ask_user:
 - Only ask when you genuinely cannot proceed (e.g., multiple question banks match and user didn't specify)
@@ -435,6 +472,7 @@ DEFAULTS (use unless user specifies otherwise):
 - Quiz: attempts:1, randomizeQuestions:false, randomizeAnswers:true, timeLimit:null
 - Announcement: pinned:false, status:"draft"
 - Invite: role:"student"
+- update_start_here: title:"Start Here" (unless user specifies otherwise)
 
 DATE/TIME RULES — CRITICAL:
 - The "Current date/time" in the course context is already in the user's LOCAL time zone. Use it as local time.
@@ -464,16 +502,19 @@ function summarizeToolResult(toolName, result) {
         const pending = result.filter(p => p.status === 'pending_invite').length;
         return `${enrolled} enrolled${pending ? `, ${pending} pending` : ''}`;
       }
-      case 'list_assignments':   return `${result.length} assignment${result.length !== 1 ? 's' : ''}`;
-      case 'list_question_banks':return `${result.length} bank${result.length !== 1 ? 's' : ''}`;
-      case 'list_quizzes':       return `${result.length} quiz${result.length !== 1 ? 'zes' : ''}`;
-      case 'list_files':         return `${result.length} file${result.length !== 1 ? 's' : ''}`;
-      case 'list_announcements': return `${result.length} announcement${result.length !== 1 ? 's' : ''}`;
-      case 'list_modules':       return `${result.length} module${result.length !== 1 ? 's' : ''}`;
-      default:                   return `${result.length} item${result.length !== 1 ? 's' : ''}`;
+      case 'list_assignments':        return `${result.length} assignment${result.length !== 1 ? 's' : ''}`;
+      case 'list_question_banks':     return `${result.length} bank${result.length !== 1 ? 's' : ''}`;
+      case 'list_quizzes':            return `${result.length} quiz${result.length !== 1 ? 'zes' : ''}`;
+      case 'list_files':              return `${result.length} file${result.length !== 1 ? 's' : ''}`;
+      case 'list_announcements':      return `${result.length} announcement${result.length !== 1 ? 's' : ''}`;
+      case 'list_modules':            return `${result.length} module${result.length !== 1 ? 's' : ''}`;
+      default:                        return `${result.length} item${result.length !== 1 ? 's' : ''}`;
     }
   }
   if (result._inlineData) return `${result.name} (${(result.sizeBytes/1024).toFixed(0)} KB attached)`;
+  if (toolName === 'get_assignment_analytics') return `${result.submittedCount}/${result.totalEnrolled} submitted${result.averageScore != null ? `, avg ${result.averageScore}/${result.points}` : ''}`;
+  if (toolName === 'get_student_grades') return `${result.student?.name || 'Student'} — ${result.grades?.length || 0} grade${result.grades?.length !== 1 ? 's' : ''}`;
+  if (toolName === 'get_question_bank') return `${result.questions?.length || 0} question${result.questions?.length !== 1 ? 's' : ''}`;
   if (result.name) return result.name;
   return '';
 }
@@ -567,14 +608,14 @@ async function executeAiTool(toolName, params = {}) {
       return (appData.files || [])
         .filter(f => f.courseId === activeCourseId)
         .filter(f => effectiveIsStaff || !f.hidden)
-        .map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size }));
+        .map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size, hidden: !!f.hidden }));
 
     case 'list_modules':
       return (appData.modules || [])
         .filter(m => m.courseId === activeCourseId)
         .filter(m => effectiveIsStaff || !m.hidden)
         .map(m => ({
-          id: m.id, name: m.name,
+          id: m.id, name: m.name, hidden: !!m.hidden,
           items: (m.items || []).map(i => ({
             id: i.id, type: i.type, refId: i.refId,
             title: i.title
@@ -633,6 +674,69 @@ async function executeAiTool(toolName, params = {}) {
     case 'get_quiz': {
       const q = (appData.quizzes || []).find(q => q.id === params.quiz_id && q.courseId === activeCourseId);
       return q || { error: 'Quiz not found' };
+    }
+
+    case 'get_assignment_analytics': {
+      const assignId = params.assignment_id;
+      if (!assignId) return { error: 'Missing assignment_id' };
+      const a = (appData.assignments || []).find(a => a.id === assignId && a.courseId === activeCourseId);
+      if (!a) return { error: 'Assignment not found' };
+      const enrolledStudents = (appData.enrollments || []).filter(e => e.courseId === activeCourseId && e.role === 'student');
+      const submissions = (appData.submissions || []).filter(s => s.assignmentId === assignId);
+      const submittedUserIds = new Set(submissions.map(s => s.userId));
+      const grades = (appData.grades || []).filter(g => submissions.find(s => s.id === g.submissionId));
+      const scoredGrades = grades.filter(g => g.score !== null && g.score !== undefined);
+      const scores = scoredGrades.map(g => g.score);
+      const avgScore = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : null;
+      return {
+        assignmentId: assignId,
+        title: a.title,
+        points: a.points,
+        totalEnrolled: enrolledStudents.length,
+        submittedCount: submittedUserIds.size,
+        notSubmittedCount: enrolledStudents.filter(e => !submittedUserIds.has(e.userId)).length,
+        gradedCount: scoredGrades.length,
+        ungradedCount: submissions.length - scoredGrades.length,
+        averageScore: avgScore ? parseFloat(avgScore) : null,
+        highScore: scores.length ? Math.max(...scores) : null,
+        lowScore: scores.length ? Math.min(...scores) : null
+      };
+    }
+
+    case 'get_student_grades': {
+      const userId = params.user_id;
+      if (!userId) return { error: 'Missing user_id — call list_people first to get the userId' };
+      const enrollment = (appData.enrollments || []).find(e => e.userId === userId && e.courseId === activeCourseId);
+      if (!enrollment) return { error: 'User is not enrolled in this course' };
+      const u = (appData.users || []).find(u => u.id === userId);
+      const submissions = (appData.submissions || []).filter(s => s.userId === userId);
+      const subIds = new Set(submissions.map(s => s.id));
+      const grades = (appData.grades || []).filter(g => subIds.has(g.submissionId));
+      const results = submissions.map(s => {
+        const a = (appData.assignments || []).find(a => a.id === s.assignmentId && a.courseId === activeCourseId);
+        if (!a) return null;
+        const grade = grades.find(g => g.submissionId === s.id);
+        return {
+          assignmentId: a.id,
+          assignmentTitle: a.title,
+          points: a.points,
+          score: grade ? grade.score : null,
+          released: grade ? grade.released : false,
+          submittedAt: s.submittedAt
+        };
+      }).filter(Boolean);
+      // Also include assignments with no submission
+      const submittedAssignIds = new Set(submissions.map(s => s.assignmentId));
+      const courseAssignments = (appData.assignments || []).filter(
+        a => a.courseId === activeCourseId && a.status === 'published' && (a.assignmentType || 'essay') !== 'no_submission'
+      );
+      const notSubmitted = courseAssignments
+        .filter(a => !submittedAssignIds.has(a.id))
+        .map(a => ({ assignmentId: a.id, assignmentTitle: a.title, points: a.points, score: null, released: false, submittedAt: null }));
+      return {
+        student: { userId, name: u?.name || '', email: u?.email || '' },
+        grades: [...results, ...notSubmitted]
+      };
     }
 
     case 'get_file_content': {
@@ -725,6 +829,32 @@ function validateActionPayload(payload) {
   if (action === 'create_quiz_from_bank' && payload.questionBankId) {
     if (!(appData.questionBanks || []).find(b => b.id === payload.questionBankId && b.courseId === activeCourseId))
       return `Question bank "${payload.questionBankId}" not found — use list_question_banks`;
+  }
+  if (['update_question_bank','add_questions_to_bank','delete_question_bank'].includes(action)) {
+    const bankId = payload.id || payload.bankId;
+    if (!bankId) return 'Missing bank id — call list_question_banks first';
+    if (!(appData.questionBanks || []).find(b => b.id === bankId && b.courseId === activeCourseId))
+      return `Question bank "${bankId}" not found — use list_question_banks`;
+  }
+  if (action === 'delete_question_from_bank') {
+    if (!payload.bankId) return 'Missing bankId — call list_question_banks then get_question_bank first';
+    if (!payload.questionId) return 'Missing questionId — call get_question_bank to get the question id';
+    const bank = (appData.questionBanks || []).find(b => b.id === payload.bankId && b.courseId === activeCourseId);
+    if (!bank) return `Question bank "${payload.bankId}" not found — use list_question_banks`;
+    if (!(bank.questions || []).find(q => q.id === payload.questionId))
+      return `Question "${payload.questionId}" not found in this bank — call get_question_bank to see current questions`;
+  }
+  if (action === 'update_module' || action === 'set_module_visibility') {
+    const moduleId = payload.moduleId || payload.id;
+    if (!moduleId) return 'Missing moduleId — call list_modules first';
+    if (!(appData.modules || []).find(m => m.id === moduleId && m.courseId === activeCourseId))
+      return `Module "${moduleId}" not found — use list_modules`;
+  }
+  if (action === 'rename_file' || action === 'set_file_visibility') {
+    const fileId = payload.fileId || payload.id;
+    if (!fileId) return 'Missing fileId — call list_files first';
+    if (!(appData.files || []).find(f => f.id === fileId && f.courseId === activeCourseId))
+      return `File "${fileId}" not found — use list_files`;
   }
   return null;
 }
@@ -1173,6 +1303,65 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'create_question_bank') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'question_bank_create',
+      data: {
+        name: action.name || '',
+        description: action.description || '',
+        questions: action.questions || [],
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'update_question_bank') {
+    const bankId = action.id || action.bankId;
+    const bank = (appData.questionBanks || []).find(b => b.id === bankId);
+    const d = { id: bankId };
+    if ('name' in action) d.name = action.name;
+    if ('description' in action) d.description = action.description;
+    d.bankName = bank?.name || '';
+    aiThread.push({ role: 'action', actionType: 'question_bank_update', data: d, confirmed: false, rejected: false });
+  } else if (action.action === 'add_questions_to_bank') {
+    const bankId = action.id || action.bankId;
+    const bank = (appData.questionBanks || []).find(b => b.id === bankId);
+    aiThread.push({
+      role: 'action',
+      actionType: 'question_bank_add_questions',
+      data: {
+        id: bankId,
+        bankName: action.bankName || bank?.name || '',
+        questions: action.questions || [],
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete_question_bank') {
+    const bankId = action.id || action.bankId;
+    const bank = (appData.questionBanks || []).find(b => b.id === bankId);
+    aiThread.push({
+      role: 'action',
+      actionType: 'question_bank_delete',
+      data: { id: bankId, bankName: bank?.name || '', notes: action.notes || '' },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete_question_from_bank') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'question_delete_from_bank',
+      data: {
+        bankId: action.bankId,
+        questionId: action.questionId,
+        questionPrompt: action.questionPrompt || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else if (action.action === 'create_module') {
     aiThread.push({
       role: 'action',
@@ -1180,6 +1369,74 @@ function handleAiAction(action) {
       data: {
         name: action.name,
         description: action.description || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'update_module') {
+    const moduleId = action.moduleId || action.id;
+    aiThread.push({
+      role: 'action',
+      actionType: 'module_update',
+      data: {
+        moduleId,
+        moduleName: action.moduleName || '',
+        name: action.name || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'set_module_visibility') {
+    const moduleId = action.moduleId || action.id;
+    aiThread.push({
+      role: 'action',
+      actionType: 'module_visibility',
+      data: {
+        moduleId,
+        moduleName: action.moduleName || '',
+        hidden: action.hidden !== false && action.hidden !== undefined ? !!action.hidden : false,
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'rename_file') {
+    const fileId = action.fileId || action.id;
+    aiThread.push({
+      role: 'action',
+      actionType: 'file_rename',
+      data: {
+        fileId,
+        oldName: action.oldName || '',
+        newName: action.newName || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'set_file_visibility') {
+    const fileId = action.fileId || action.id;
+    aiThread.push({
+      role: 'action',
+      actionType: 'file_visibility',
+      data: {
+        fileId,
+        fileName: action.fileName || '',
+        hidden: action.hidden !== false && action.hidden !== undefined ? !!action.hidden : false,
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'update_start_here') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'start_here_update',
+      data: {
+        title: action.title || 'Start Here',
+        content: action.content || '',
         notes: action.notes || ''
       },
       confirmed: false,
@@ -1395,8 +1652,32 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! Updated the quiz. View it in ${pageLink('assignments', 'Assignments')}.`;
     case 'quiz_delete':
       return `Done! The quiz has been permanently deleted.`;
+    case 'question_bank_create': {
+      const qCount = (d.questions || []).length;
+      return `Done! Created question bank ${b(d.name || 'Untitled')} with ${qCount} question${qCount !== 1 ? 's' : ''}.`;
+    }
+    case 'question_bank_update':
+      return `Done! Updated question bank ${b(d.bankName || d.name || '')}.`;
+    case 'question_bank_add_questions': {
+      const added = (d.questions || []).length;
+      return `Done! Added ${added} question${added !== 1 ? 's' : ''} to ${b(d.bankName || 'the question bank')}.`;
+    }
+    case 'question_bank_delete':
+      return `Done! Question bank ${b(d.bankName || '')} has been permanently deleted.`;
+    case 'question_delete_from_bank':
+      return `Done! The question has been removed from the bank.`;
     case 'module':
       return `Done! Created module ${b(d.name || 'Untitled')}. Add content from ${pageLink('modules', 'Modules')}.`;
+    case 'module_update':
+      return `Done! Module renamed to ${b(d.name || 'Untitled')}. See ${pageLink('modules', 'Modules')}.`;
+    case 'module_visibility':
+      return `Done! Module ${b(d.moduleName || '')} is now <strong>${d.hidden ? 'hidden from' : 'visible to'}</strong> students. See ${pageLink('modules', 'Modules')}.`;
+    case 'file_rename':
+      return `Done! File renamed to ${b(d.newName || '')}.`;
+    case 'file_visibility':
+      return `Done! File ${b(d.fileName || '')} is now <strong>${d.hidden ? 'hidden from' : 'visible to'}</strong> students.`;
+    case 'start_here_update':
+      return `Done! The Start Here message has been updated. View it on the ${pageLink('home', 'Course Home')}.`;
     case 'module_add_item': {
       const mod = (appData.modules || []).find(m => m.id === d.moduleId);
       const resolvedItemTitle = d.itemTitle
@@ -1714,6 +1995,117 @@ async function executeAiOperation(operation, publish = false) {
     }
     appData.modules.push(newModule);
     if (renderModulesCallback) renderModulesCallback();
+    return true;
+  }
+
+  if (action === 'question_bank_create') {
+    if (!appData.questionBanks) appData.questionBanks = [];
+    const newBank = {
+      id: generateId(),
+      courseId: activeCourseId,
+      name: resolved.name || 'New Question Bank',
+      description: resolved.description || '',
+      questions: (resolved.questions || []).map(q => ({ id: generateId(), ...q })),
+      createdBy: appData.currentUser?.id,
+      createdAt: new Date().toISOString()
+    };
+    const result = await supabaseCreateQuestionBank(newBank);
+    if (!result) {
+      showToast('Failed to save question bank to database', 'error');
+      return false;
+    }
+    appData.questionBanks.push(newBank);
+    return true;
+  }
+
+  if (action === 'question_bank_update') {
+    const bank = (appData.questionBanks || []).find(b => b.id === resolved.id && b.courseId === activeCourseId);
+    if (!bank) { showToast('Question bank not found', 'error'); return false; }
+    if (resolved.name !== undefined) bank.name = resolved.name;
+    if (resolved.description !== undefined) bank.description = resolved.description;
+    const result = await supabaseUpdateQuestionBank(bank);
+    if (!result) { showToast('Failed to update question bank', 'error'); return false; }
+    return true;
+  }
+
+  if (action === 'question_bank_add_questions') {
+    const bankId = resolved.id || resolved.bankId;
+    const bank = (appData.questionBanks || []).find(b => b.id === bankId && b.courseId === activeCourseId);
+    if (!bank) { showToast('Question bank not found', 'error'); return false; }
+    const newQuestions = (resolved.questions || []).map(q => ({ id: generateId(), ...q }));
+    bank.questions = [...(bank.questions || []), ...newQuestions];
+    const result = await supabaseUpdateQuestionBank(bank);
+    if (!result) { showToast('Failed to update question bank', 'error'); return false; }
+    return true;
+  }
+
+  if (action === 'question_bank_delete') {
+    const bankId = resolved.id || resolved.bankId;
+    const success = await supabaseDeleteQuestionBank(bankId);
+    if (!success) { showToast('Failed to delete question bank', 'error'); return false; }
+    appData.questionBanks = (appData.questionBanks || []).filter(b => b.id !== bankId);
+    return true;
+  }
+
+  if (action === 'question_delete_from_bank') {
+    const bank = (appData.questionBanks || []).find(b => b.id === resolved.bankId && b.courseId === activeCourseId);
+    if (!bank) { showToast('Question bank not found', 'error'); return false; }
+    bank.questions = (bank.questions || []).filter(q => q.id !== resolved.questionId);
+    const result = await supabaseUpdateQuestionBank(bank);
+    if (!result) { showToast('Failed to update question bank', 'error'); return false; }
+    return true;
+  }
+
+  if (action === 'module_update') {
+    const moduleId = resolved.moduleId || resolved.id;
+    const mod = (appData.modules || []).find(m => m.id === moduleId && m.courseId === activeCourseId);
+    if (!mod) { showToast('Module not found', 'error'); return false; }
+    if (resolved.name) mod.name = resolved.name;
+    const result = await supabaseUpdateModule(mod);
+    if (!result) { showToast('Failed to update module', 'error'); return false; }
+    if (renderModulesCallback) renderModulesCallback();
+    return true;
+  }
+
+  if (action === 'module_visibility') {
+    const moduleId = resolved.moduleId || resolved.id;
+    const mod = (appData.modules || []).find(m => m.id === moduleId && m.courseId === activeCourseId);
+    if (!mod) { showToast('Module not found', 'error'); return false; }
+    mod.hidden = !!resolved.hidden;
+    const result = await supabaseUpdateModule(mod);
+    if (!result) { showToast('Failed to update module visibility', 'error'); return false; }
+    if (renderModulesCallback) renderModulesCallback();
+    return true;
+  }
+
+  if (action === 'file_rename') {
+    const fileId = resolved.fileId || resolved.id;
+    const file = (appData.files || []).find(f => f.id === fileId && f.courseId === activeCourseId);
+    if (!file) { showToast('File not found', 'error'); return false; }
+    file.name = resolved.newName || file.name;
+    const result = await supabaseUpdateFile(file);
+    if (!result) { showToast('Failed to rename file', 'error'); return false; }
+    return true;
+  }
+
+  if (action === 'file_visibility') {
+    const fileId = resolved.fileId || resolved.id;
+    const file = (appData.files || []).find(f => f.id === fileId && f.courseId === activeCourseId);
+    if (!file) { showToast('File not found', 'error'); return false; }
+    file.hidden = !!resolved.hidden;
+    const result = await supabaseUpdateFile(file);
+    if (!result) { showToast('Failed to update file visibility', 'error'); return false; }
+    return true;
+  }
+
+  if (action === 'start_here_update') {
+    const course = (appData.courses || []).find(c => c.id === activeCourseId);
+    if (!course) { showToast('Course not found', 'error'); return false; }
+    course.startHereTitle = resolved.title || 'Start Here';
+    course.startHereContent = resolved.content || '';
+    const result = await supabaseUpdateCourse(course);
+    if (!result) { showToast('Failed to update Start Here message', 'error'); return false; }
+    if (renderHomeCallback) renderHomeCallback();
     return true;
   }
 
@@ -2036,9 +2428,19 @@ export function renderAiThread() {
         'assignment_update': 'Assignment',
         'assignment_delete': 'Assignment',
         'module': 'Module',
+        'module_update': 'Module',
+        'module_visibility': 'Module',
         'module_add_item': 'Module Item',
         'module_remove_item': 'Module Item',
         'module_move_item': 'Module Item',
+        'file_rename': 'File',
+        'file_visibility': 'File',
+        'question_bank_create': 'Question Bank',
+        'question_bank_update': 'Question Bank',
+        'question_bank_add_questions': 'Question Bank',
+        'question_bank_delete': 'Question Bank',
+        'question_delete_from_bank': 'Question',
+        'start_here_update': 'Start Here Message',
         'invite_create': 'Invitation',
         'invite_revoke': 'Invitation',
         'person_remove': 'Person',
@@ -2060,9 +2462,19 @@ export function renderAiThread() {
         'assignment_update': 'Update',
         'assignment_delete': 'Delete',
         'module': 'Create',
+        'module_update': 'Rename',
+        'module_visibility': msg.data?.hidden ? 'Hide' : 'Show',
         'module_add_item': 'Add to',
         'module_remove_item': 'Remove from',
         'module_move_item': 'Move to',
+        'file_rename': 'Rename',
+        'file_visibility': msg.data?.hidden ? 'Hide' : 'Show',
+        'question_bank_create': 'Create',
+        'question_bank_update': 'Update',
+        'question_bank_add_questions': 'Add to',
+        'question_bank_delete': 'Delete',
+        'question_delete_from_bank': 'Delete from Bank',
+        'start_here_update': 'Update',
         'invite_create': 'Send',
         'invite_revoke': 'Revoke',
         'person_remove': 'Remove',
@@ -2084,7 +2496,7 @@ export function renderAiThread() {
             ` : isLatest ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
                 <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, false)">${actionVerb}${['Create','Update'].includes(actionVerb) ? ' (Draft)' : ''}</button>
-                ${['announcement', 'assignment', 'quiz', 'quiz_from_bank'].includes(msg.actionType) ? `
+                ${['announcement', 'assignment', 'quiz', 'quiz_from_bank', 'question_bank_create'].includes(msg.actionType) ? `
                   <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, true)">${actionVerb === 'Create' ? 'Create and Publish' : 'Save and Publish'}</button>
                 ` : ''}
                 <button class="btn btn-secondary btn-sm" onclick="window.rejectAiAction(${idx})">Cancel</button>
@@ -2419,6 +2831,92 @@ function renderActionPreview(msg, idx) {
     return `
       <div class="muted" style="font-size:0.9rem; margin-bottom:12px;">Course: <strong>${escapeHtml(course?.name || '')}</strong></div>
       <div>${checkboxInput('visible', d.visible !== false, 'Visible to students')}</div>
+    `;
+  }
+
+  // ─── QUESTION BANK (create) ──────────────────────────────────────────────
+  if (msg.actionType === 'question_bank_create') {
+    return `
+      ${field('Bank Name', textInput('name', d.name))}
+      ${field('Description', textarea('description', d.description, 2))}
+      <div class="muted" style="font-size:0.85rem; margin-bottom:4px;">${(d.questions || []).length} question${(d.questions || []).length !== 1 ? 's' : ''} included</div>
+    `;
+  }
+
+  // ─── QUESTION BANK (update metadata) ─────────────────────────────────────
+  if (msg.actionType === 'question_bank_update') {
+    const bank = (appData.questionBanks || []).find(b => b.id === d.id);
+    let html = `<div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(d.bankName || bank?.name || d.id || '')}</div>`;
+    if ('name' in d) html += field('Bank Name', textInput('name', d.name));
+    if ('description' in d) html += field('Description', textarea('description', d.description, 2));
+    return html;
+  }
+
+  // ─── QUESTION BANK (add questions) ───────────────────────────────────────
+  if (msg.actionType === 'question_bank_add_questions') {
+    const bank = (appData.questionBanks || []).find(b => b.id === d.id);
+    return `
+      <div class="muted" style="font-size:0.9rem; margin-bottom:8px;">Adding to: <strong>${escapeHtml(d.bankName || bank?.name || '')}</strong></div>
+      <div class="muted" style="font-size:0.85rem;">${(d.questions || []).length} new question${(d.questions || []).length !== 1 ? 's' : ''} to append</div>
+    `;
+  }
+
+  // ─── QUESTION BANK (delete) ───────────────────────────────────────────────
+  if (msg.actionType === 'question_bank_delete') {
+    const bank = (appData.questionBanks || []).find(b => b.id === d.id);
+    const qCount = bank?.questions?.length || 0;
+    return `
+      <div class="muted" style="font-size:0.9rem;">Delete question bank: <strong>${escapeHtml(d.bankName || bank?.name || d.id || '')}</strong></div>
+      ${qCount > 0 ? `<div style="margin-top:6px; font-size:0.82rem; color:var(--danger, #c00);">⚠️ This will permanently delete ${qCount} question${qCount !== 1 ? 's' : ''}.</div>` : ''}
+    `;
+  }
+
+  // ─── QUESTION DELETE FROM BANK ────────────────────────────────────────────
+  if (msg.actionType === 'question_delete_from_bank') {
+    const bank = (appData.questionBanks || []).find(b => b.id === d.bankId);
+    return `
+      <div class="muted" style="font-size:0.9rem;">Delete question from bank: <strong>${escapeHtml(bank?.name || d.bankId || '')}</strong></div>
+      <div style="margin-top:8px; font-size:0.9rem; padding:8px; background:var(--bg-secondary, #f5f5f5); border-radius:6px;">${escapeHtml(d.questionPrompt || d.questionId || '')}</div>
+    `;
+  }
+
+  // ─── MODULE (update/rename) ───────────────────────────────────────────────
+  if (msg.actionType === 'module_update') {
+    return `
+      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Renaming module: <em>${escapeHtml(d.moduleName || '')}</em></div>
+      ${field('New Name', textInput('name', d.name), 0)}
+    `;
+  }
+
+  // ─── MODULE VISIBILITY ────────────────────────────────────────────────────
+  if (msg.actionType === 'module_visibility') {
+    return `
+      <div class="muted" style="font-size:0.9rem; margin-bottom:10px;">Module: <strong>${escapeHtml(d.moduleName || d.moduleId || '')}</strong></div>
+      <div>${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>
+    `;
+  }
+
+  // ─── FILE RENAME ─────────────────────────────────────────────────────────
+  if (msg.actionType === 'file_rename') {
+    return `
+      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Current name: <em>${escapeHtml(d.oldName || '')}</em></div>
+      ${field('New Name', textInput('newName', d.newName), 0)}
+    `;
+  }
+
+  // ─── FILE VISIBILITY ─────────────────────────────────────────────────────
+  if (msg.actionType === 'file_visibility') {
+    return `
+      <div class="muted" style="font-size:0.9rem; margin-bottom:10px;">File: <strong>${escapeHtml(d.fileName || d.fileId || '')}</strong></div>
+      <div>${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>
+    `;
+  }
+
+  // ─── START HERE UPDATE ───────────────────────────────────────────────────
+  if (msg.actionType === 'start_here_update') {
+    return `
+      ${field('Title', textInput('title', d.title))}
+      ${field('Welcome Message', textarea('content', d.content, 5))}
     `;
   }
 
