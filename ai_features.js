@@ -927,6 +927,15 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
       parsed = { type: 'tool_call', tool: parsed.type, params: parsed.params || {}, step_label: parsed.step_label || '' };
     }
 
+    // Normalize: AI sometimes uses action name as `type` instead of `action`
+    // e.g. {"type":"create_question_bank",...} instead of
+    // {"type":"action","action":"create_question_bank",...}
+    const RESERVED_TYPES = ['tool_call', 'action', 'ask_user', 'answer'];
+    const ACTION_TYPES = new Set((AI_TOOL_REGISTRY.action_types || []).map(actionType => actionType.name));
+    if (parsed.type && !RESERVED_TYPES.includes(parsed.type) && !parsed.action && ACTION_TYPES.has(parsed.type)) {
+      parsed = { ...parsed, type: 'action', action: parsed.type };
+    }
+
     // ── Direct text answer ────────────────────────────────────────────────────
     if (parsed.type === 'answer') {
       aiThread.push({ role: 'assistant', content: parsed.text });
