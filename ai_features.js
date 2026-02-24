@@ -760,7 +760,7 @@ async function executeAiTool(toolName, params = {}) {
           // Fall through to inlineData if decode fails
         }
       }
-      // Images and PDFs: send as inline data (supported by gemini-2.0-flash)
+      // Images and PDFs: send as inline data (supported by gemini-2.5-flash)
       if (mt.startsWith('image/') || mt === 'application/pdf') {
         return { id: f.id, name: f.name, mimeType: mt, sizeBytes: result.sizeBytes, _inlineData: { mimeType: mt, data: result.base64 } };
       }
