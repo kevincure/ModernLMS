@@ -712,15 +712,26 @@ async function executeAiTool(toolName, params = {}) {
       const submissions = (appData.submissions || []).filter(s => s.userId === userId);
       const subIds = new Set(submissions.map(s => s.id));
       const grades = (appData.grades || []).filter(g => subIds.has(g.submissionId));
+      const buildScoreDisplay = (score, gradingType, points) => {
+        if (score === null || score === undefined) return 'Not graded';
+        if (gradingType === 'complete_incomplete') return score == 1 ? 'Complete' : 'Incomplete';
+        if (gradingType === 'letter_grade') return String(score);
+        return `${score}/${points} pts`;
+      };
       const results = submissions.map(s => {
         const a = (appData.assignments || []).find(a => a.id === s.assignmentId && a.courseId === activeCourseId);
         if (!a) return null;
         const grade = grades.find(g => g.submissionId === s.id);
+        const gradingType = a.gradingType || 'points';
+        const score = grade ? grade.score : null;
         return {
           assignmentId: a.id,
           assignmentTitle: a.title,
+          assignmentType: a.assignmentType || 'essay',
+          gradingType,
           points: a.points,
-          score: grade ? grade.score : null,
+          score,
+          scoreDisplay: buildScoreDisplay(score, gradingType, a.points),
           released: grade ? grade.released : false,
           submittedAt: s.submittedAt
         };
@@ -732,7 +743,17 @@ async function executeAiTool(toolName, params = {}) {
       );
       const notSubmitted = courseAssignments
         .filter(a => !submittedAssignIds.has(a.id))
-        .map(a => ({ assignmentId: a.id, assignmentTitle: a.title, points: a.points, score: null, released: false, submittedAt: null }));
+        .map(a => ({
+          assignmentId: a.id,
+          assignmentTitle: a.title,
+          assignmentType: a.assignmentType || 'essay',
+          gradingType: a.gradingType || 'points',
+          points: a.points,
+          score: null,
+          scoreDisplay: 'Not submitted',
+          released: false,
+          submittedAt: null
+        }));
       return {
         student: { userId, name: u?.name || '', email: u?.email || '' },
         grades: [...results, ...notSubmitted]
