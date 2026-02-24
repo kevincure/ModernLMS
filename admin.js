@@ -1206,10 +1206,9 @@ function showToast(msg, isError = false) {
   const el = document.getElementById('adminToast');
   if (!el) return;
   el.textContent = msg;
-  el.style.background = isError ? 'var(--danger)' : 'var(--text-color)';
-  el.style.display = 'block';
+  el.className = `toast visible${isError ? ' error' : ''}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
+  toastTimer = setTimeout(() => el.classList.remove('visible'), 3500);
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
