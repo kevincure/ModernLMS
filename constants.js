@@ -250,65 +250,71 @@ Example: {"title":"...","content":"..."} - do not wrap in code fences or extra t
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const AI_TOOL_REGISTRY = {
-  version: '1.1',
+  version: '1.2',
 
   // Context tools: AI calls these to look up real IDs and current data.
   // Each result is fed back into the conversation before the AI emits an action.
   context_tools: [
-    { name: 'list_assignments',      description: 'All assignments (id, title, assignmentType, gradingType, status, points, dueDate)' },
-    { name: 'list_quizzes',          description: 'All standalone quizzes (id, title, status, dueDate, questionCount)' },
-    { name: 'list_files',            description: 'All uploaded files (id, name, type, size)' },
-    { name: 'list_modules',          description: 'Module structure with item IDs and titles' },
-    { name: 'list_people',           description: 'Enrolled users AND pending invites. Enrolled rows: {userId, name, email, role, status:"enrolled"}. Pending invite rows: {inviteId, email, role, status:"pending_invite"}. ALWAYS call this before any invite or person action.' },
-    { name: 'list_question_banks',   description: 'All question banks (id, name, questionCount, totalPoints)' },
-    { name: 'list_announcements',    description: 'All announcements (id, title, pinned, hidden, createdAt)' },
-    { name: 'get_grade_categories',  description: 'Grade categories and weights for this course' },
-    { name: 'get_grade_settings',    description: 'Letter grade thresholds and curve settings' },
-    { name: 'list_discussion_threads', description: 'Discussion threads (id, title, pinned, replyCount)' },
-    { name: 'get_question_bank',     description: 'Full question list for a bank', params: { bank_id: 'string' } },
-    { name: 'get_assignment',        description: 'Full assignment details including rubric', params: { assignment_id: 'string' } },
-    { name: 'get_quiz',              description: 'Full quiz with all questions', params: { quiz_id: 'string' } },
-    { name: 'get_file_content',      description: 'Read text content of a file (PDF/doc)', params: { file_id: 'string' } }
+    { name: 'list_assignments',         description: 'All assignments (id, title, assignmentType, gradingType, status, points, dueDate)' },
+    { name: 'list_quizzes',             description: 'All standalone quizzes (id, title, status, dueDate, questionCount)' },
+    { name: 'list_files',               description: 'All uploaded files (id, name, type, size, hidden)' },
+    { name: 'list_modules',             description: 'Module structure with item IDs, titles, and hidden status' },
+    { name: 'list_people',              description: 'Enrolled users AND pending invites. Enrolled rows: {userId, name, email, role, status:"enrolled"}. Pending invite rows: {inviteId, email, role, status:"pending_invite"}. ALWAYS call this before any invite or person action.' },
+    { name: 'list_question_banks',      description: 'All question banks (id, name, questionCount, totalPoints)' },
+    { name: 'list_announcements',       description: 'All announcements (id, title, pinned, hidden, createdAt)' },
+    { name: 'get_grade_categories',     description: 'Grade categories and weights for this course (read-only)' },
+    { name: 'get_grade_settings',       description: 'Letter grade thresholds and curve settings (read-only)' },
+    { name: 'list_discussion_threads',  description: 'Discussion threads (id, title, pinned, replyCount)' },
+    { name: 'get_question_bank',        description: 'Full question list for a bank (includes question IDs)', params: { bank_id: 'string' } },
+    { name: 'get_assignment',           description: 'Full assignment details including rubric', params: { assignment_id: 'string' } },
+    { name: 'get_quiz',                 description: 'Full quiz with all questions', params: { quiz_id: 'string' } },
+    { name: 'get_file_content',         description: 'Read text content of a file (PDF/doc)', params: { file_id: 'string' } },
+    { name: 'get_assignment_analytics', description: 'Submission and grade stats for an assignment (submittedCount, averageScore, ungradedCount, etc.)', params: { assignment_id: 'string' } },
+    { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } }
   ],
 
   // Action types: AI emits one of these → system renders a Take Action Card →
   // user clicks Confirm → deterministic code executes (AI never touches the DB).
   action_types: [
     // Assignments
-    { name: 'create_assignment',    description: 'Create a new assignment (essay / quiz / no_submission)',  fields: 'title, description, assignmentType, gradingType, points, dueDate, status, submissionModalities, allowLateSubmissions, lateDeduction, allowResubmission, submissionAttempts, gradingNotes, questionBankId, timeLimit, randomizeQuestions, availableFrom, availableUntil, fileIds' },
-    { name: 'update_assignment',    description: 'Edit an existing assignment',                             fields: 'id*, title, description, points, dueDate, status, assignmentType, gradingType, allowLateSubmissions, lateDeduction, allowResubmission' },
-    { name: 'delete_assignment',    description: 'Permanently delete an assignment',   dangerous: true,    fields: 'id*' },
+    { name: 'create_assignment',       description: 'Create a new assignment (essay / quiz / no_submission)',  fields: 'title, description, assignmentType, gradingType, points, dueDate, status, submissionModalities, allowLateSubmissions, lateDeduction, allowResubmission, submissionAttempts, gradingNotes, questionBankId, timeLimit, randomizeQuestions, availableFrom, availableUntil, fileIds' },
+    { name: 'update_assignment',       description: 'Edit an existing assignment',                             fields: 'id*, title, description, points, dueDate, status, assignmentType, gradingType, allowLateSubmissions, lateDeduction, allowResubmission' },
+    { name: 'delete_assignment',       description: 'Permanently delete an assignment',   dangerous: true,    fields: 'id*' },
     // Quizzes (standalone)
-    { name: 'create_quiz',          description: 'Create a standalone quiz with inline questions',         fields: 'title, description, status, dueDate, timeLimit, attempts, randomizeQuestions, availableFrom, availableUntil, allowLateSubmissions, questions:[{prompt,type,options,correctAnswer,points}]' },
-    { name: 'create_quiz_from_bank',description: 'Create quiz/exam linked to a question bank',            fields: 'title, description, category, questionBankId*, numQuestions, randomizeQuestions, randomizeAnswers, dueDate, availableFrom, availableUntil, points, timeLimit, attempts, allowLateSubmissions, status, gradingNotes' },
-    { name: 'update_quiz',          description: 'Edit a quiz',                                           fields: 'id*, title, description, dueDate, status, timeLimit, attempts, questions' },
-    { name: 'delete_quiz',          description: 'Permanently delete a quiz',          dangerous: true,    fields: 'id*' },
+    { name: 'create_quiz',             description: 'Create a standalone quiz with inline questions',         fields: 'title, description, status, dueDate, timeLimit, attempts, randomizeQuestions, availableFrom, availableUntil, allowLateSubmissions, questions:[{prompt,type,options,correctAnswer,points}]' },
+    { name: 'create_quiz_from_bank',   description: 'Create quiz/exam linked to a question bank',            fields: 'title, description, category, questionBankId*, numQuestions, randomizeQuestions, randomizeAnswers, dueDate, availableFrom, availableUntil, points, timeLimit, attempts, allowLateSubmissions, status, gradingNotes' },
+    { name: 'update_quiz',             description: 'Edit a quiz',                                           fields: 'id*, title, description, dueDate, status, timeLimit, attempts, questions' },
+    { name: 'delete_quiz',             description: 'Permanently delete a quiz',          dangerous: true,    fields: 'id*' },
     // Question Banks
-    { name: 'create_question_bank', description: 'Create a new question bank with questions',             fields: 'name, description, questions:[{type,prompt,options,correctAnswer,points}]' },
-    { name: 'update_question_bank', description: 'Edit question bank metadata',                           fields: 'id*, name, description' },
-    { name: 'add_questions_to_bank',description: 'Append questions to an existing bank',                  fields: 'id* (bank id), questions:[...]' },
-    { name: 'delete_question_bank', description: 'Permanently delete a question bank', dangerous: true,   fields: 'id*' },
+    { name: 'create_question_bank',    description: 'Create a new question bank with questions. Supported question types: multiple_choice, true_false, short_answer, essay, fill_in_blank, matching, ordering', fields: 'name, description, questions:[{type,prompt,options,correctAnswer,points}]' },
+    { name: 'update_question_bank',    description: 'Edit question bank name or description',                 fields: 'id* (from list_question_banks), name, description' },
+    { name: 'add_questions_to_bank',   description: 'Append new questions to an existing question bank',      fields: 'id* (from list_question_banks), bankName, questions:[{type,prompt,options,correctAnswer,points}]' },
+    { name: 'delete_question_bank',    description: 'Permanently delete a question bank', dangerous: true,   fields: 'id* (from list_question_banks)' },
+    { name: 'delete_question_from_bank', description: 'Delete a single question from a question bank', dangerous: true, fields: 'bankId* (from list_question_banks), questionId* (from get_question_bank), questionPrompt' },
     // Announcements
-    { name: 'create_announcement',  description: 'Create a new announcement',                             fields: 'title, content, pinned, status, fileIds' },
-    { name: 'update_announcement',  description: 'Edit an existing announcement',                         fields: 'id*, title, content, pinned, hidden' },
-    { name: 'delete_announcement',  description: 'Permanently delete announcement',    dangerous: true,   fields: 'id*' },
-    { name: 'publish_announcement', description: 'Publish a draft announcement',                          fields: 'id*' },
-    { name: 'pin_announcement',     description: 'Pin or unpin announcement',                             fields: 'id*, pinned (boolean)' },
+    { name: 'create_announcement',     description: 'Create a new announcement',                             fields: 'title, content, pinned, status, fileIds' },
+    { name: 'update_announcement',     description: 'Edit an existing announcement (title, content, pinning, visibility)', fields: 'id*, title, content, pinned, hidden' },
+    { name: 'delete_announcement',     description: 'Permanently delete announcement',    dangerous: true,   fields: 'id*' },
+    { name: 'publish_announcement',    description: 'Publish a draft announcement (make visible to students)', fields: 'id*' },
+    { name: 'pin_announcement',        description: 'Pin or unpin announcement',                             fields: 'id*, pinned (boolean)' },
     // Modules
-    { name: 'create_module',        description: 'Create a new module',                                   fields: 'name, description' },
-    { name: 'add_to_module',        description: 'Add item to a module',                                  fields: 'moduleId*, moduleName, itemType (assignment|quiz|file|external_link), itemId, itemTitle, url (external_link only)' },
-    { name: 'remove_from_module',   description: 'Remove item from a module',                             fields: 'moduleId*, itemId* (module item id), itemTitle' },
-    { name: 'move_to_module',       description: 'Move item between modules',                             fields: 'itemId*, fromModuleId*, toModuleId*' },
+    { name: 'create_module',           description: 'Create a new module',                                   fields: 'name, description' },
+    { name: 'update_module',           description: 'Rename a module',                                       fields: 'moduleId* (from list_modules), moduleName (old name for display), name (new name)' },
+    { name: 'set_module_visibility',   description: 'Show or hide a module from students',                   fields: 'moduleId* (from list_modules), moduleName, hidden (boolean — true=hidden, false=visible)' },
+    { name: 'add_to_module',           description: 'Add item to a module',                                  fields: 'moduleId*, moduleName, itemType (assignment|quiz|file|external_link), itemId, itemTitle, url (external_link only)' },
+    { name: 'remove_from_module',      description: 'Remove item from a module',                             fields: 'moduleId*, itemId* (module item id), itemTitle' },
+    { name: 'move_to_module',          description: 'Move item between modules',                             fields: 'itemId*, fromModuleId*, toModuleId*' },
+    // Files
+    { name: 'rename_file',             description: 'Rename a file',                                         fields: 'fileId* (from list_files), oldName, newName' },
+    { name: 'set_file_visibility',     description: 'Show or hide a file from students',                     fields: 'fileId* (from list_files), fileName, hidden (boolean — true=hidden, false=visible)' },
     // People
-    { name: 'create_invite',        description: 'Invite people to the course by email',                  fields: 'emails (array), role (student|ta|instructor)' },
-    { name: 'revoke_invite',        description: 'Revoke a pending invite — REQUIRES list_people first to get inviteId', dangerous: true, fields: 'inviteId* (from list_people), email' },
-    { name: 'remove_person',        description: 'Remove enrolled user from course',   dangerous: true,   fields: 'userId* (from list_people), name' },
-    // Grade settings
-    { name: 'update_grade_category',description: 'Edit a grade category weight',                          fields: 'id*, name, weight' },
-    { name: 'update_grade_settings',description: 'Change letter grade thresholds or curve',               fields: 'aMin, bMin, cMin, dMin, curve' },
-    // Other
-    { name: 'set_course_visibility',description: 'Show or hide the entire course',                        fields: 'courseId*, visible (boolean)' },
-    { name: 'pipeline',             description: 'Execute multiple actions in sequence',                  fields: 'steps (array of action objects)' }
+    { name: 'create_invite',           description: 'Invite people to the course by email',                  fields: 'emails (array), role (student|ta|instructor)' },
+    { name: 'revoke_invite',           description: 'Revoke a pending invite — REQUIRES list_people first to get inviteId', dangerous: true, fields: 'inviteId* (from list_people), email' },
+    { name: 'remove_person',           description: 'Remove enrolled user from course',   dangerous: true,   fields: 'userId* (from list_people), name' },
+    // Course
+    { name: 'update_start_here',       description: 'Edit the Start Here / Welcome message shown on the course home page', fields: 'title, content (markdown supported)' },
+    { name: 'set_course_visibility',   description: 'Show or hide the entire course from students',          fields: 'visible (boolean)' },
+    { name: 'pipeline',                description: 'Execute multiple actions in sequence',                  fields: 'steps (array of action objects)' }
   ]
 };
 
