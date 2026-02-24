@@ -1055,17 +1055,29 @@ async function adminLogout() {
 function toggleAdminMobileDrawer() {
   const drawer = document.getElementById('adminMobileDrawer');
   const backdrop = document.getElementById('adminMobileDrawerBackdrop');
-  if (!drawer || !backdrop) return;
-  drawer.classList.add('open');
-  backdrop.classList.add('visible');
+  const toggleBtn = document.querySelector('.mobile-menu-btn');
+  if (!drawer || !backdrop || !toggleBtn) return;
+
+  const isOpen = drawer.classList.contains('open');
+  if (isOpen) {
+    closeAdminMobileDrawer();
+  } else {
+    drawer.classList.add('open');
+    backdrop.classList.add('visible');
+    toggleBtn.setAttribute('aria-expanded', 'true');
+    toggleBtn.setAttribute('aria-label', 'Close menu');
+  }
 }
 
 function closeAdminMobileDrawer() {
   const drawer = document.getElementById('adminMobileDrawer');
   const backdrop = document.getElementById('adminMobileDrawerBackdrop');
-  if (!drawer || !backdrop) return;
+  const toggleBtn = document.querySelector('.mobile-menu-btn');
+  if (!drawer || !backdrop || !toggleBtn) return;
   drawer.classList.remove('open');
   backdrop.classList.remove('visible');
+  toggleBtn.setAttribute('aria-expanded', 'false');
+  toggleBtn.setAttribute('aria-label', 'Open menu');
 }
 
 async function adminRetryLogin() {
@@ -1131,33 +1143,79 @@ async function executeConfirmAction() {
 
 // ─── Modal Management ─────────────────────────────────────────────────────────
 
+let activeModalId = null;
+let lastFocusedBeforeModal = null;
+
+function getFocusableElements(container) {
+  return [...container.querySelectorAll(
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )].filter(el => el.offsetParent !== null);
+}
+
 function openModal(id) {
   const el = document.getElementById(id);
-  if (el) {
-    el.style.display = 'flex';
-    // Focus first focusable element
-    setTimeout(() => el.querySelector('input, select, textarea, button:not(.modal-close)')?.focus(), 60);
-  }
+  if (!el) return;
+
+  lastFocusedBeforeModal = document.activeElement;
+  activeModalId = id;
+  el.style.display = 'flex';
+
+  setTimeout(() => {
+    const focusable = getFocusableElements(el);
+    (focusable[0] || el).focus();
+  }, 60);
 }
 
 function closeModal(id) {
   const el = document.getElementById(id);
-  if (el) el.style.display = 'none';
+  if (!el) return;
+
+  el.style.display = 'none';
+
+  if (activeModalId === id) {
+    activeModalId = null;
+    if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
+      lastFocusedBeforeModal.focus();
+    }
+    lastFocusedBeforeModal = null;
+  }
 }
 
 // Close modals on overlay click
 document.addEventListener('click', e => {
   if (e.target.classList.contains('modal-overlay')) {
-    e.target.style.display = 'none';
+    closeModal(e.target.id);
   }
 });
 
-// Close modals on Escape
+// Trap focus in active modal + close on Escape
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    document.querySelectorAll('.modal-overlay').forEach(el => {
-      el.style.display = 'none';
-    });
+  if (e.key === 'Escape' && activeModalId) {
+    closeModal(activeModalId);
+    return;
+  }
+
+  if (e.key !== 'Tab' || !activeModalId) return;
+
+  const modal = document.getElementById(activeModalId);
+  if (!modal || modal.style.display === 'none') return;
+
+  const focusable = getFocusableElements(modal);
+  if (focusable.length === 0) {
+    e.preventDefault();
+    modal.focus();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
   }
 });
 
