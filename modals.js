@@ -44,7 +44,7 @@ export function generateModals() {
       <div class="modal" style="max-width:600px;">
         <div class="modal-header">
           <h2 class="modal-title">Create New Content</h2>
-          <button class="modal-close" onclick="closeModal('unifiedContentModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('unifiedContentModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:12px;">
@@ -91,7 +91,7 @@ export function generateModals() {
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Add External Link</h2>
-          <button class="modal-close" onclick="closeModal('externalLinkModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('externalLinkModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:16px; padding:12px; background:var(--primary-light); border-radius:var(--radius);">
@@ -131,7 +131,7 @@ export function generateModals() {
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title" id="announcementModalTitle">New Announcement</h2>
-          <button class="modal-close" onclick="closeModal('announcementModal'); resetAnnouncementModal();">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('announcementModal'); resetAnnouncementModal();">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -168,7 +168,7 @@ export function generateModals() {
       <div class="modal" style="max-width:600px;">
         <div class="modal-header">
           <h2 class="modal-title">Create Course</h2>
-          <button class="modal-close" onclick="closeModal('createCourseModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('createCourseModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group" style="padding:12px; background:var(--primary-light); border-radius:var(--radius); margin-bottom:16px;">
@@ -223,7 +223,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:500px;">
         <div class="modal-header">
           <h2 class="modal-title">Course Invitations</h2>
-          <button class="modal-close" onclick="closeModal('pendingInvitesModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('pendingInvitesModal')">&times;</button>
         </div>
         <div class="modal-body">
           <p class="muted" style="margin-bottom:16px;">You have been invited to the following courses. Accept to enroll or decline to remove the invitation.</p>
@@ -240,7 +240,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title" id="assignmentModalTitle">New Assignment</h2>
-          <button class="modal-close" onclick="closeModal('assignmentModal'); resetAssignmentModal();">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('assignmentModal'); resetAssignmentModal();">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -330,7 +330,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:900px;">
         <div class="modal-header">
           <h2 class="modal-title" id="quizModalTitle">New Quiz</h2>
-          <button class="modal-close" onclick="closeModal('quizModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('quizModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -416,7 +416,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             <div class="muted" id="quizTakeMeta"></div>
           </div>
           <div class="quiz-timer" id="quizTimer">No time limit</div>
-          <button class="modal-close" onclick="closeModal('quizTakeModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('quizTakeModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div id="quizTakeQuestions" class="quiz-take-list"></div>
@@ -433,7 +433,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:700px;">
         <div class="modal-header">
           <h2 class="modal-title" id="quizSubmissionsTitle">Quiz Submissions</h2>
-          <button class="modal-close" onclick="closeModal('quizSubmissionsModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('quizSubmissionsModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div id="quizSubmissionsList"></div>
@@ -452,7 +452,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             <h2 class="modal-title" id="quizGradeTitle">Grade Quiz</h2>
             <div class="muted" id="quizGradePoints"></div>
           </div>
-          <button class="modal-close" onclick="closeModal('quizGradeModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('quizGradeModal')">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="quizGradeSubmissionId">
@@ -479,7 +479,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:700px;">
         <div class="modal-header">
           <h2 class="modal-title" id="quizReviewTitle">Quiz Submission</h2>
-          <button class="modal-close" onclick="closeModal('quizReviewModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('quizReviewModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div id="quizReviewList" class="quiz-grade-list"></div>
@@ -495,7 +495,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Submit Assignment</h2>
-          <button class="modal-close" onclick="closeModal('submitModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('submitModal')">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="submitModalAssignmentId">
@@ -521,7 +521,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Upload Files</h2>
-          <button class="modal-close" onclick="closeModal('fileUploadModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('fileUploadModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -554,7 +554,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Settings</h2>
-          <button class="modal-close" onclick="closeModal('settingsModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('settingsModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group" style="padding:16px; background:var(--success-light, #e8f5e9); border-radius:var(--radius); margin-bottom:16px;">
@@ -583,7 +583,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:700px;">
         <div class="modal-header">
           <h2 class="modal-title">Edit Start Here</h2>
-          <button class="modal-close" onclick="closeModal('startHereModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('startHereModal')">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="startHereCourseId">
@@ -619,7 +619,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:900px;">
         <div class="modal-header">
           <h2 class="modal-title">AI Create</h2>
-          <button class="modal-close" onclick="closeModal('aiCreateModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('aiCreateModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-grid">
@@ -662,7 +662,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:400px;">
         <div class="modal-header">
           <h2 class="modal-title" id="confirmTitle">Confirm</h2>
-          <button class="modal-close" onclick="closeModal('confirmModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('confirmModal')">&times;</button>
         </div>
         <div class="modal-body">
           <p id="confirmMessage"></p>
@@ -679,7 +679,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Edit Course</h2>
-          <button class="modal-close" onclick="closeModal('editCourseModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('editCourseModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -714,7 +714,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal" style="max-width:580px;">
         <div class="modal-header">
           <h2 class="modal-title">Import Content</h2>
-          <button class="modal-close" onclick="closeModal('importContentModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('importContentModal')">&times;</button>
         </div>
         <div class="modal-body">
           <!-- Destination course (the card we clicked) -->
@@ -769,7 +769,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Add Person to Course</h2>
-          <button class="modal-close" onclick="closeModal('addPersonModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('addPersonModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -797,7 +797,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Import Students</h2>
-          <button class="modal-close" onclick="closeModal('bulkStudentImportModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('bulkStudentImportModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:12px;">
@@ -828,7 +828,7 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title" id="bulkGradeTitle">Bulk Grade Entry</h2>
-          <button class="modal-close" onclick="closeModal('bulkGradeModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('bulkGradeModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:12px;">
@@ -859,7 +859,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Assignment Weights</h2>
-          <button class="modal-close" onclick="closeModal('categoryWeightsModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('categoryWeightsModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:16px;">
@@ -882,7 +882,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Create Rubric</h2>
-          <button class="modal-close" onclick="closeModal('rubricModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('rubricModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:16px;">
@@ -907,7 +907,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title" id="moduleModalTitle">New Module</h2>
-          <button class="modal-close" onclick="closeModal('moduleModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('moduleModal')">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="moduleId">
@@ -928,7 +928,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal">
         <div class="modal-header">
           <h2 class="modal-title">Add Item to Module</h2>
-          <button class="modal-close" onclick="closeModal('addModuleItemModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('addModuleItemModal')">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="addItemModuleId">
@@ -957,7 +957,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal" style="max-width:900px;">
         <div class="modal-header">
           <h2 class="modal-title">Import from Syllabus</h2>
-          <button class="modal-close" onclick="closeModal('syllabusParserModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('syllabusParserModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:16px;">
@@ -1000,7 +1000,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal" style="max-width:900px;">
         <div class="modal-header">
           <h2 class="modal-title">Voice Command</h2>
-          <button class="modal-close" onclick="closeModal('audioInputModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('audioInputModal')">&times;</button>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:16px;">
@@ -1046,7 +1046,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal" style="max-width:1100px; height:90vh;">
         <div class="modal-header">
           <h2 class="modal-title" id="speedGraderTitle">SpeedGrader</h2>
-          <button class="modal-close" onclick="closeModal('speedGraderModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('speedGraderModal')">&times;</button>
         </div>
         <div class="modal-body" style="display:flex; flex-direction:column; height:calc(100% - 120px); overflow:hidden;">
           <div id="speedGraderNav" style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border-color);"></div>
@@ -1091,7 +1091,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal" style="max-width:900px;">
         <div class="modal-header">
           <h2 class="modal-title" id="questionBankModalTitle">Question Banks</h2>
-          <button class="modal-close" onclick="closeModal('questionBankModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('questionBankModal')">&times;</button>
         </div>
         <div class="modal-body" id="questionBankModalBody">
           <!-- Content rendered dynamically -->
@@ -1108,7 +1108,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal" style="max-width:960px;">
         <div class="modal-header">
           <h2 class="modal-title" id="questionBankEditTitle">New Question Bank</h2>
-          <button class="modal-close" onclick="closeModal('questionBankEditModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('questionBankEditModal')">&times;</button>
         </div>
         <div class="modal-body">
           <!-- Bank-level settings -->
@@ -1160,7 +1160,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
       <div class="modal" style="max-width:720px;">
         <div class="modal-header">
           <h2 class="modal-title" id="newAssignmentModalTitle">New Assignment</h2>
-          <button class="modal-close" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('newAssignmentModal'); resetNewAssignmentModal();">&times;</button>
         </div>
         <div class="modal-body">
 

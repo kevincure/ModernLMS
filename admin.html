@@ -21,6 +21,7 @@
   <script src="config.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#adminMain">Skip to main content</a>
 
   <!-- ═══════════════════════════════════════════════════════
        SCREEN: Loading spinner (shown while verifying session)
@@ -193,7 +194,7 @@
     </nav>
 
     <!-- ── Main area (right of toolbar) ─────────────────── -->
-    <div class="main" id="adminMain">
+    <main class="main" id="adminMain" tabindex="-1">
 
       <!-- Sticky top bar -->
       <div class="top-bar" id="adminTopBar">
@@ -227,7 +228,8 @@
             <button class="btn btn-primary" onclick="openAddUserModal()">+ Add Member</button>
           </div>
           <div class="admin-filter-row">
-            <input class="form-input" id="usersSearchInput" placeholder="Search name or email" oninput="setUsersSearch(this.value)" />
+            <label class="visually-hidden" for="usersSearchInput">Search members by name or email</label>
+            <input class="form-input" id="usersSearchInput" placeholder="Search name or email" aria-label="Search members by name or email" oninput="setUsersSearch(this.value)" />
             <select class="form-select" id="usersSortSelect" onchange="setUsersSort(this.value)">
               <option value="name_asc">Sort: Name A→Z</option>
               <option value="name_desc">Sort: Name Z→A</option>
@@ -250,7 +252,8 @@
             <button class="btn btn-primary" onclick="openCreateCourseModal()">+ Create Course</button>
           </div>
           <div class="admin-filter-row">
-            <input class="form-input" id="coursesSearchInput" placeholder="Search course name/code/instructor" oninput="setCoursesSearch(this.value)" />
+            <label class="visually-hidden" for="coursesSearchInput">Search courses by name, code, or instructor</label>
+            <input class="form-input" id="coursesSearchInput" placeholder="Search course name/code/instructor" aria-label="Search courses by name, code, or instructor" oninput="setCoursesSearch(this.value)" />
             <select class="form-select" id="coursesTermFilter" onchange="setCoursesTermFilter(this.value)"></select>
             <select class="form-select" id="coursesSortSelect" onchange="setCoursesSort(this.value)">
               <option value="name_asc">Sort: Name A→Z</option>
@@ -275,7 +278,8 @@
             <button class="btn btn-primary" onclick="openAddEnrollmentModal()">+ Enroll User</button>
           </div>
           <div class="admin-filter-row">
-            <input class="form-input" id="enrollmentsSearchInput" placeholder="Search course or user" oninput="setEnrollmentsSearch(this.value)" />
+            <label class="visually-hidden" for="enrollmentsSearchInput">Search enrollments by course or user</label>
+            <input class="form-input" id="enrollmentsSearchInput" placeholder="Search course or user" aria-label="Search enrollments by course or user" oninput="setEnrollmentsSearch(this.value)" />
             <select class="form-select" id="enrollmentsSortSelect" onchange="setEnrollmentsSort(this.value)">
               <option value="course_asc">Sort: Course A→Z</option>
               <option value="course_desc">Sort: Course Z→A</option>
@@ -297,7 +301,8 @@
             <button class="btn btn-secondary" onclick="renderAuditSection(true)">↺ Refresh</button>
           </div>
           <div class="admin-filter-row">
-            <input class="form-input" id="auditSearchInput" placeholder="Search actor/action/details" oninput="setAuditSearch(this.value)" />
+            <label class="visually-hidden" for="auditSearchInput">Search audit log by actor, action, or details</label>
+            <input class="form-input" id="auditSearchInput" placeholder="Search actor/action/details" aria-label="Search audit log by actor, action, or details" oninput="setAuditSearch(this.value)" />
             <select class="form-select" id="auditSortSelect" onchange="setAuditSort(this.value)">
               <option value="newest">Sort: Newest</option>
               <option value="oldest">Sort: Oldest</option>
@@ -307,7 +312,7 @@
         </section>
 
       </div><!-- /adminContent -->
-    </div><!-- /adminMain -->
+    </main><!-- /adminMain -->
   </div><!-- /screen-app -->
 
 

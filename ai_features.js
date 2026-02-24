@@ -760,7 +760,7 @@ async function executeAiTool(toolName, params = {}) {
           // Fall through to inlineData if decode fails
         }
       }
-      // Images and PDFs: send as inline data (supported by gemini-2.0-flash)
+      // Images and PDFs: send as inline data (supported by gemini-2.5-flash)
       if (mt.startsWith('image/') || mt === 'application/pdf') {
         return { id: f.id, name: f.name, mimeType: mt, sizeBytes: result.sizeBytes, _inlineData: { mimeType: mt, data: result.base64 } };
       }
@@ -925,6 +925,15 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
       'get_grade_settings','get_question_bank','get_assignment','get_quiz','get_file_content'];
     if (parsed.type && !['tool_call','action','ask_user','answer'].includes(parsed.type) && KNOWN_TOOLS.includes(parsed.type)) {
       parsed = { type: 'tool_call', tool: parsed.type, params: parsed.params || {}, step_label: parsed.step_label || '' };
+    }
+
+    // Normalize: AI sometimes uses action name as `type` instead of `action`
+    // e.g. {"type":"create_question_bank",...} instead of
+    // {"type":"action","action":"create_question_bank",...}
+    const RESERVED_TYPES = ['tool_call', 'action', 'ask_user', 'answer'];
+    const ACTION_TYPES = new Set((AI_TOOL_REGISTRY.action_types || []).map(actionType => actionType.name));
+    if (parsed.type && !RESERVED_TYPES.includes(parsed.type) && !parsed.action && ACTION_TYPES.has(parsed.type)) {
+      parsed = { ...parsed, type: 'action', action: parsed.type };
     }
 
     // ── Direct text answer ────────────────────────────────────────────────────
