@@ -9914,7 +9914,7 @@ window.saveGrade = saveGrade;
 window.openManualGradeModal = openManualGradeModal;
 window.saveManualGrade = saveManualGrade;
 window.exportGradebook = exportGradebook;
-window.toggleGradebookStats = toggleGradebookStats;
+
 
 // Speed Grader
 window.openSpeedGrader = openSpeedGrader;
