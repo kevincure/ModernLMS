@@ -4030,6 +4030,7 @@ function openNewAssignmentModal(assignmentId = null) {
         updateQuizPointsFromBank();
       }
       document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions || false;
+      if (assignment.numQuestions) document.getElementById('newAssignmentNumQuestions').value = assignment.numQuestions;
       const tl = assignment.timeLimit;
       if (!tl) {
         document.getElementById('newAssignmentUnlimitedTime').checked = true;
@@ -4085,6 +4086,7 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentTimeLimit').value = '';
   document.getElementById('newAssignmentUnlimitedTime').checked = false;
   document.getElementById('newAssignmentRandomizeQuestions').checked = false;
+  document.getElementById('newAssignmentNumQuestions').value = '';
   document.getElementById('newAssignmentModalityText').checked = true;
   document.getElementById('newAssignmentModalityFile').checked = false;
   document.getElementById('newAssignmentFileTypes').value = '';
@@ -4223,7 +4225,7 @@ function toggleUnlimitedTime(checkbox) {
 }
 window.toggleUnlimitedTime = toggleUnlimitedTime;
 
-// Auto-calculate quiz points when a bank is selected
+// Auto-calculate quiz points when a bank is selected (scales by numQuestions if set)
 function updateQuizPointsFromBank() {
   const bankId = document.getElementById('newAssignmentQuestionBank')?.value;
   const ptsEl  = document.getElementById('newAssignmentQuizPoints');
@@ -4231,8 +4233,16 @@ function updateQuizPointsFromBank() {
   if (!bankId) { ptsEl.value = ''; return; }
   const bank = (appData.questionBanks || []).find(b => b.id === bankId);
   if (!bank) { ptsEl.value = ''; return; }
-  const total = (bank.questions || []).reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
-  ptsEl.value = total;
+  const questions = bank.questions || [];
+  const totalPoints = questions.reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
+  const numQEl = document.getElementById('newAssignmentNumQuestions');
+  const numQ = numQEl ? parseInt(numQEl.value) : NaN;
+  if (!isNaN(numQ) && numQ > 0 && numQ < questions.length) {
+    const avgPts = totalPoints / questions.length;
+    ptsEl.value = Math.round(avgPts * numQ * 10) / 10;
+  } else {
+    ptsEl.value = totalPoints;
+  }
 }
 window.updateQuizPointsFromBank = updateQuizPointsFromBank;
 
@@ -4353,6 +4363,7 @@ async function saveNewAssignment() {
   let questionBankId = null;
   let timeLimit = null;
   let randomizeQuestions = false;
+  let numQuestions = null;
 
   if (assignmentType === 'essay') {
     gradingType = document.getElementById('essayGradingType').value;
@@ -4386,6 +4397,18 @@ async function saveNewAssignment() {
     timeLimit = unlimitedTime ? null : (parseInt(document.getElementById('newAssignmentTimeLimit').value) || null);
     const unlimitedAttempts = document.getElementById('newAssignmentUnlimitedQuizAttempts').checked;
     submissionAttempts = unlimitedAttempts ? null : (parseInt(document.getElementById('newAssignmentQuizAttempts').value) || 1);
+    numQuestions = parseInt(document.getElementById('newAssignmentNumQuestions').value) || null;
+    // Recalculate points using the subset size if specified
+    const bank2 = (appData.questionBanks || []).find(b => b.id === questionBankId);
+    if (bank2) {
+      const qs = bank2.questions || [];
+      const totalPts = qs.reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
+      if (numQuestions && numQuestions > 0 && numQuestions < qs.length) {
+        points = Math.round((totalPts / qs.length) * numQuestions * 10) / 10;
+      } else {
+        points = totalPts;
+      }
+    }
     gradingType = 'points';
 
   } else if (assignmentType === 'no_submission') {
@@ -4435,6 +4458,7 @@ async function saveNewAssignment() {
     submissionAttempts,
     allowResubmission: allowResubmit,
     questionBankId,
+    numQuestions,
     timeLimit,
     randomizeQuestions,
     availableFrom: (assignmentType !== 'no_submission' && availableFrom) ? new Date(availableFrom).toISOString() : null,
