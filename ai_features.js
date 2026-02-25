@@ -188,8 +188,6 @@ function normalizeAiOperationAction(action) {
     delete_announcement: 'announcement_delete',
     publish_announcement: 'announcement_publish',
     pin_announcement: 'announcement_pin',
-    update_quiz: 'quiz_update',
-    delete_quiz: 'quiz_delete',
     create_quiz_from_bank: 'quiz_from_bank',
     create_assignment: 'assignment',
     update_assignment: 'assignment_update',
@@ -315,13 +313,6 @@ function getMissingPublishRequirements(operation, publish = false) {
     }
     if (!operation.title) missing.push('title');
     if (!operation.content) missing.push('content');
-    return missing;
-  }
-
-  if (action === 'quiz_update') {
-    if (!operation.dueDate) missing.push('dueDate');
-    const questions = operation.questions;
-    if (Array.isArray(questions) && questions.length === 0) missing.push('at least one question');
     return missing;
   }
 
@@ -1265,20 +1256,10 @@ function handleAiAction(action) {
       role: 'assistant',
       content: 'Standalone quiz creation is deprecated. I can create this as a Quiz/Exam assignment instead using create_assignment with assignmentType="quiz" and a question bank.'
     });
-  } else if (action.action === 'update_quiz') {
-    const d = { id: action.id };
-    ['title','description','dueDate','status','timeLimit','attempts','randomizeQuestions',
-     'availableFrom','availableUntil','questions','fileIds','fileNames'].forEach(k => { if (k in action) d[k] = action[k]; });
-    if (!('fileIds' in d)) d.fileIds = [];
-    if (!('fileNames' in d)) d.fileNames = [];
-    aiThread.push({ role: 'action', actionType: 'quiz_update', data: d, confirmed: false, rejected: false });
-  } else if (action.action === 'delete_quiz') {
+  } else if (action.action === 'update_quiz' || action.action === 'delete_quiz') {
     aiThread.push({
-      role: 'action',
-      actionType: 'quiz_delete',
-      data: { id: action.id },
-      confirmed: false,
-      rejected: false
+      role: 'assistant',
+      content: 'Standalone quiz updates/deletes are deprecated. Please manage quizzes through assignment-based quiz/exam items.'
     });
   } else if (action.action === 'create_assignment') {
     aiThread.push({
@@ -1844,48 +1825,9 @@ async function executeAiOperation(operation, publish = false) {
     showToast('Standalone quiz creation is deprecated. Use a Quiz/Exam assignment with a question bank.', 'error');
     return false;
   }
-
-
-  if (action === 'quiz_update') {
-    const quiz = appData.quizzes.find(q => q.id === resolved.id && q.courseId === activeCourseId);
-    if (!quiz) {
-      showToast('Quiz not found for update', 'error');
-      return false;
-    }
-    if (resolved.title !== undefined) quiz.title = resolved.title;
-    if (resolved.description !== undefined || resolved.availableFrom || resolved.availableUntil || (resolved.fileIds && resolved.fileIds.length)) {
-      const baseDescription = resolved.description !== undefined ? resolved.description : quiz.description;
-      quiz.description = appendFileLinksToContent(
-        appendAvailabilityToDescription(baseDescription, resolved.availableFrom, resolved.availableUntil),
-        resolved.fileIds
-      );
-    }
-    if (resolved.dueDate !== undefined) quiz.dueDate = resolved.dueDate;
-    if (resolved.status !== undefined) quiz.status = resolved.status;
-    if (publish) quiz.status = 'published';
-    if (resolved.timeLimit !== undefined) quiz.timeLimit = resolved.timeLimit;
-    if (resolved.attempts !== undefined) quiz.attempts = resolved.attempts;
-    if (resolved.randomizeQuestions !== undefined) quiz.randomizeQuestions = !!resolved.randomizeQuestions;
-    if (resolved.questions !== undefined) quiz.questions = resolved.questions;
-    const result = await supabaseUpdateQuiz(quiz);
-    if (!result) {
-      showToast('Failed to update quiz', 'error');
-      return false;
-    }
-    if (renderAssignmentsCallback) renderAssignmentsCallback();
-    return true;
-  }
-
-  if (action === 'quiz_delete') {
-    const success = await supabaseDeleteQuiz(resolved.id);
-    if (!success) {
-      showToast('Failed to delete quiz', 'error');
-      return false;
-    }
-    appData.quizzes = appData.quizzes.filter(q => q.id !== resolved.id);
-    appData.quizSubmissions = (appData.quizSubmissions || []).filter(s => s.quizId !== resolved.id);
-    if (renderAssignmentsCallback) renderAssignmentsCallback();
-    return true;
+  if (action === 'quiz_update' || action === 'quiz_delete') {
+    showToast('Standalone quiz updates/deletes are deprecated. Use assignment-based quiz/exam items.', 'error');
+    return false;
   }
 
   if (action === 'quiz_from_bank') {
@@ -3101,9 +3043,6 @@ export function openAiCreateModal(type = 'announcement', assignmentId = null) {
   const promptEl = document.getElementById('aiCreatePrompt');
   if (promptEl) promptEl.value = '';
 
-  const questionCountEl = document.getElementById('aiQuestionCount');
-  if (questionCountEl) questionCountEl.value = '5';
-
   updateAiCreateType();
   renderAiDraftPreview();
   openModal('aiCreateModal');
@@ -3117,10 +3056,8 @@ export function updateAiCreateType() {
   if (typeSelect) aiDraftType = typeSelect.value;
 
   const rubricGroup = document.getElementById('aiRubricGroup');
-  const quizGroup = document.getElementById('aiQuizGroup');
 
   if (rubricGroup) rubricGroup.style.display = aiDraftType === 'rubric' ? 'block' : 'none';
-  if (quizGroup) quizGroup.style.display = aiDraftType === 'quiz' ? 'block' : 'none';
 }
 
 /**
@@ -3140,10 +3077,6 @@ export async function generateAiDraft() {
 
   if (aiDraftType === 'announcement') {
     systemPrompt = AI_PROMPTS.createAnnouncement;
-  } else if (aiDraftType === 'quiz') {
-    const countEl = document.getElementById('aiQuestionCount');
-    const count = parseInt(countEl?.value, 10) || 5;
-    systemPrompt = AI_PROMPTS.createQuiz(count);
   } else {
     const assignmentSelect = document.getElementById('aiRubricAssignment');
     const assignmentId = assignmentSelect?.value;
@@ -3223,13 +3156,6 @@ function normalizeAiDraft(draft, type) {
     };
   }
 
-  if (type === 'quiz') {
-    return {
-      title: typeof draft.title === 'string' ? draft.title : '',
-      description: typeof draft.description === 'string' ? draft.description : '',
-      questions: Array.isArray(draft.questions) ? draft.questions : []
-    };
-  }
 
   if (type === 'rubric') {
     return {
@@ -3257,24 +3183,6 @@ export function renderAiDraftPreview() {
       <div class="card">
         <div class="card-title">${escapeHtml(aiDraft.title || 'Untitled announcement')}</div>
         <div class="markdown-content">${renderMarkdown(aiDraft.content || '')}</div>
-      </div>
-    `;
-    return;
-  }
-
-  if (aiDraftType === 'quiz') {
-    const questionsHtml = (aiDraft.questions || []).map((q, i) => `
-      <div style="padding:8px; background:var(--bg-color); border-radius:var(--radius); margin-bottom:8px;">
-        <div style="font-weight:500;">${i + 1}. ${escapeHtml(q.prompt)}</div>
-        <div class="muted" style="font-size:0.85rem;">${q.type} · ${q.points} pts</div>
-      </div>
-    `).join('');
-
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-title">${escapeHtml(aiDraft.title || 'Untitled quiz')}</div>
-        ${aiDraft.description ? `<p class="muted">${escapeHtml(aiDraft.description)}</p>` : ''}
-        <div style="margin-top:12px;">${questionsHtml}</div>
       </div>
     `;
     return;
@@ -3312,12 +3220,6 @@ export function applyAiDraft() {
     if (contentEl) contentEl.value = aiDraft.content || '';
     closeModal('aiCreateModal');
     openModal('announcementModal');
-  } else if (aiDraftType === 'quiz') {
-    // Store for quiz modal
-    window.aiQuizDraft = aiDraft;
-    closeModal('aiCreateModal');
-    // Open quiz modal with draft
-    if (window.openQuizModal) window.openQuizModal(null);
   } else if (aiDraftType === 'rubric') {
     // Store for rubric use
     window.aiRubricDraft = aiDraft;

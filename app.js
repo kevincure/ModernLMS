@@ -1745,25 +1745,33 @@ async function createCourse() {
         let refId = null;
 
         if (item.type === 'quiz') {
-          const newQuiz = {
+          const newAssignment = {
             id: generateId(),
             courseId: courseId,
             title: item.title,
-            description: item.description || 'Placeholder - add questions',
+            description: item.description || 'Placeholder quiz/exam - link a question bank',
+            assignmentType: 'quiz',
+            gradingType: 'points',
+            submissionModalities: ['text'],
+            questionBankId: null,
+            numQuestions: null,
+            randomizeQuestions: false,
+            points: 100,
             status: 'draft',
             dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
             createdAt: new Date().toISOString(),
-            timeLimit: 30,
-            attempts: 1,
-            questions: [],
-            isPlaceholder: true
+            category: 'quiz',
+            isPlaceholder: true,
+            allowLateSubmissions: true,
+            allowResubmission: false,
+            createdBy: appData.currentUser.id
           };
-          const savedQuiz = await supabaseCreateQuiz(newQuiz);
-          if (savedQuiz) {
-            appData.quizzes.push(newQuiz);
-            refId = newQuiz.id;
+          const savedAssignment = await supabaseCreateAssignment(newAssignment);
+          if (savedAssignment) {
+            appData.assignments.push(newAssignment);
+            refId = newAssignment.id;
           } else {
-            console.error('[createCourse] Failed to create placeholder quiz from syllabus import', { courseId, title: item.title });
+            console.error('[createCourse] Failed to create placeholder quiz assignment from syllabus import', { courseId, title: item.title });
           }
         } else if (item.type === 'reading') {
           const newFile = {
@@ -2621,27 +2629,16 @@ function renderAssignments() {
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 
-  let quizzes = appData.quizzes
-    .filter(q => q.courseId === activeCourseId)
-    .filter(q => effectiveStaff || q.status === 'published')
-    .sort((a, b) => {
-      if (assignmentsSort === 'az') return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
-      if (assignmentsSort === 'za') return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
-
-  // Filter by search
+  // Standalone quiz cards are deprecated; assignments list is assignment-backed only.
   let filteredAssignments = assignments;
-  let filteredQuizzes = quizzes;
   if (assignmentsSearch) {
     filteredAssignments = assignments.filter(a => a.title.toLowerCase().includes(assignmentsSearch));
-    filteredQuizzes = quizzes.filter(q => q.title.toLowerCase().includes(assignmentsSearch));
   }
 
-  if (filteredAssignments.length === 0 && filteredQuizzes.length === 0) {
+  if (filteredAssignments.length === 0) {
     setHTML('assignmentsList', assignmentsSearch
       ? '<div class="empty-state"><div class="empty-state-text">No assignments match your search</div></div>'
-      : '<div class="empty-state"><div class="empty-state-title">No assignments or quizzes yet</div></div>');
+      : '<div class="empty-state"><div class="empty-state-title">No assignments yet</div></div>');
     return;
   }
   
@@ -2763,76 +2760,10 @@ function renderAssignments() {
     `;
   }).join('');
 
-  const quizCards = filteredQuizzes.map(q => {
-    const dueDate = new Date(q.dueDate);
-    const isPast = dueDate < new Date();
-    const quizPoints = getQuizPoints(q);
-    const submissions = appData.quizSubmissions.filter(s => s.quizId === q.id);
-    const mySubmissions = submissions.filter(s => s.userId === appData.currentUser.id);
-    const latestSubmission = mySubmissions.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))[0];
-    const attemptsUsed = mySubmissions.length;
-    const attemptsAllowed = q.attempts ? q.attempts : null;
-    const attemptsLeft = attemptsAllowed ? Math.max(attemptsAllowed - attemptsUsed, 0) : null;
-    const isPlaceholder = q.isPlaceholder;
-
-    const statusBadge = q.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
-
-    // Single visibility badge for staff — replaces DRAFT label
-    const visibilityBadge = effectiveStaff && q.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">Hidden</span>` : '';
-
-    const myTimeOverride = (appData.quizTimeOverrides || []).find(o => o.quizId === q.id && o.userId === appData.currentUser.id);
-    const effectiveTimeLimit = myTimeOverride ? myTimeOverride.timeLimit : q.timeLimit;
-    const timeLimitLabel = effectiveTimeLimit
-      ? `${effectiveTimeLimit} min once you begin${myTimeOverride ? ' (personalized)' : ''}`
-      : 'No time limit';
-    const attemptsLabel = attemptsAllowed ? `${attemptsLeft} of ${attemptsAllowed} left` : 'Unlimited attempts';
-    const submissionStatus = latestSubmission
-      ? (latestSubmission.released ? `Score: ${latestSubmission.score}/${quizPoints}` : 'Submitted · awaiting review')
-      : 'Not started';
-
-    return `
-      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
-        <div class="card-header">
-          <div>
-            <div class="card-title">${escapeHtml(q.title)} ${statusBadge} ${visibilityBadge}</div>
-            <div class="muted">${formatDueDate(q.dueDate)} · ${quizPoints} points · ${timeLimitLabel}</div>
-            <div class="muted" style="font-size:0.85rem;">${attemptsLabel} · ${submissionStatus}</div>
-          </div>
-          <div style="display:flex; gap:8px; align-items:center;">
-            ${effectiveStaff ? `
-              <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-quiz-${q.id}')">&#9776;</button>
-              <div id="menu-quiz-${q.id}" class="floating-menu">
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); openQuizTimeOverridesModal('${q.id}')">Time Overrides</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewQuizDetails('${q.id}')">Preview</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); openQuizModal('${q.id}')">Edit</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteQuiz('${q.id}')" style="color:var(--danger);">Delete</button>
-              </div>
-            ` : latestSubmission ? `
-              <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmission('${q.id}')">View Submission</button>
-              ${!isPast && (!attemptsAllowed || attemptsLeft > 0) ? `<button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Retake</button>` : ''}
-            ` : q.status === 'published' && !isPast ? `
-              <button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Take Quiz</button>
-            ` : ''}
-          </div>
-        </div>
-        <div class="markdown-content">${renderMarkdownWithLinkedFiles(q.description || '')}</div>
-      </div>
-    `;
-  }).join('');
-
   const sections = [];
   if (filteredAssignments.length > 0) {
     sections.push(assignmentCards);
   }
-  if (filteredQuizzes.length > 0) {
-    sections.push(`
-      <div class="section-header">Quizzes</div>
-      ${quizCards}
-    `);
-  }
-
   setHTML('assignmentsList', sections.join(''));
 }
 
@@ -2867,10 +2798,6 @@ function renderCalendar() {
       .filter(a => a.courseId === activeCourseId)
       .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
       .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status })),
-    ...appData.quizzes
-      .filter(q => q.courseId === activeCourseId)
-      .filter(q => effectiveStaff || q.status === 'published')
-      .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate, status: q.status }))
   ].filter(item => {
     const date = new Date(item.dueDate);
     return date >= start && date <= end;
@@ -2997,26 +2924,7 @@ function normalizeContentStatus(status) {
   return status || 'draft';
 }
 
-async function createAssignment() {
-  // Deprecated path — routed to the CC 1.4 assignment modal
-  openNewAssignmentModal();
-}
 
-let currentEditAssignmentId = null;
-
-function openAssignmentModal(assignmentId = null) {
-  // Deprecated path — use the new CC 1.4 assignment modal
-  openNewAssignmentModal(assignmentId);
-}
-
-function resetAssignmentModal() {
-  // Deprecated path — kept as a no-op for backward compatibility with stale onclick handlers
-}
-
-async function saveAssignmentChanges() {
-  // Deprecated path — delegate to the new assignment save flow
-  await saveNewAssignment();
-}
 
 async function updateAssignment() {
   // Deprecated path — delegate to the new assignment save flow
@@ -5068,26 +4976,6 @@ function updateQuizPointsTotal() {
 }
 
 
-function deleteQuiz(quizId) {
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (!quiz) return;
-
-  ensureModalsRendered();
-  showConfirmDialog(`Delete "${quiz.title}"? This will also delete all submissions.`, async () => {
-    // Delete from Supabase
-    const success = await supabaseDeleteQuiz(quizId);
-    if (!success) return;
-
-    // Update local state
-    appData.quizzes = appData.quizzes.filter(q => q.id !== quizId);
-    appData.quizSubmissions = appData.quizSubmissions.filter(s => s.quizId !== quizId);
-  
-    renderAssignments();
-    renderHome();
-    showToast('Quiz deleted', 'success');
-  });
-}
-
 
 function renderQuizTakeModal(quiz) {
   const container = document.getElementById('quizTakeQuestions');
@@ -5664,9 +5552,6 @@ function updateAddItemOptions() {
   if (type === 'assignment') {
     const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
     options = assignments.map(a => `<option value="${a.id}">${a.title}${a.status === 'draft' ? ' (draft)' : ''}</option>`);
-  } else if (type === 'quiz') {
-    const quizzes = appData.quizzes.filter(q => q.courseId === activeCourseId);
-    options = quizzes.map(q => `<option value="${q.id}">${q.title}${q.status === 'draft' ? ' (draft)' : ''}</option>`);
   } else if (type === 'file') {
     const files = appData.files.filter(f => f.courseId === activeCourseId);
     options = files.map(f => `<option value="${f.id}">${f.name}</option>`);
@@ -7492,7 +7377,7 @@ function openAiCreateModal(type = 'announcement', assignmentId = null) {
   }
   
   document.getElementById('aiCreatePrompt').value = '';
-  document.getElementById('aiQuestionCount').value = '5';
+
   updateAiCreateType();
   renderAiDraftPreview();
   openModal('aiCreateModal');
@@ -7501,9 +7386,7 @@ function openAiCreateModal(type = 'announcement', assignmentId = null) {
 function updateAiCreateType() {
   aiDraftType = document.getElementById('aiCreateType').value;
   const rubricGroup = document.getElementById('aiRubricGroup');
-  const quizGroup = document.getElementById('aiQuizGroup');
   if (rubricGroup) rubricGroup.style.display = aiDraftType === 'rubric' ? 'block' : 'none';
-  if (quizGroup) quizGroup.style.display = aiDraftType === 'quiz' ? 'block' : 'none';
 }
 
 
@@ -7541,13 +7424,6 @@ function normalizeAiDraft(draft, type) {
     };
   }
 
-  if (type === 'quiz') {
-    return {
-      title: typeof draft.title === 'string' ? draft.title : '',
-      description: typeof draft.description === 'string' ? draft.description : '',
-      questions: Array.isArray(draft.questions) ? draft.questions : []
-    };
-  }
 
   if (type === 'rubric') {
     return {
@@ -7577,16 +7453,6 @@ function renderAiDraftPreview() {
     return;
   }
   
-  if (aiDraftType === 'quiz') {
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-title">${aiDraft.title || 'Untitled quiz'}</div>
-        <div class="markdown-content">${renderMarkdown(aiDraft.description || '')}</div>
-        <div class="muted" style="margin-top:8px;">${(aiDraft.questions || []).length} questions</div>
-      </div>
-    `;
-    return;
-  }
   
   preview.innerHTML = `
     <div class="card">
@@ -7612,14 +7478,7 @@ function applyAiDraft() {
     openModal('announcementModal');
     return;
   }
-  
-  if (aiDraftType === 'quiz') {
-    aiQuizDraft = aiDraft;
-    closeModal('aiCreateModal');
-    openQuizModal();
-    return;
-  }
-  
+
   const assignmentId = document.getElementById('aiRubricAssignment').value;
   if (!assignmentId) {
     showToast('Select an assignment for the rubric', 'error');
@@ -9001,112 +8860,9 @@ async function toggleAssignmentVisibility(assignmentId) {
 // VIEW QUIZ DETAILS (Full Preview)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function viewQuizDetails(quizId) {
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (!quiz) return;
-
-  const questions = quiz.questions || [];
-  const totalPoints = getQuizPoints(quiz);
-
-  const questionsHtml = questions.map((q, idx) => {
-    let optionsHtml = '';
-    if (q.type === 'multiple_choice') {
-      optionsHtml = `<div class="quiz-options" style="margin-top:8px;">
-        ${q.options.map((opt, i) => `
-          <div style="padding:4px 8px; ${i === q.correctAnswer ? 'background:var(--success-light); border-radius:4px;' : ''}">
-            ${i === q.correctAnswer ? '✓' : '○'} ${escapeHtml(opt)}
-          </div>
-        `).join('')}
-      </div>`;
-    } else if (q.type === 'true_false') {
-      optionsHtml = `<div style="margin-top:8px;">
-        <div style="padding:4px 8px; ${q.correctAnswer === 'True' ? 'background:var(--success-light); border-radius:4px;' : ''}">
-          ${q.correctAnswer === 'True' ? '✓' : '○'} True
-        </div>
-        <div style="padding:4px 8px; ${q.correctAnswer === 'False' ? 'background:var(--success-light); border-radius:4px;' : ''}">
-          ${q.correctAnswer === 'False' ? '✓' : '○'} False
-        </div>
-      </div>`;
-    } else {
-      optionsHtml = `<div class="muted" style="margin-top:8px; font-style:italic;">Short answer question${q.correctAnswer ? ` (Sample: ${escapeHtml(q.correctAnswer)})` : ''}</div>`;
-    }
-
-    return `
-      <div class="card" style="margin-bottom:12px;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-          <strong>Q${idx + 1}. ${escapeHtml(q.prompt)}</strong>
-          <span class="muted">${q.points} pts</span>
-        </div>
-        <div class="muted" style="font-size:0.85rem;">${q.type.replace('_', ' ')}</div>
-        ${optionsHtml}
-      </div>
-    `;
-  }).join('');
-
-  const html = `
-    <div class="modal-overlay visible" id="quizDetailsModal">
-      <div class="modal" style="max-width:800px; max-height:90vh;">
-        <div class="modal-header">
-          <h2 class="modal-title">Quiz Preview: ${escapeHtml(quiz.title)}</h2>
-          <button class="modal-close" onclick="closeModal('quizDetailsModal')">&times;</button>
-        </div>
-        <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
-          <div class="card" style="background:var(--primary-light); margin-bottom:16px;">
-            <div class="card-header">
-              <div>
-                <div class="card-title">Quiz Settings</div>
-              </div>
-              <div style="text-align:right;">
-                <div><strong>${totalPoints} points</strong></div>
-                <div class="muted">${questions.length} questions</div>
-              </div>
-            </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-top:12px;">
-              <div><strong>Due:</strong> ${formatDate(quiz.dueDate)}</div>
-              <div><strong>Time Limit:</strong> ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'None'}</div>
-              <div><strong>Attempts:</strong> ${quiz.attempts || 'Unlimited'}</div>
-              <div><strong>Randomize:</strong> ${quiz.randomizeQuestions ? 'Yes' : 'No'}</div>
-              <div><strong>Status:</strong> ${quiz.status}</div>
-              ${quiz.questionPoolEnabled ? `<div><strong>Pool:</strong> ${quiz.questionSelectCount} of ${questions.length}</div>` : ''}
-            </div>
-          </div>
-
-          <div class="section-header">Questions</div>
-          ${questionsHtml || '<div class="muted">No questions added yet</div>'}
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('quizDetailsModal')">Close</button>
-          <button class="btn btn-primary" onclick="closeModal('quizDetailsModal'); openQuizModal('${quizId}')">Edit Quiz</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('modalsContainer').innerHTML += html;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// STUDENT VIEW TOGGLE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function toggleStudentView() {
-  studentViewMode = !studentViewMode;
-  updateModuleStudentViewMode(studentViewMode); // also calls setAIStudentViewMode
-  // Clear AI thread so professor-view history doesn't bleed into student view and vice versa
-  clearAiThread();
-  renderAiThread();
-  renderTopBarViewToggle();
-  renderAll();
-  showToast(studentViewMode ? 'Viewing as student' : 'Back to instructor view', 'info');
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// DISCUSSION BOARD
-// ═══════════════════════════════════════════════════════════════════════════════
-
 let activeDiscussionThreadId = null; // null = thread list; string = thread detail
 let discussionAiDraft = null; // { threadId, text, originalText } — pending AI reply draft
-// Expose draft so inline oninput handler can mutate it
+
 Object.defineProperty(window, 'discussionAiDraft', {
   get() { return discussionAiDraft; },
   set(v) { discussionAiDraft = v; }
@@ -9667,6 +9423,18 @@ function renderTopBarViewToggle() {
   }
 }
 
+
+function toggleStudentView() {
+  studentViewMode = !studentViewMode;
+  updateModuleStudentViewMode(studentViewMode);
+  // Clear AI thread so history doesn't bleed between instructor and student context
+  clearAiThread();
+  renderAiThread();
+  renderTopBarViewToggle();
+  renderAll();
+  showToast(studentViewMode ? 'Viewing as student' : 'Back to instructor view', 'info');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // API RETRY LOGIC
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -9740,18 +9508,14 @@ window.viewAnnouncement = viewAnnouncement;
 window.toggleAnnouncementVisibility = toggleAnnouncementVisibility;
 
 // Assignments
-window.createAssignment = createAssignment;
 window.editAssignment = editAssignment;
 window.deleteAssignment = deleteAssignment;
-window.saveAssignmentChanges = saveAssignmentChanges;
 window.saveNewAssignment = saveNewAssignment;
 window.openNewAssignmentModal = openNewAssignmentModal;
 window.resetNewAssignmentModal = resetNewAssignmentModal;
 window.openDeadlineOverridesFromModal = openDeadlineOverridesFromModal;
 window.handleNewAssignmentTypeChange = handleNewAssignmentTypeChange;
-window.openAssignmentModal = openAssignmentModal;
 window.toggleAssignmentVisibility = toggleAssignmentVisibility;
-window.handleCreateTypeChange = handleCreateTypeChange;
 
 // Submissions and grading
 window.submitAssignment = submitAssignment;
@@ -9802,8 +9566,6 @@ window.updateQuizQuestion = updateQuizQuestion;
 window.updateQuizOption = updateQuizOption;
 window.addQuizQuestion = addQuizQuestion;
 // removeQuizQuestion and toggleQuizVisibility are exported by quiz_logic.js
-window.deleteQuiz = deleteQuiz;
-window.viewQuizDetails = viewQuizDetails;
 window.viewQuizSubmission = viewQuizSubmission;
 
 // Modules
