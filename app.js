@@ -4916,10 +4916,6 @@ async function saveGrade(submissionId) {
     return;
   }
 
-  // Remove existing grade if any from local state
-  appData.grades = appData.grades.filter(g => g.submissionId !== submissionId);
-
-  // Create new grade
   const gradeObj = {
     submissionId: submissionId,
     score: score,
@@ -4929,10 +4925,17 @@ async function saveGrade(submissionId) {
     gradedAt: new Date().toISOString()
   };
 
-  // Save to Supabase
-  await supabaseUpsertGrade(gradeObj);
+  // Persist first; mutate local state only on success
+  const savedGrade = await supabaseUpsertGrade(gradeObj);
+  if (!savedGrade) {
+    showToast('Failed to save grade', 'error');
+    return;
+  }
 
-  appData.grades.push(gradeObj);
+  const existingIdx = appData.grades.findIndex(g => g.submissionId === submissionId);
+  if (existingIdx >= 0) appData.grades[existingIdx] = gradeObj;
+  else appData.grades.push(gradeObj);
+
   // Caliper: GradeEvent/Graded
   const gradedAssignment = appData.assignments.find(a => {
     const sub = appData.submissions.find(s => s.id === submissionId);
@@ -7186,36 +7189,35 @@ async function saveManualGrade() {
       submittedAt: new Date().toISOString(),
       isManual: true
     };
+
+    // Persist before local mutation
+    const savedSubmission = await supabaseCreateSubmission(submission);
+    if (!savedSubmission) {
+      showToast('Failed to create submission record for manual grade', 'error');
+      return;
+    }
     appData.submissions.push(submission);
-
-    // Save submission to Supabase
-    await supabaseCreateSubmission(submission);
   }
 
-  // Update or create grade
-  let existingGrade = appData.grades.find(g => g.submissionId === submission.id);
+  const gradePayload = {
+    submissionId: submission.id,
+    score: score,
+    feedback: feedback,
+    released: released,
+    gradedBy: appData.currentUser.id,
+    gradedAt: new Date().toISOString()
+  };
 
-  if (existingGrade) {
-    existingGrade.score = score;
-    existingGrade.feedback = feedback;
-    existingGrade.released = released;
-    existingGrade.gradedBy = appData.currentUser.id;
-    existingGrade.gradedAt = new Date().toISOString();
-  } else {
-    existingGrade = {
-      submissionId: submission.id,
-      score: score,
-      feedback: feedback,
-      released: released,
-      gradedBy: appData.currentUser.id,
-      gradedAt: new Date().toISOString()
-    };
-    appData.grades.push(existingGrade);
+  const savedGrade = await supabaseUpsertGrade(gradePayload);
+  if (!savedGrade) {
+    showToast('Failed to save grade', 'error');
+    return;
   }
 
-  // Save grade to Supabase
-  await supabaseUpsertGrade(existingGrade);
-
+  // Update local only after successful persistence
+  const gradeIdx = appData.grades.findIndex(g => g.submissionId === submission.id);
+  if (gradeIdx >= 0) appData.grades[gradeIdx] = gradePayload;
+  else appData.grades.push(gradePayload);
 
   closeModal('manualGradeModal');
   renderGradebook();
@@ -8648,19 +8650,25 @@ async function saveRubric() {
 
   if (existingRubric) {
     // Update existing rubric in Supabase
-    await supabaseUpdateRubric(existingRubric.id, rubricCriteria);
+    const updatedRubric = await supabaseUpdateRubric(existingRubric.id, rubricCriteria);
+    if (!updatedRubric) {
+      showToast('Failed to update rubric', 'error');
+      return;
+    }
     existingRubric.criteria = JSON.parse(JSON.stringify(rubricCriteria));
   } else {
     // Create new rubric in Supabase
     const result = await supabaseCreateRubric(currentRubricAssignment, rubricCriteria);
-    if (result) {
-      appData.rubrics.push({
-        id: result.id,
-        assignmentId: currentRubricAssignment,
-        criteria: JSON.parse(JSON.stringify(rubricCriteria))
-      });
-      assignment.rubric = result.id;
+    if (!result) {
+      showToast('Failed to create rubric', 'error');
+      return;
     }
+    appData.rubrics.push({
+      id: result.id,
+      assignmentId: currentRubricAssignment,
+      criteria: JSON.parse(JSON.stringify(rubricCriteria))
+    });
+    assignment.rubric = result.id;
   }
 
   closeModal('rubricModal');
@@ -8780,22 +8788,36 @@ async function saveCategoryWeights() {
     return;
   }
 
-  // Delete old weights for this course from Supabase
   const existingCategories = appData.gradeCategories.filter(c => c.courseId === activeCourseId);
+
+  // 1) Persist new weights first
+  const persistedWeights = [];
+  for (const weight of weights) {
+    const created = await supabaseCreateGradeCategory(weight);
+    if (!created) {
+      // Best-effort cleanup of newly-created rows in this attempt
+      for (const createdWeight of persistedWeights) {
+        if (createdWeight.id) await supabaseDeleteGradeCategory(createdWeight.id);
+      }
+      showToast('Failed to save assignment weights', 'error');
+      return;
+    }
+    persistedWeights.push({ ...weight, id: created.id || weight.id });
+  }
+
+  // 2) Remove prior persisted rows
   for (const cat of existingCategories) {
-    if (cat.id) {
-      await supabaseDeleteGradeCategory(cat.id);
+    if (!cat.id) continue;
+    const deleted = await supabaseDeleteGradeCategory(cat.id);
+    if (!deleted) {
+      showToast('Failed to replace old assignment weights', 'error');
+      return;
     }
   }
 
-  // Remove old weights for this course from local state
+  // 3) Mutate local only after all persistence succeeded
   appData.gradeCategories = appData.gradeCategories.filter(c => c.courseId !== activeCourseId);
-
-  // Add new weights to Supabase and local state
-  for (const weight of weights) {
-    await supabaseCreateGradeCategory(weight);
-    appData.gradeCategories.push(weight);
-  }
+  appData.gradeCategories.push(...persistedWeights);
 
   closeModal('categoryWeightsModal');
   renderGradebook();
@@ -10141,7 +10163,7 @@ function openQuizTimeOverridesModal(quizId) {
         <td style="padding:8px;">${escapeHtml(s.name)}</td>
         <td style="padding:8px;" class="muted">${defaultLabel}</td>
         <td style="padding:8px;">
-          <input type="number" class="form-input" style="width:120px;" min="1" max="600"
+          <input type="number" class="form-input" style="width:120px;" min="0" max="600"
             id="qto_${s.id}" value="${override?.timeLimit || ''}" placeholder="min">
         </td>
         <td style="padding:8px;">
