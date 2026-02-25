@@ -39,53 +39,6 @@ export function generateModals() {
     : '<option value="">No modules available</option>';
 
   setHTML('modalsContainer', `
-    <!-- Unified Content Creation Modal -->
-    <div class="modal-overlay" id="unifiedContentModal">
-      <div class="modal" style="max-width:600px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Create New Content</h2>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('unifiedContentModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:12px;">
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('assignment')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">📝</div>
-              <div class="demo-title">Assignment</div>
-              <div class="demo-sub">Homework, essays, projects</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('quiz')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">❓</div>
-              <div class="demo-title">Quiz</div>
-              <div class="demo-sub">Multiple choice, true/false</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('announcement')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">📢</div>
-              <div class="demo-title">Announcement</div>
-              <div class="demo-sub">Announcements for students</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('file')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">📄</div>
-              <div class="demo-title">File</div>
-              <div class="demo-sub">Upload documents</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('external-link')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">🔗</div>
-              <div class="demo-title">External Link</div>
-              <div class="demo-sub">YouTube, websites</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('ai-assist')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">✨</div>
-              <div class="demo-title">AI Generate</div>
-              <div class="demo-sub">Draft with AI assistance</div>
-            </button>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('unifiedContentModal')">Cancel</button>
-        </div>
-      </div>
-    </div>
-
     <!-- External Link Modal -->
     <div class="modal-overlay" id="externalLinkModal">
       <div class="modal">
@@ -991,52 +944,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('syllabusParserModal')">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Audio Input Modal -->
-    <div class="modal-overlay" id="audioInputModal">
-      <div class="modal" style="max-width:900px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Voice Command</h2>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('audioInputModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="hint" style="margin-bottom:16px;">
-            Record or upload audio to create announcements or quizzes. Say things like "send an announcement at midnight tomorrow about the exam" or "create a quiz with five questions, due at 2pm on Dec 18".
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="audioOutputType">Output Type</label>
-            <select class="form-select" id="audioOutputType">
-              <option value="announcement">Announcement</option>
-              <option value="quiz">Quiz</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="audioStartRecording">Record Audio</label>
-            <div style="display:flex; gap:8px; margin-bottom:12px;">
-              <button class="btn btn-primary" id="audioStartRecording" onclick="startAudioRecording()">🎤 Start Recording</button>
-              <button class="btn btn-secondary" id="audioStopRecording" onclick="stopAudioRecording()" style="display:none;">⏹️ Stop Recording</button>
-            </div>
-            <div id="audioPreview"></div>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="audioFile">Or Upload Audio File</label>
-            <input type="file" class="form-input" id="audioFile" accept="audio/*">
-          </div>
-          <button class="btn btn-primary" onclick="transcribeAudio()" style="margin-bottom:16px;">Transcribe with AI</button>
-          <div class="form-group">
-            <label class="form-label" for="audioTranscription">Transcription</label>
-            <textarea class="form-textarea" id="audioTranscription" rows="3" readonly placeholder="Transcription will appear here..."></textarea>
-          </div>
-          <div class="card" style="padding:16px;">
-            <div class="card-title">Preview</div>
-            <div id="audioParsedPreview"></div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('audioInputModal')">Cancel</button>
         </div>
       </div>
     </div>

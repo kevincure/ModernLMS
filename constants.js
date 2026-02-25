@@ -280,8 +280,7 @@ export const AI_TOOL_REGISTRY = {
     { name: 'create_assignment',       description: 'Create a new assignment (essay / quiz / no_submission)',  fields: 'title, description, assignmentType, gradingType, points, dueDate, status, submissionModalities, allowLateSubmissions, lateDeduction, allowResubmission, submissionAttempts, gradingNotes, questionBankId, timeLimit, randomizeQuestions, availableFrom, availableUntil, fileIds' },
     { name: 'update_assignment',       description: 'Edit an existing assignment',                             fields: 'id*, title, description, points, dueDate, status, assignmentType, gradingType, allowLateSubmissions, lateDeduction, allowResubmission' },
     { name: 'delete_assignment',       description: 'Permanently delete an assignment',   dangerous: true,    fields: 'id*' },
-    // Quizzes (standalone)
-    { name: 'create_quiz',             description: 'Create a standalone quiz with inline questions',         fields: 'title, description, status, dueDate, timeLimit, attempts, randomizeQuestions, availableFrom, availableUntil, allowLateSubmissions, questions:[{prompt,type,options,correctAnswer,points}]' },
+    // Quizzes
     { name: 'create_quiz_from_bank',   description: 'Create quiz/exam linked to a question bank',            fields: 'title, description, category, questionBankId*, numQuestions, randomizeQuestions, randomizeAnswers, dueDate, availableFrom, availableUntil, points, timeLimit, attempts, allowLateSubmissions, status, gradingNotes' },
     { name: 'update_quiz',             description: 'Edit a quiz',                                           fields: 'id*, title, description, dueDate, status, timeLimit, attempts, questions' },
     { name: 'delete_quiz',             description: 'Permanently delete a quiz',          dangerous: true,    fields: 'id*' },
@@ -406,4 +405,3 @@ export const UI_CONFIG = {
   TOAST_DURATION_MS: 3000,
   STYLE_THEME: 'style-1' // Editorial theme
 };
-

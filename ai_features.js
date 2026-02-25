@@ -188,8 +188,6 @@ function normalizeAiOperationAction(action) {
     delete_announcement: 'announcement_delete',
     publish_announcement: 'announcement_publish',
     pin_announcement: 'announcement_pin',
-    create_quiz: 'quiz',
-    create_quiz_inline: 'quiz',
     update_quiz: 'quiz_update',
     delete_quiz: 'quiz_delete',
     create_quiz_from_bank: 'quiz_from_bank',
@@ -320,12 +318,10 @@ function getMissingPublishRequirements(operation, publish = false) {
     return missing;
   }
 
-  if (action === 'quiz' || action === 'quiz_update') {
-    if (!operation.title && action === 'quiz') missing.push('title');
+  if (action === 'quiz_update') {
     if (!operation.dueDate) missing.push('dueDate');
     const questions = operation.questions;
     if (Array.isArray(questions) && questions.length === 0) missing.push('at least one question');
-    if (action === 'quiz' && !Array.isArray(questions)) missing.push('questions');
     return missing;
   }
 
@@ -421,6 +417,7 @@ MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT
 - Before delete_question_from_bank: call list_question_banks → then call get_question_bank(bank_id) → use the returned question id
 - Before ANY invite/person action (revoke_invite, remove_person): call list_people → use the returned inviteId/userId
 - Before creating a quiz/exam from a bank: call list_question_banks → use the returned id
+- Standalone quiz actions (create_quiz/create_quiz_inline) are deprecated. To create a quiz, ALWAYS use create_assignment with assignmentType:"quiz" (and questionBankId) or create_quiz_from_bank.
 - Before get_student_grades: call list_people → pass the returned userId as the user_id param
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
 - NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
@@ -1265,27 +1262,8 @@ function handleAiAction(action) {
     });
   } else if (action.action === 'create_quiz' || action.action === 'create_quiz_inline') {
     aiThread.push({
-      role: 'action',
-      actionType: 'quiz',
-      data: {
-        title: action.title,
-        description: action.description || '',
-        dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-        status: action.status || 'draft',
-        timeLimit: action.timeLimit ?? 30,
-        attempts: action.attempts ?? 1,
-        randomizeQuestions: !!action.randomizeQuestions,
-        availableFrom: action.availableFrom || null,
-        availableUntil: action.availableUntil || null,
-        allowLateSubmissions: action.allowLateSubmissions !== undefined ? !!action.allowLateSubmissions : true,
-        latePenaltyType: action.latePenaltyType || 'per_day',
-        lateDeduction: action.lateDeduction !== undefined ? action.lateDeduction : 10,
-        questions: action.questions || [],
-        fileIds: action.fileIds || [],
-        fileNames: action.fileNames || []
-      },
-      confirmed: false,
-      rejected: false
+      role: 'assistant',
+      content: 'Standalone quiz creation is deprecated. I can create this as a Quiz/Exam assignment instead using create_assignment with assignmentType="quiz" and a question bank.'
     });
   } else if (action.action === 'update_quiz') {
     const d = { id: action.id };
@@ -1863,35 +1841,10 @@ async function executeAiOperation(operation, publish = false) {
   }
 
   if (action === 'quiz') {
-    const quizDescription = appendFileLinksToContent(
-      appendAvailabilityToDescription(resolved.description || '', resolved.availableFrom, resolved.availableUntil),
-      resolved.fileIds
-    );
-
-    const newQuiz = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: resolved.title,
-      description: quizDescription,
-      status: publish ? 'published' : (resolved.status || 'draft'),
-      dueDate: resolved.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-      createdAt: new Date().toISOString(),
-      timeLimit: resolved.timeLimit ?? 30,
-      attempts: resolved.attempts ?? 1,
-      randomizeQuestions: !!resolved.randomizeQuestions,
-      questionPoolEnabled: false,
-      questionSelectCount: 0,
-      questions: resolved.questions || []
-    };
-    const result = await supabaseCreateQuiz(newQuiz);
-    if (!result) {
-      showToast('Failed to save quiz to database', 'error');
-      return false;
-    }
-    appData.quizzes.push(newQuiz);
-    if (renderAssignmentsCallback) renderAssignmentsCallback();
-    return true;
+    showToast('Standalone quiz creation is deprecated. Use a Quiz/Exam assignment with a question bank.', 'error');
+    return false;
   }
+
 
   if (action === 'quiz_update') {
     const quiz = appData.quizzes.find(q => q.id === resolved.id && q.courseId === activeCourseId);
@@ -2641,30 +2594,6 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'announcement_pin') {
     const ann = (appData.announcements || []).find(a => a.id === d.id);
     return `<div class="muted" style="font-size:0.9rem;">${d.pinned === false ? 'Unpin' : 'Pin'} announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
-  }
-
-  // ─── QUIZ (inline) ───────────────────────────────────────────────────────
-  if (msg.actionType === 'quiz') {
-    return `
-      ${field('Title', textInput('title', d.title))}
-      ${field('Description', textarea('description', d.description, 2))}
-      ${twoCol(
-        field('Due Date', datetimeInput('dueDate', d.dueDate), 0),
-        field('Points', numberInput('points', d.points ?? 100, 0, 9999), 0)
-      )}
-      ${twoCol(
-        field('Time Limit (minutes)', numberInput('timeLimit', d.timeLimit ?? 30, 0, 600), 0),
-        field('Attempts Allowed', numberInput('attempts', d.attempts ?? 1, 1, 99), 0)
-      )}
-      ${twoCol(
-        field('Status', selectInput('status', d.status || 'draft', [['draft','Draft'],['published','Published']]), 0),
-        field('Available From', datetimeInput('availableFrom', d.availableFrom), 0)
-      )}
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
-        <div>${checkboxInput('randomizeQuestions', d.randomizeQuestions, 'Randomize question order')}</div>
-      </div>
-      <div class="muted" style="font-size:0.85rem;">${d.questions?.length || 0} question${d.questions?.length !== 1 ? 's' : ''} included</div>
-    `;
   }
 
   // ─── QUIZ (update) — only show fields the AI actually changed ────────────
