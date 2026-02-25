@@ -121,6 +121,7 @@ import {
 // Quiz Logic - quiz creation, taking, grading
 import {
   initQuizModule,
+  createDefaultQuestion,
   openQuizModal,
   saveQuiz,
   takeQuiz,
@@ -4941,43 +4942,6 @@ async function saveGrade(submissionId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZZES
 // ═══════════════════════════════════════════════════════════════════════════════
-
-function createDefaultQuestion(type = 'multiple_choice') {
-  if (type === 'true_false') {
-    return {
-      id: generateId(),
-      type,
-      prompt: '',
-      options: ['True', 'False'],
-      correctAnswer: 'True',
-      points: 1,
-      sampleAnswer: ''
-    };
-  }
-  
-  if (type === 'short_answer') {
-    return {
-      id: generateId(),
-      type,
-      prompt: '',
-      options: [],
-      correctAnswer: '',
-      points: 1,
-      sampleAnswer: ''
-    };
-  }
-  
-  return {
-    id: generateId(),
-    type,
-    prompt: '',
-    options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
-    correctAnswer: 0,
-    points: 1,
-    sampleAnswer: ''
-  };
-}
-
 
 function toggleQuizPoolFields() {
   const enabled = document.getElementById('quizPoolEnabled').checked;
