@@ -1293,19 +1293,16 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                     </label>
                   </div>
                 </div>
-                <div class="form-group" style="margin-bottom:0; padding-top:28px;">
-                  <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                    <input type="checkbox" id="newAssignmentRandomizeQuestions">
-                    <span>Randomize question order</span>
-                  </label>
-                </div>
-              </div>
-              <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
                 <div class="form-group" style="margin-bottom:0;">
                   <label class="form-label" for="newAssignmentNumQuestions">Questions per Student</label>
-                  <input type="number" class="form-input" id="newAssignmentNumQuestions" min="1" placeholder="All (default)"
-                    oninput="updateQuizPointsFromBank()">
-                  <div class="hint">Leave blank to show all questions; enter a number for a random subset</div>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="number" class="form-input" id="newAssignmentNumQuestions" min="1" placeholder="All (default)"
+                      oninput="updateQuizPointsFromBank()" style="flex:1;">
+                    <label style="display:flex; align-items:center; gap:4px; white-space:nowrap; font-size:0.85rem; cursor:pointer;">
+                      <input type="checkbox" id="newAssignmentRandomizeQuestions"> Randomize
+                    </label>
+                  </div>
+                  <div class="hint">Blank = all questions; number = random subset</div>
                 </div>
               </div>
             </div>

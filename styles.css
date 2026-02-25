@@ -1663,6 +1663,34 @@ body {
     font-size: 0.85rem;
   }
 
+  .gb-scroll-btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-bottom: 6px;
+    position: sticky;
+    top: 8px;
+    z-index: 15;
+    pointer-events: none;
+  }
+  .gb-scroll-btn {
+    pointer-events: auto;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    padding: 4px 11px;
+    font-size: 1rem;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+    transition: opacity 0.15s;
+    line-height: 1.4;
+  }
+  .gb-scroll-btn:disabled {
+    opacity: 0.25;
+    cursor: default;
+  }
+
   /* Calendar */
   .calendar-day {
     padding: 10px;
