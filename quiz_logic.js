@@ -8,8 +8,7 @@ import {
   getQuizPoints, shuffleArray, setDateTimeSelectors, getDateTimeFromSelectors, formatDate
 } from './ui_helpers.js';
 import {
-  supabaseCreateQuiz, supabaseUpdateQuiz, supabaseDeleteQuiz, supabaseUpsertQuizSubmission,
-  caliperQuizStart, caliperQuizComplete
+  supabaseCreateQuiz, supabaseUpdateQuiz, supabaseDeleteQuiz, supabaseUpsertQuizSubmission
 } from './database_interactions.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -447,7 +446,6 @@ export function takeQuiz(quizId) {
   currentQuizTakingId = quizId;
   renderQuizTakeModal(quiz);
   openModal('quizTakeModal');
-  caliperQuizStart(appData.currentUser, quiz);
 }
 
 /**
@@ -644,13 +642,39 @@ export async function submitQuiz() {
   const answers = {};
 
   questions.forEach((q, index) => {
-    if (q.type === 'short_answer') {
+    const type = q.type || 'multiple_choice';
+
+    if (type === 'short_answer' || type === 'essay' || type === 'written_response') {
       const el = document.getElementById(`quizAnswer${index}`);
       answers[q.id] = el ? el.value.trim() : '';
-    } else {
-      const selected = document.querySelector(`input[name="quizQuestion${index}"]:checked`);
-      answers[q.id] = selected ? selected.value : null;
+      return;
     }
+
+    if (type === 'matching') {
+      const pairs = Array.isArray(q.options) ? q.options : [];
+      const matchMap = {};
+      pairs.forEach((pair, pairIndex) => {
+        const selectEl = document.getElementById(`quizMatch${index}_${pairIndex}`);
+        const source = typeof pair === 'object' ? pair.source : `pair_${pairIndex}`;
+        matchMap[source] = selectEl ? selectEl.value : '';
+      });
+      answers[q.id] = matchMap;
+      return;
+    }
+
+    if (type === 'ordering') {
+      const orderRows = Array.from(document.querySelectorAll(`#quizOrder${index} > div`));
+      const ordering = orderRows.map((row, rowIndex) => {
+        const label = row.querySelector('span')?.textContent?.trim() || '';
+        const position = row.querySelector('select')?.value || String(rowIndex + 1);
+        return { item: label, position: parseInt(position, 10) || (rowIndex + 1) };
+      });
+      answers[q.id] = ordering;
+      return;
+    }
+
+    const selected = document.querySelector(`input[name="quizQuestion${index}"]:checked`);
+    answers[q.id] = selected ? selected.value : null;
   });
 
   const { autoScore, needsManual } = calculateQuizAutoScore(questions, answers);
@@ -673,9 +697,16 @@ export async function submitQuiz() {
     gradedBy: needsManual ? null : 'auto'
   };
 
-  await supabaseUpsertQuizSubmission(submission);
-  appData.quizSubmissions.push(submission);
-  caliperQuizComplete(appData.currentUser, quiz, autoScore, totalPoints);
+  const savedSubmission = await supabaseUpsertQuizSubmission(submission);
+  if (!savedSubmission) {
+    showToast('Failed to submit quiz. Please try again.', 'error');
+    return;
+  }
+
+  const existingIdx = appData.quizSubmissions.findIndex(s => s.id === submission.id);
+  if (existingIdx >= 0) appData.quizSubmissions[existingIdx] = submission;
+  else appData.quizSubmissions.push(submission);
+
 
   if (quizTimerInterval) {
     clearInterval(quizTimerInterval);
@@ -829,14 +860,24 @@ export async function saveQuizGrade() {
   const submission = appData.quizSubmissions.find(s => s.id === submissionId);
   if (!submission) return;
 
-  submission.score = score;
-  submission.feedback = feedback;
-  submission.released = true;
-  submission.needsManual = false;
-  submission.gradedAt = new Date().toISOString();
-  submission.gradedBy = appData.currentUser.id;
+  const updatedSubmission = {
+    ...submission,
+    score,
+    feedback,
+    released: true,
+    needsManual: false,
+    gradedAt: new Date().toISOString(),
+    gradedBy: appData.currentUser.id
+  };
 
-  await supabaseUpsertQuizSubmission(submission);
+  const saved = await supabaseUpsertQuizSubmission(updatedSubmission);
+  if (!saved) {
+    showToast('Failed to save quiz grade', 'error');
+    return;
+  }
+
+  const idx = appData.quizSubmissions.findIndex(s => s.id === submissionId);
+  if (idx >= 0) appData.quizSubmissions[idx] = updatedSubmission;
 
   closeModal('quizGradeModal');
   if (renderAssignmentsCallback) renderAssignmentsCallback();
