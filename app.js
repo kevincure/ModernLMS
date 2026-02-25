@@ -473,8 +473,8 @@ function showConfigError() {
   }
 }
 
-// Global debug function - call window.checkAuth() from browser console to verify auth state
-window.checkAuth = async function() {
+// Global debug function - call window.debugCheckAuth() from browser console to verify auth state
+window.debugCheckAuth = async function() {
   console.log('=== Supabase Auth Debug ===');
 
   if (!supabaseClient) {
@@ -1216,8 +1216,16 @@ function initApp() {
   const courses = getUserCourses(appData.currentUser.id);
   console.log('[App] User courses:', courses.length);
 
-  if (courses.length > 0 && !activeCourseId) {
-    activeCourseId = courses[0].id;
+  // Reset leaked/stale course selection (e.g. after logout/login as another user)
+  if (courses.length === 0) {
+    activeCourseId = null;
+    studentViewMode = false;
+  } else {
+    const hasSelectedCourse = courses.some(c => c.id === activeCourseId);
+    if (!hasSelectedCourse) {
+      activeCourseId = courses[0].id;
+      studentViewMode = false;
+    }
   }
 
   // Keep extracted modules (AI/quiz/files/modals) in sync on initial bootstrap.
@@ -1225,7 +1233,6 @@ function initApp() {
     updateModuleActiveCourse(activeCourseId);
   }
 
-  populateCourseSelector();
   renderAll();
   navigateTo('courses');
 
@@ -1235,34 +1242,14 @@ function initApp() {
   console.log('[App] App initialized successfully');
 }
 
-function populateCourseSelector() {
-  const courses = getUserCourses(appData.currentUser.id);
-  const select = document.getElementById('courseSelect');
-
-  if (!select) {
-    return;
-  }
-  
-  if (courses.length === 0) {
-    select.innerHTML = '<option value="">No courses</option>';
-    return;
-  }
-  
-  select.innerHTML = courses.map(c => 
-    `<option value="${c.id}" ${c.id === activeCourseId ? 'selected' : ''}>${c.name} (${c.role})</option>`
-  ).join('');
-}
-
 function switchCourse(courseId) {
   activeCourseId = courseId;
   updateModuleActiveCourse(courseId); // Notify modules of course change
-  populateCourseSelector();
   renderAll();
   navigateTo('home');
 }
 
 function renderAll() {
-  populateCourseSelector(); // Update dropdown
   renderTopBarCourse();
   renderTopBarActions();
   renderTopBarViewToggle();
@@ -1662,7 +1649,12 @@ async function createCourse() {
   };
 
   // Save to Supabase
-  await supabaseCreateCourse(course);
+  const savedCourse = await supabaseCreateCourse(course);
+  if (!savedCourse) {
+    console.error('[createCourse] Failed to persist course; aborting local state mutation', { courseId, name, code });
+    showToast('Failed to create course in database', 'error');
+    return;
+  }
 
   // Update local state
   appData.courses.push(course);
@@ -1674,7 +1666,12 @@ async function createCourse() {
   };
 
   // Save enrollment to Supabase
-  await supabaseCreateEnrollment(enrollment);
+  const savedEnrollment = await supabaseCreateEnrollment(enrollment);
+  if (!savedEnrollment) {
+    console.error('[createCourse] Course was created but instructor enrollment failed; aborting local enrollment state mutation', { courseId, userId: appData.currentUser.id });
+    showToast('Course created, but failed to enroll you as instructor. Please retry or contact admin.', 'error');
+    return;
+  }
 
   // Update local state
   appData.enrollments.push(enrollment);
@@ -1699,8 +1696,12 @@ async function createCourse() {
             courseId: courseId,
             role: 'student'
           };
-          await supabaseCreateEnrollment(studentEnrollment);
-          appData.enrollments.push(studentEnrollment);
+          const enrolledStudent = await supabaseCreateEnrollment(studentEnrollment);
+          if (enrolledStudent) {
+            appData.enrollments.push(studentEnrollment);
+          } else {
+            console.error('[createCourse] Failed to auto-enroll existing user from course invite list', { courseId, email, userId: user.id });
+          }
         }
       } else {
         // User doesn't exist - create invite (default to student role)
@@ -1711,8 +1712,12 @@ async function createCourse() {
           status: 'pending',
           sentAt: new Date().toISOString()
         };
-        await supabaseCreateInvite(invite);
-        appData.invites.push(invite);
+        const savedInvite = await supabaseCreateInvite(invite);
+        if (savedInvite?.id) {
+          appData.invites.push({ ...invite, id: savedInvite.id });
+        } else {
+          console.error('[createCourse] Failed to create invite during course creation', { courseId, email });
+        }
       }
     }
   }
@@ -1756,9 +1761,13 @@ async function createCourse() {
             questions: [],
             isPlaceholder: true
           };
-          await supabaseCreateQuiz(newQuiz);
-          appData.quizzes.push(newQuiz);
-          refId = newQuiz.id;
+          const savedQuiz = await supabaseCreateQuiz(newQuiz);
+          if (savedQuiz) {
+            appData.quizzes.push(newQuiz);
+            refId = newQuiz.id;
+          } else {
+            console.error('[createCourse] Failed to create placeholder quiz from syllabus import', { courseId, title: item.title });
+          }
         } else if (item.type === 'reading') {
           const newFile = {
             id: generateId(),
@@ -1772,9 +1781,13 @@ async function createCourse() {
             uploadedBy: appData.currentUser.id,
             uploadedAt: new Date().toISOString()
           };
-          await supabaseCreateFile(newFile);
-          appData.files.push(newFile);
-          refId = newFile.id;
+          const savedFile = await supabaseCreateFile(newFile);
+          if (savedFile) {
+            appData.files.push(newFile);
+            refId = newFile.id;
+          } else {
+            console.error('[createCourse] Failed to create placeholder reading file from syllabus import', { courseId, title: item.title });
+          }
         } else {
           const newAssignment = {
             id: generateId(),
@@ -1788,9 +1801,13 @@ async function createCourse() {
             createdAt: new Date().toISOString(),
             isPlaceholder: true
           };
-          await supabaseCreateAssignment(newAssignment);
-          appData.assignments.push(newAssignment);
-          refId = newAssignment.id;
+          const savedAssignment = await supabaseCreateAssignment(newAssignment);
+          if (savedAssignment) {
+            appData.assignments.push(newAssignment);
+            refId = newAssignment.id;
+          } else {
+            console.error('[createCourse] Failed to create placeholder assignment from syllabus import', { courseId, title: item.title });
+          }
         }
 
         if (refId) {
@@ -1804,9 +1821,22 @@ async function createCourse() {
         }
       }
 
-      await supabaseCreateModule(newModule);
+      const savedModule = await supabaseCreateModule(newModule);
+      if (!savedModule) {
+        console.error('[createCourse] Failed to create module from syllabus import', { courseId, moduleName: mod.name });
+        continue;
+      }
+
       for (const moduleItem of newModule.items) {
-        await supabaseCreateModuleItem(moduleItem, newModule.id);
+        const savedModuleItem = await supabaseCreateModuleItem(moduleItem, newModule.id);
+        if (!savedModuleItem) {
+          console.error('[createCourse] Failed to create module item from syllabus import', {
+            courseId,
+            moduleId: newModule.id,
+            itemType: moduleItem.type,
+            refId: moduleItem.refId
+          });
+        }
       }
       appData.modules.push(newModule);
       modulesImported++;
@@ -8082,22 +8112,28 @@ async function updateCourse() {
   const course = getCourseById(currentEditCourseId);
   if (!course) return;
 
-  course.name = document.getElementById('editCourseName').value.trim();
-  course.code = document.getElementById('editCourseCode').value.trim();
-  course.description = document.getElementById('editCourseDescription').value.trim();
-  course.active = document.getElementById('editCourseActive').checked;
+  const updatedCourse = {
+    ...course,
+    name: document.getElementById('editCourseName').value.trim(),
+    code: document.getElementById('editCourseCode').value.trim(),
+    description: document.getElementById('editCourseDescription').value.trim(),
+    active: document.getElementById('editCourseActive').checked
+  };
 
-  if (!course.name || !course.code) {
+  if (!updatedCourse.name || !updatedCourse.code) {
     showToast('Please fill in course name and code', 'error');
     return;
   }
 
-  // Save to Supabase
-  const result = await supabaseUpdateCourse(course);
+  // Save to Supabase first; only mutate local state after successful persistence
+  const result = await supabaseUpdateCourse(updatedCourse);
   if (!result) {
-    return; // Error already shown
+    console.error('[updateCourse] Failed to persist course update; local state unchanged', { courseId: currentEditCourseId });
+    showToast('Failed to update course in database', 'error');
+    return;
   }
 
+  Object.assign(course, updatedCourse);
   closeModal('editCourseModal');
   renderAll();
   showToast('Course updated', 'success');
@@ -8228,20 +8264,31 @@ async function executeImportContent() {
         questions: (bank.questions || []).map(q => ({ ...q, id: generateId(), bankId: newBankId })),
         createdAt: new Date().toISOString()
       };
-      await supabaseCreateQuestionBank(newBank);
-      if (!appData.questionBanks) appData.questionBanks = [];
-      appData.questionBanks.push(newBank);
-      importedCount++;
+      const savedBank = await supabaseCreateQuestionBank(newBank);
+      if (savedBank) {
+        if (!appData.questionBanks) appData.questionBanks = [];
+        appData.questionBanks.push(newBank);
+        importedCount++;
+      } else {
+        console.error('[executeImportContent] Failed to import question bank', { sourceBankId: bank.id, destCourseId });
+      }
     }
   }
 
   // 2. Assignments (remap question bank IDs if banks were also imported)
+  // Supports all assignment types: essay, quiz, and no_submission
   if (selectedTypes.includes('assignments')) {
     const ids = selectedIds['assignments'];
     const pool = appData.assignments.filter(a => a.courseId === sourceCourseId && (!ids || ids.has(a.id)));
     for (const assignment of pool) {
       const newId = generateId();
       assignmentIdMap[assignment.id] = newId;
+
+      const assignmentType = assignment.assignmentType || 'essay';
+      const mappedQuestionBankId = assignment.questionBankId && bankIdMap[assignment.questionBankId]
+        ? bankIdMap[assignment.questionBankId]
+        : assignment.questionBankId;
+
       const newA = {
         ...assignment,
         id: newId,
@@ -8249,13 +8296,32 @@ async function executeImportContent() {
         status: 'draft',
         dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
         createdAt: new Date().toISOString(),
-        questionBankId: assignment.questionBankId && bankIdMap[assignment.questionBankId]
-          ? bankIdMap[assignment.questionBankId]
-          : assignment.questionBankId
+        assignmentType,
+        questionBankId: mappedQuestionBankId
       };
-      await supabaseCreateAssignment(newA);
-      appData.assignments.push(newA);
-      importedCount++;
+
+      // Normalize key fields for known assignment subtypes
+      if (assignmentType === 'quiz') {
+        newA.gradingType = assignment.gradingType || 'points';
+        newA.timeLimit = assignment.timeLimit || null;
+        newA.submissionAttempts = assignment.submissionAttempts || null;
+        newA.randomizeQuestions = assignment.randomizeQuestions === true;
+      } else if (assignmentType === 'no_submission') {
+        newA.submissionModalities = [];
+        newA.allowResubmission = false;
+      }
+
+      const savedAssignment = await supabaseCreateAssignment(newA);
+      if (savedAssignment) {
+        appData.assignments.push(newA);
+        importedCount++;
+      } else {
+        console.error('[executeImportContent] Failed to import assignment', {
+          sourceAssignmentId: assignment.id,
+          destCourseId,
+          assignmentType
+        });
+      }
     }
   }
 
@@ -8288,7 +8354,11 @@ async function executeImportContent() {
         hidden: mod.hidden || false,
         items: []
       };
-      await supabaseCreateModule(newMod);
+      const savedModule = await supabaseCreateModule(newMod);
+      if (!savedModule) {
+        console.error('[executeImportContent] Failed to import module', { sourceModuleId: mod.id, destCourseId });
+        continue;
+      }
       for (const item of (mod.items || [])) {
         let newRefId = item.refId;
         if (item.type === 'assignment' && assignmentIdMap[item.refId]) newRefId = assignmentIdMap[item.refId];
@@ -8301,8 +8371,17 @@ async function executeImportContent() {
           url: item.url,
           position: item.position
         };
-        await supabaseCreateModuleItem(newItem, newMod.id);
-        newMod.items.push(newItem);
+        const savedModuleItem = await supabaseCreateModuleItem(newItem, newMod.id);
+        if (savedModuleItem) {
+          newMod.items.push(newItem);
+        } else {
+          console.error('[executeImportContent] Failed to import module item', {
+            sourceModuleId: mod.id,
+            destModuleId: newMod.id,
+            itemType: item.type,
+            refId: item.refId
+          });
+        }
       }
       if (!appData.modules) appData.modules = [];
       appData.modules.push(newMod);
@@ -8325,9 +8404,13 @@ async function executeImportContent() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      await supabaseCreateAnnouncement(newAnn);
-      appData.announcements.push(newAnn);
-      importedCount++;
+      const savedAnnouncement = await supabaseCreateAnnouncement(newAnn);
+      if (savedAnnouncement) {
+        appData.announcements.push(newAnn);
+        importedCount++;
+      } else {
+        console.error('[executeImportContent] Failed to import announcement', { sourceAnnouncementId: ann.id, destCourseId });
+      }
     }
   }
 
