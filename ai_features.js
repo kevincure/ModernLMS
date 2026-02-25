@@ -421,7 +421,7 @@ MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT
 - Before delete_question_from_bank: call list_question_banks → then call get_question_bank(bank_id) → use the returned question id
 - Before ANY invite/person action (revoke_invite, remove_person): call list_people → use the returned inviteId/userId
 - Before creating a quiz/exam from a bank: call list_question_banks → use the returned id
-- Before get_student_grades: call list_people → use the returned userId for the student
+- Before get_student_grades: call list_people → pass the returned userId as the user_id param
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
 - NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
   ❌ WRONG: "There are two announcements: 'Andy' (ID: f42c0e22-...) and 'Chad' (ID: 65570f8d-...)"
@@ -661,24 +661,27 @@ async function executeAiTool(toolName, params = {}) {
         .map(t => ({ id: t.id, title: t.title, pinned: !!t.pinned, replyCount: (t.replies || []).length }));
 
     case 'get_question_bank': {
-      const bank = (appData.questionBanks || []).find(b => b.id === params.bank_id && b.courseId === activeCourseId);
-      if (!bank) return { error: 'Question bank not found' };
+      const bankId = params.bank_id || params.bankId || params.id;
+      const bank = (appData.questionBanks || []).find(b => b.id === bankId && b.courseId === activeCourseId);
+      if (!bank) return { error: 'Question bank not found — call list_question_banks first to get the id' };
       return { id: bank.id, name: bank.name, questions: (bank.questions || []).map(q => ({ id: q.id, type: q.type, prompt: q.prompt, options: q.options, correctAnswer: q.correctAnswer, points: q.points })) };
     }
 
     case 'get_assignment': {
-      const a = (appData.assignments || []).find(a => a.id === params.assignment_id && a.courseId === activeCourseId);
-      return a || { error: 'Assignment not found' };
+      const assignmentId = params.assignment_id || params.assignmentId || params.id;
+      const a = (appData.assignments || []).find(a => a.id === assignmentId && a.courseId === activeCourseId);
+      return a || { error: 'Assignment not found — call list_assignments first to get the id' };
     }
 
     case 'get_quiz': {
-      const q = (appData.quizzes || []).find(q => q.id === params.quiz_id && q.courseId === activeCourseId);
-      return q || { error: 'Quiz not found' };
+      const quizId = params.quiz_id || params.quizId || params.id;
+      const q = (appData.quizzes || []).find(q => q.id === quizId && q.courseId === activeCourseId);
+      return q || { error: 'Quiz not found — call list_quizzes first to get the id' };
     }
 
     case 'get_assignment_analytics': {
-      const assignId = params.assignment_id;
-      if (!assignId) return { error: 'Missing assignment_id' };
+      const assignId = params.assignment_id || params.assignmentId || params.id;
+      if (!assignId) return { error: 'Missing assignment_id — call list_assignments first to get the id' };
       const a = (appData.assignments || []).find(a => a.id === assignId && a.courseId === activeCourseId);
       if (!a) return { error: 'Assignment not found' };
       const enrolledStudents = (appData.enrollments || []).filter(e => e.courseId === activeCourseId && e.role === 'student');
@@ -704,7 +707,7 @@ async function executeAiTool(toolName, params = {}) {
     }
 
     case 'get_student_grades': {
-      const userId = params.user_id;
+      const userId = params.user_id || params.userId;
       if (!userId) return { error: 'Missing user_id — call list_people first to get the userId' };
       const enrollment = (appData.enrollments || []).find(e => e.userId === userId && e.courseId === activeCourseId);
       if (!enrollment) return { error: 'User is not enrolled in this course' };
@@ -761,7 +764,8 @@ async function executeAiTool(toolName, params = {}) {
     }
 
     case 'get_file_content': {
-      const f = (appData.files || []).find(f => f.id === params.file_id && f.courseId === activeCourseId);
+      const fileId = params.file_id || params.fileId || params.id;
+      const f = (appData.files || []).find(f => f.id === fileId && f.courseId === activeCourseId);
       if (!f) return { error: 'File not found' };
       if (f.isPlaceholder || f.isYoutube) return { id: f.id, name: f.name, note: 'External link or video — no downloadable content.' };
       if (!f.storagePath) return { id: f.id, name: f.name, note: 'No storage path for this file.' };
