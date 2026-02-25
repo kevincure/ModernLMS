@@ -1931,14 +1931,20 @@ async function acceptInvite(inviteId) {
     showToast('Failed to join course', 'error');
     return;
   }
-  appData.enrollments.push(enrollment);
 
   // Mark invite accepted
   const inviteAccepted = await supabaseUpdateInviteStatus(inviteId, 'accepted');
   if (!inviteAccepted) {
-    showToast('Failed to update invite status', 'error');
+    const rollbackOk = await supabaseDeleteEnrollment(enrollment.userId, enrollment.courseId);
+    if (!rollbackOk) {
+      showToast('Enrollment created but invite update failed. Please contact an administrator.', 'error');
+    } else {
+      showToast('Failed to update invite status', 'error');
+    }
     return;
   }
+
+  appData.enrollments.push(enrollment);
   const inv = appData.invites.find(i => i.id === inviteId);
   if (inv) inv.status = 'accepted';
 
@@ -1983,7 +1989,7 @@ window.rejectInvite = rejectInvite;
 
 function renderHome() {
   if (!activeCourseId) {
-    setText('homeTitle', 'Home');
+    setText('homeTitle', '');
     setText('homeSubtitle', 'Select a course to get started');
     setHTML('homeUpcoming', '<div class="empty-state-text">No active course</div>');
     setHTML('homeUpdates', '<div class="empty-state-text">No active course</div>');
@@ -1992,7 +1998,7 @@ function renderHome() {
   }
   
   const course = getCourseById(activeCourseId);
-  setText('homeTitle', 'Home');
+  setText('homeTitle', '');
   setText('homeSubtitle', ''); // Course name is already in the top bar
 
   renderStartHere(course);
@@ -6594,12 +6600,13 @@ function renderGradebook() {
   setText('gradebookSubtitle', course.name);
 
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isStaffUser && !studentViewMode;
   debugGradebookAssignmentVisibility();
 
-  if (isStaffUser) {
+  if (effectiveStaff) {
     renderStaffGradebook();
   } else {
-    renderStudentGradebook();
+    renderStudentGradebook({ previewMode: isStaffUser && studentViewMode });
   }
 }
 
@@ -6636,13 +6643,14 @@ function debugGradebookAssignmentVisibility() {
   console.groupEnd();
 }
 
-function renderStudentGradebook() {
+function renderStudentGradebook({ previewMode = false } = {}) {
   setHTML('gradebookActions', '');
 
   const assignments = appData.assignments
     .filter(a => {
       if (!isAssignmentVisibleInGradebook(a)) return false;
       if (a.visibleToStudents === false) return false;
+      if (previewMode) return true;
       // For no_submission assignments: only show once a released grade exists
       if ((a.assignmentType || 'essay') === 'no_submission') {
         const sub = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
@@ -6662,14 +6670,29 @@ function renderStudentGradebook() {
   let totalPoints = 0;
 
   const html = assignments.map(a => {
-    const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
+    const submission = previewMode
+      ? null
+      : appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
     const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
 
-    let status = 'Not submitted';
+    let status = previewMode ? 'Graded (example)' : 'Not submitted';
     let score = '—';
     let feedback = '';
 
-    if (submission) {
+    if (previewMode) {
+      const gt = a.gradingType || 'points';
+      if (gt === 'complete_incomplete') {
+        score = 'Complete';
+        totalScore += a.points;
+        totalPoints += a.points;
+      } else if (gt === 'letter_grade') {
+        score = 'A';
+      } else {
+        score = `${a.points}/${a.points}`;
+        totalScore += a.points;
+        totalPoints += a.points;
+      }
+    } else if (submission) {
       const gt = a.gradingType || 'points';
       if (grade && grade.released) {
         status = 'Graded';
@@ -6723,7 +6746,7 @@ function renderStudentGradebook() {
   }).join('');
   
   const percentage = totalPoints > 0 ? ((totalScore / totalPoints) * 100).toFixed(1) : '—';
-  const weightedGrade = calculateWeightedGrade(appData.currentUser.id, activeCourseId);
+  const weightedGrade = previewMode ? 100 : calculateWeightedGrade(appData.currentUser.id, activeCourseId);
   const gradeSettings = (appData.gradeSettings || []).find(gs => gs.courseId === activeCourseId);
 
   let summary = '';
@@ -6738,7 +6761,12 @@ function renderStudentGradebook() {
     summary += '</div>';
   }
 
-  setHTML('gradebookWrap', summary + html);
+  const previewNote = previewMode
+    ? `<div class="muted" style="margin-bottom:12px;">Students will see only their own grade, as follows.</div>
+       <div class="muted" style="margin-bottom:12px; font-size:0.85rem;">Previewing as <strong>Hypothetical Student</strong>.</div>`
+    : '';
+
+  setHTML('gradebookWrap', previewNote + summary + html);
 }
 
 function renderStaffGradebook() {
@@ -9636,7 +9664,7 @@ function openCreateDiscussionThreadModal() {
   setTimeout(() => document.getElementById('newThreadTitle')?.focus(), 50);
 }
 
-function createDiscussionThread() {
+async function createDiscussionThread() {
   const title = document.getElementById('newThreadTitle')?.value.trim();
   if (!title) { showToast('Thread title required', 'error'); return; }
   const content = document.getElementById('newThreadContent')?.value.trim();
@@ -9654,16 +9682,20 @@ function createDiscussionThread() {
     replies: []
   };
 
-  // Optimistic update — don't block UI on Supabase
+  const saved = await supabaseCreateDiscussionThread(thread);
+  if (!saved) {
+    showToast('Failed to create thread', 'error');
+    return;
+  }
+
   if (!appData.discussionThreads) appData.discussionThreads = [];
   appData.discussionThreads.unshift(thread);
   closeDiscussionThreadModal();
   openDiscussionThread(thread.id);
   showToast('Thread created!', 'success');
-  supabaseCreateDiscussionThread(thread); // fire and don't await
 }
 
-function postDiscussionReply(threadId) {
+async function postDiscussionReply(threadId) {
   const input = document.getElementById('discussionReplyInput');
   const content = input?.value.trim();
   if (!content) { showToast('Reply cannot be empty', 'error'); return; }
@@ -9677,7 +9709,12 @@ function postDiscussionReply(threadId) {
     createdAt: new Date().toISOString()
   };
 
-  // Optimistic update
+  const saved = await supabaseCreateDiscussionReply(reply);
+  if (!saved) {
+    showToast('Failed to post reply', 'error');
+    return;
+  }
+
   const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
   if (thread) {
     if (!thread.replies) thread.replies = [];
@@ -9686,7 +9723,6 @@ function postDiscussionReply(threadId) {
   if (input) input.value = '';
   renderDiscussion();
   showToast('Reply posted!', 'success');
-  supabaseCreateDiscussionReply(reply); // fire and don't await
 }
 
 async function postDiscussionAiReply(threadId) {
@@ -9765,7 +9801,7 @@ async function postDiscussionAiReply(threadId) {
   }
 }
 
-function postAiDraftReply(threadId) {
+async function postAiDraftReply(threadId) {
   const textarea = document.getElementById('aiDraftTextarea');
   const text = textarea?.value?.trim() || discussionAiDraft?.text?.trim();
   if (!text) return;
@@ -9782,7 +9818,12 @@ function postAiDraftReply(threadId) {
     createdAt: new Date().toISOString()
   };
 
-  // Optimistic update
+  const saved = await supabaseCreateDiscussionReply(reply);
+  if (!saved) {
+    showToast('Failed to post AI reply', 'error');
+    return;
+  }
+
   const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
   if (thread) {
     if (!thread.replies) thread.replies = [];
@@ -9791,7 +9832,6 @@ function postAiDraftReply(threadId) {
   discussionAiDraft = null;
   renderDiscussion();
   showToast(wasEdited ? 'Edited AI reply posted!' : 'AI reply posted!', 'success');
-  supabaseCreateDiscussionReply(reply); // fire and don't await
 }
 
 function dismissAiDraft() {
@@ -9802,38 +9842,56 @@ function dismissAiDraft() {
 async function toggleDiscussionPin(threadId) {
   const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
   if (!thread) return;
-  thread.pinned = !thread.pinned;
-  const ok = await supabaseUpdateDiscussionThread(thread);
-  if (ok) renderDiscussion();
+  const updatedThread = { ...thread, pinned: !thread.pinned };
+  const ok = await supabaseUpdateDiscussionThread(updatedThread);
+  if (!ok) {
+    showToast('Failed to update thread pin', 'error');
+    return;
+  }
+  thread.pinned = updatedThread.pinned;
+  renderDiscussion();
 }
 
 async function toggleDiscussionHide(threadId) {
   const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
   if (!thread) return;
-  thread.hidden = !thread.hidden;
-  const ok = await supabaseUpdateDiscussionThread(thread);
-  if (ok) renderDiscussion();
+  const updatedThread = { ...thread, hidden: !thread.hidden };
+  const ok = await supabaseUpdateDiscussionThread(updatedThread);
+  if (!ok) {
+    showToast('Failed to update thread visibility', 'error');
+    return;
+  }
+  thread.hidden = updatedThread.hidden;
+  renderDiscussion();
 }
 
 function deleteDiscussionThread(threadId) {
   ensureModalsRendered();
-  showConfirmDialog('Delete this thread and all its replies?', () => {
+  showConfirmDialog('Delete this thread and all its replies?', async () => {
+    const deleted = await supabaseDeleteDiscussionThread(threadId);
+    if (!deleted) {
+      showToast('Failed to delete thread', 'error');
+      return;
+    }
     appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== threadId);
     if (activeDiscussionThreadId === threadId) activeDiscussionThreadId = null;
     renderDiscussion();
     showToast('Thread deleted', 'success');
-    supabaseDeleteDiscussionThread(threadId);
   });
 }
 
 function deleteDiscussionReply(replyId, threadId) {
   ensureModalsRendered();
-  showConfirmDialog('Delete this reply?', () => {
+  showConfirmDialog('Delete this reply?', async () => {
+    const deleted = await supabaseDeleteDiscussionReply(replyId);
+    if (!deleted) {
+      showToast('Failed to delete reply', 'error');
+      return;
+    }
     const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
     if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
     renderDiscussion();
     showToast('Reply deleted', 'success');
-    supabaseDeleteDiscussionReply(replyId);
   });
 }
 
