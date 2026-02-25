@@ -231,7 +231,7 @@ export async function loadDataFromSupabase() {
       allowResubmission: a.allow_resubmission,
       hidden: a.hidden || false,
       category: a.category,
-      timeAllowed: a.time_allowed || null,
+      timeLimit: a.time_limit ?? a.time_allowed ?? null,
       // CC 1.4 grading fields — map from snake_case DB columns
       gradingType: a.grading_type || 'points',
       assignmentType: a.assignment_type || a.category || 'essay',
@@ -433,7 +433,7 @@ export async function loadDataFromSupabase() {
       dueDate: o.due_date,
       availableFrom: o.available_from || null,
       availableUntil: o.available_until || null,
-      timeAllowed: o.time_allowed || null
+      timeLimit: o.time_limit ?? o.time_allowed ?? null
     }));
 
     // Quiz time overrides (per-student time limits)
@@ -1973,7 +1973,7 @@ export async function supabaseUpsertAssignmentOverride(override) {
     due_date: override.dueDate || null,
     available_from: override.availableFrom || null,
     available_until: override.availableUntil || null,
-    time_allowed: override.timeAllowed != null ? override.timeAllowed : null
+    time_limit: override.timeLimit != null ? override.timeLimit : null
   };
   const { data, error } = await supabaseClient.from('assignment_overrides').upsert(
     payload, { onConflict: 'assignment_id,user_id' }
