@@ -723,7 +723,6 @@ let currentSpeedGraderAssignmentId = null;
 let currentSpeedGraderStudentIndex = 0;
 let speedGraderStudents = [];
 let mediaRecorder = null;
-let audioChunks = [];
 let draggedModuleItem = null;
 let studentViewMode = false; // For professor/TA to toggle student view
 let aiProcessing = false; // Track AI processing state
@@ -3001,62 +3000,6 @@ function normalizeContentStatus(status) {
 async function createAssignment() {
   // Deprecated path — routed to the CC 1.4 assignment modal
   openNewAssignmentModal();
-}
-
-function openCreateAssignmentTypeModal() {
-  ensureModalsRendered();
-  // Create simple type selector modal
-  if (!document.getElementById('createTypeModal')) {
-    const modalHtml = `
-      <div class="modal-overlay" id="createTypeModal">
-        <div class="modal" style="max-width:400px;">
-          <div class="modal-header">
-            <h2 class="modal-title">Create New</h2>
-            <button class="modal-close" onclick="closeModal('createTypeModal')">&times;</button>
-          </div>
-          <div class="modal-body">
-            <div class="form-group">
-              <label class="form-label">What would you like to create?</label>
-              <select class="form-select" id="createTypeSelect" onchange="handleCreateTypeChange()">
-                <option value="homework">Homework</option>
-                <option value="essay">Essay</option>
-                <option value="project">Project</option>
-                <option value="exam">Exam</option>
-                <option value="quiz">Quiz</option>
-              </select>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeModal('createTypeModal')">Cancel</button>
-            <button class="btn btn-primary" onclick="confirmCreateType()">Continue</button>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-  }
-  document.getElementById('createTypeSelect').value = 'homework';
-  openModal('createTypeModal');
-}
-
-function handleCreateTypeChange() {
-  // Could add dynamic hints here if needed
-}
-
-function confirmCreateType() {
-  const type = document.getElementById('createTypeSelect').value;
-  closeModal('createTypeModal');
-
-  if (type === 'quiz') {
-    openQuizModal();
-    return;
-  }
-
-  // Route all assignment creation through the new CC 1.4 modal.
-  openNewAssignmentModal();
-  if (type === 'essay' || type === 'homework' || type === 'project') {
-    setAssignmentType('essay');
-  }
 }
 
 let currentEditAssignmentId = null;
@@ -5910,276 +5853,6 @@ function renderSyllabusParsedPreview(parsed) {
   `;
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// AI AUDIO INPUT
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function openAudioInputModal() {
-  generateModals();
-  document.getElementById('audioFile').value = '';
-  document.getElementById('audioPreview').innerHTML = '';
-  document.getElementById('audioTranscription').value = '';
-  document.getElementById('audioOutputType').value = 'announcement';
-  document.getElementById('audioParsedPreview').innerHTML = '<div class="muted">Record or upload audio to transcribe and create LMS objects</div>';
-  updateAudioRecordingState(false);
-  openModal('audioInputModal');
-}
-
-function updateAudioRecordingState(isRecording) {
-  const startBtn = document.getElementById('audioStartRecording');
-  const stopBtn = document.getElementById('audioStopRecording');
-
-  if (startBtn) startBtn.style.display = isRecording ? 'none' : 'inline-flex';
-  if (stopBtn) stopBtn.style.display = isRecording ? 'inline-flex' : 'none';
-}
-
-async function startAudioRecording() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
-
-    mediaRecorder = new MediaRecorder(stream);
-
-    mediaRecorder.ondataavailable = (event) => {
-      audioChunks.push(event.data);
-    };
-
-    mediaRecorder.onstop = () => {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      const audioUrl = URL.createObjectURL(audioBlob);
-
-      document.getElementById('audioPreview').innerHTML = `
-        <audio controls src="${audioUrl}" style="width:100%;"></audio>
-        <div class="muted" style="margin-top:8px;">Recording complete. Click "Transcribe" to process.</div>
-      `;
-
-      // Store blob for later use
-      document.getElementById('audioPreview').dataset.audioBlob = audioUrl;
-      window.lastRecordedAudioBlob = audioBlob;
-
-      stream.getTracks().forEach(track => track.stop());
-    };
-
-    mediaRecorder.start();
-    updateAudioRecordingState(true);
-    showToast('Recording started...', 'info');
-
-  } catch (err) {
-    console.error('Audio recording error:', err);
-    showToast('Could not access microphone: ' + err.message, 'error');
-  }
-}
-
-function stopAudioRecording() {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
-    updateAudioRecordingState(false);
-    showToast('Recording stopped', 'success');
-  }
-}
-
-async function transcribeAudio() {
-  let audioData = null;
-  let mimeType = 'audio/webm';
-
-  // Check for uploaded file first
-  const fileInput = document.getElementById('audioFile');
-  if (fileInput.files.length > 0) {
-    const file = fileInput.files[0];
-    mimeType = file.type || 'audio/webm';
-    audioData = await fileToBase64(file);
-  } else if (window.lastRecordedAudioBlob) {
-    audioData = await fileToBase64(window.lastRecordedAudioBlob);
-  }
-
-  if (!audioData) {
-    showToast('Please record or upload audio first', 'error');
-    return;
-  }
-
-  const outputType = document.getElementById('audioOutputType').value;
-
-  let systemPrompt = '';
-  if (outputType === 'announcement') {
-    systemPrompt = `Transcribe this audio and convert it into a course announcement. The user may specify timing like "send at midnight tomorrow" or "post this now".
-
-FORMATTING for content (supports markdown):
-- Use **bold** for emphasis, *italic* for terms
-- Use bullet lists with "- item" format
-- Use headers with ## or ###
-- Embed YouTube videos by placing the full URL on its own line
-- Use \`code\` for inline code
-
-Return ONLY valid JSON:
-{
-  "transcription": "The full transcription of the audio",
-  "announcement": {
-    "title": "A clear title for the announcement",
-    "content": "The announcement content with markdown formatting as appropriate",
-    "scheduledFor": "ISO date string if a specific time was mentioned, or null for immediate"
-  }
-}`;
-  } else {
-    systemPrompt = `Transcribe this audio and convert it into a quiz. The user may specify details like "five questions", "due at 2pm on Dec 18", "available immediately", "randomized order", "pull from question bank". Return ONLY valid JSON:
-{
-  "transcription": "The full transcription of the audio",
-  "quiz": {
-    "title": "Quiz title",
-    "description": "Quiz description",
-    "dueDate": "ISO date string if mentioned",
-    "availableFrom": "ISO date string if mentioned, or null for immediate",
-    "timeLimit": "number in minutes if mentioned, or 0 for unlimited",
-    "randomizeQuestions": true/false,
-    "questionBankName": "Name of question bank if mentioned, or null",
-    "questionCount": "number of questions to include"
-  }
-}`;
-  }
-
-  try {
-    showToast('Transcribing audio with Gemini...', 'info');
-
-    const contents = [{
-      parts: [
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: audioData
-          }
-        },
-        { text: systemPrompt }
-      ]
-    }];
-
-    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.2 });
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const text = data.candidates[0].content.parts[0].text;
-    const parsed = parseAiJsonResponse(text);
-
-    // Show transcription
-    document.getElementById('audioTranscription').value = parsed.transcription || '';
-
-    // Render preview
-    renderAudioParsedPreview(parsed, outputType);
-    showToast('Audio transcribed successfully!', 'success');
-
-  } catch (err) {
-    console.error('Audio transcription error:', err);
-    showToast('Transcription failed: ' + err.message, 'error');
-  }
-}
-
-
-let parsedAudioData = null;
-
-function renderAudioParsedPreview(parsed, outputType) {
-  parsedAudioData = { ...parsed, outputType };
-  const preview = document.getElementById('audioParsedPreview');
-
-  if (outputType === 'announcement' && parsed.announcement) {
-    const ann = parsed.announcement;
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">${escapeHtml(ann.title || 'Untitled')}</div>
-        </div>
-        <div class="markdown-content">${renderMarkdown(ann.content || '')}</div>
-        ${ann.scheduledFor ? `<div class="muted" style="margin-top:12px;">📅 Scheduled for: ${new Date(ann.scheduledFor).toLocaleString()}</div>` : '<div class="muted" style="margin-top:12px;">📤 Ready to post immediately</div>'}
-      </div>
-      <button class="btn btn-primary" onclick="applyAudioParsedResult()" style="margin-top:16px;">Create Announcement</button>
-    `;
-  } else if (outputType === 'quiz' && parsed.quiz) {
-    const quiz = parsed.quiz;
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">${escapeHtml(quiz.title || 'Untitled Quiz')}</div>
-        </div>
-        <div class="markdown-content">${renderMarkdown(quiz.description || '')}</div>
-        <div style="margin-top:12px;">
-          ${quiz.dueDate ? `<div class="muted">📅 Due: ${new Date(quiz.dueDate).toLocaleString()}</div>` : ''}
-          ${quiz.availableFrom ? `<div class="muted">🔓 Available from: ${new Date(quiz.availableFrom).toLocaleString()}</div>` : '<div class="muted">🔓 Available immediately</div>'}
-          ${quiz.timeLimit ? `<div class="muted">⏱️ Time limit: ${quiz.timeLimit} minutes</div>` : ''}
-          ${quiz.randomizeQuestions ? '<div class="muted">🔀 Questions randomized</div>' : ''}
-          ${quiz.questionBankName ? `<div class="muted">📚 Pull from: ${escapeHtml(quiz.questionBankName)}</div>` : ''}
-          ${quiz.questionCount ? `<div class="muted">📝 ${quiz.questionCount} questions</div>` : ''}
-        </div>
-      </div>
-      <button class="btn btn-primary" onclick="applyAudioParsedResult()" style="margin-top:16px;">Create Quiz</button>
-    `;
-  } else {
-    preview.innerHTML = '<div class="muted">Could not parse audio content</div>';
-  }
-}
-
-async function applyAudioParsedResult() {
-  if (!parsedAudioData) {
-    showToast('No parsed data to apply', 'error');
-    return;
-  }
-
-  if (parsedAudioData.outputType === 'announcement' && parsedAudioData.announcement) {
-    const ann = parsedAudioData.announcement;
-
-    const newAnnouncement = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: ann.title || 'Untitled Announcement',
-      content: ann.content || '',
-      pinned: false,
-      authorId: appData.currentUser.id,
-      createdAt: new Date().toISOString(),
-      scheduledFor: ann.scheduledFor || null
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateAnnouncement(newAnnouncement);
-    if (!result) {
-      return; // Error already shown
-    }
-
-    appData.announcements.push(newAnnouncement);
-    closeModal('audioInputModal');
-    renderUpdates();
-    showToast('Announcement created!', 'success');
-
-  } else if (parsedAudioData.outputType === 'quiz' && parsedAudioData.quiz) {
-    const quiz = parsedAudioData.quiz;
-
-    const newQuiz = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: quiz.title || 'Untitled Quiz',
-      description: quiz.description || '',
-      status: 'draft',
-      dueDate: quiz.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-      createdAt: new Date().toISOString(),
-      timeLimit: quiz.timeLimit || 0,
-      attempts: 1,
-      randomizeQuestions: quiz.randomizeQuestions || false,
-      questionPoolEnabled: !!quiz.questionBankName,
-      questionSelectCount: quiz.questionCount || 5,
-      questions: []
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateQuiz(newQuiz);
-    if (!result) {
-      return; // Error already shown
-    }
-
-    appData.quizzes.push(newQuiz);
-    closeModal('audioInputModal');
-
-    // Open quiz editor
-    openQuizModal(newQuiz.id);
-    showToast('Quiz created! Add questions to complete it.', 'success');
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SPEEDGRADER
@@ -9183,56 +8856,6 @@ function calculateLateDeduction(assignment, submittedAt) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// UNIFIED CONTENT CREATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function openUnifiedContentModal() {
-  ensureModalsRendered();
-  openModal('unifiedContentModal');
-}
-
-function createFromUnified(type) {
-  closeModal('unifiedContentModal');
-  if (type === 'assignment') {
-    openNewAssignmentModal();
-  } else if (type === 'quiz') {
-    openQuizModal();
-  } else if (type === 'announcement') {
-    openAnnouncementModal();
-  } else if (type === 'file') {
-    openModal('fileUploadModal');
-  } else if (type === 'external-link') {
-    openExternalLinkModal();
-  } else if (type === 'ai-assist') {
-    openAiCreateModal();
-  }
-}
-
-// New Assignment dropdown functions
-function toggleNewAssignmentDropdown() {
-  const dropdown = document.getElementById('newAssignmentDropdown');
-  if (dropdown) {
-    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-  }
-}
-
-function closeNewAssignmentDropdown() {
-  const dropdown = document.getElementById('newAssignmentDropdown');
-  if (dropdown) {
-    dropdown.style.display = 'none';
-  }
-}
-
-// Close dropdown when clicking outside
-document.addEventListener('click', (e) => {
-  const dropdown = document.getElementById('newAssignmentDropdown');
-  const btn = document.getElementById('newAssignmentBtn');
-  if (dropdown && btn && !dropdown.contains(e.target) && !btn.contains(e.target)) {
-    dropdown.style.display = 'none';
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // EXTERNAL LINK SUPPORT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -10128,9 +9751,7 @@ window.openDeadlineOverridesFromModal = openDeadlineOverridesFromModal;
 window.handleNewAssignmentTypeChange = handleNewAssignmentTypeChange;
 window.openAssignmentModal = openAssignmentModal;
 window.toggleAssignmentVisibility = toggleAssignmentVisibility;
-window.openCreateAssignmentTypeModal = openCreateAssignmentTypeModal;
 window.handleCreateTypeChange = handleCreateTypeChange;
-window.confirmCreateType = confirmCreateType;
 
 // Submissions and grading
 window.submitAssignment = submitAssignment;
@@ -10267,17 +9888,8 @@ window.openAiCreateModal = openAiCreateModal;
 window.applyAiDraft = applyAiDraft;
 
 // Audio recording
-window.openAudioInputModal = openAudioInputModal;
-window.startAudioRecording = startAudioRecording;
-window.stopAudioRecording = stopAudioRecording;
-window.transcribeAudio = transcribeAudio;
-window.applyAudioParsedResult = applyAudioParsedResult;
 
 // Unified content creation
-window.openUnifiedContentModal = openUnifiedContentModal;
-window.createFromUnified = createFromUnified;
-window.toggleNewAssignmentDropdown = toggleNewAssignmentDropdown;
-window.closeNewAssignmentDropdown = closeNewAssignmentDropdown;
 
 // Student view
 window.toggleStudentView = toggleStudentView;
