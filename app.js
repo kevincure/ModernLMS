@@ -10417,14 +10417,14 @@ function openDeadlineOverridesModal(assignmentId) {
   const defaultDueFmt = assignment.dueDate ? toLocalDtLocal(assignment.dueDate) : '';
   const defaultFromFmt = assignment.availableFrom ? toLocalDtLocal(assignment.availableFrom) : '';
   const defaultUntilFmt = assignment.availableUntil ? toLocalDtLocal(assignment.availableUntil) : '';
-  const defaultTimeAllowed = assignment.timeAllowed || '';
+  const defaultTimeLimit = assignment.timeLimit || '';
 
   const rowsHtml = allPeople.map(p => {
     const ov = existingOverrides.find(o => o.userId === p.id);
     const dueFmt = ov?.dueDate ? toLocalDtLocal(ov.dueDate) : '';
     const fromFmt = ov?.availableFrom ? toLocalDtLocal(ov.availableFrom) : '';
     const untilFmt = ov?.availableUntil ? toLocalDtLocal(ov.availableUntil) : '';
-    const taFmt = ov?.timeAllowed != null ? ov.timeAllowed : '';
+    const tlFmt = ov?.timeLimit != null ? ov.timeLimit : '';
     return `
       <tr style="border-bottom:1px solid var(--border-light);">
         <td style="padding:8px; font-weight:500;">${escapeHtml(p.name)}</td>
@@ -10442,7 +10442,7 @@ function openDeadlineOverridesModal(assignmentId) {
         </td>
         <td style="padding:6px;">
           <input type="number" class="form-input" style="width:90px; font-size:0.85rem;" min="1"
-            id="ov_ta_${p.id}" value="${taFmt}" placeholder="${defaultTimeAllowed || 'min'}">
+            id="ov_tl_${p.id}" value="${tlFmt}" placeholder="${defaultTimeLimit || 'min'}">
         </td>
         <td style="padding:6px;">
           ${ov ? `<button class="btn btn-danger btn-sm" onclick="removeDeadlineOverride('${assignmentId}', '${p.id}')">Remove</button>` : ''}
@@ -10460,7 +10460,7 @@ function openDeadlineOverridesModal(assignmentId) {
         </div>
         <div class="modal-body" style="max-height:65vh; overflow-y:auto;">
           ${allPeople.length === 0 ? '<div class="muted">No students enrolled yet.</div>' : `
-            <p class="muted" style="margin-bottom:12px;">Set per-student overrides. Leave blank to use the assignment default. Time Allowed = minutes from when they start.</p>
+            <p class="muted" style="margin-bottom:12px;">Set per-student overrides. Leave blank to use the assignment default. Time Limit = minutes from when they start.</p>
             <div style="overflow-x:auto;">
             <table style="width:100%; border-collapse:collapse; min-width:800px;">
               <thead><tr style="text-align:left; background:var(--bg-color);">
@@ -10468,7 +10468,7 @@ function openDeadlineOverridesModal(assignmentId) {
                 <th style="padding:8px; border-bottom:2px solid var(--border-color);">Custom Deadline<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${formatDate(assignment.dueDate)}</span></th>
                 <th style="padding:8px; border-bottom:2px solid var(--border-color);">Available From<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${assignment.availableFrom ? formatDate(assignment.availableFrom) : 'now'}</span></th>
                 <th style="padding:8px; border-bottom:2px solid var(--border-color);">Available Until<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${assignment.availableUntil ? formatDate(assignment.availableUntil) : 'always'}</span></th>
-                <th style="padding:8px; border-bottom:2px solid var(--border-color);">Time Allowed (min)<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${assignment.timeAllowed ? assignment.timeAllowed + ' min' : 'unlimited'}</span></th>
+                <th style="padding:8px; border-bottom:2px solid var(--border-color);">Time Limit (min)<br><span class="muted" style="font-weight:normal; font-size:0.8rem;">default: ${assignment.timeLimit ? assignment.timeLimit + ' min' : 'unlimited'}</span></th>
                 <th style="padding:8px; border-bottom:2px solid var(--border-color);"></th>
               </tr></thead>
               <tbody>${rowsHtml}</tbody>
@@ -10501,23 +10501,23 @@ async function saveDeadlineOverrides(assignmentId) {
     const dueInput = document.getElementById(`ov_due_${p.id}`);
     const fromInput = document.getElementById(`ov_from_${p.id}`);
     const untilInput = document.getElementById(`ov_until_${p.id}`);
-    const taInput = document.getElementById(`ov_ta_${p.id}`);
+    const tlInput = document.getElementById(`ov_tl_${p.id}`);
     if (!dueInput) continue;
 
     const dueVal = dueInput.value;
     const fromVal = fromInput ? fromInput.value : '';
     const untilVal = untilInput ? untilInput.value : '';
-    const taVal = taInput ? taInput.value : '';
+    const tlVal = tlInput ? tlInput.value : '';
 
     // Only save if at least one field has been set
-    if (dueVal || fromVal || untilVal || taVal) {
+    if (dueVal || fromVal || untilVal || tlVal) {
       const override = {
         assignmentId,
         userId: p.id,
         dueDate: dueVal ? new Date(dueVal).toISOString() : null,
         availableFrom: fromVal ? new Date(fromVal).toISOString() : null,
         availableUntil: untilVal ? new Date(untilVal).toISOString() : null,
-        timeAllowed: taVal ? parseInt(taVal) : null
+        timeLimit: tlVal ? parseInt(tlVal) : null
       };
       const result = await supabaseUpsertAssignmentOverride(override);
       if (result) {
