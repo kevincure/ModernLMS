@@ -10299,13 +10299,15 @@ function openQuizTimeOverridesModal(quizId) {
 
   const rowsHtml = students.map(s => {
     const override = existingOverrides.find(o => o.userId === s.id);
+    const parsedOverride = parseQuizTimeOverrideValue(String(override?.timeLimit ?? ''));
+    const overrideInputValue = parsedOverride.status === 'value' ? parsedOverride.value : '';
     return `
       <tr>
         <td style="padding:8px;">${escapeHtml(s.name)}</td>
         <td style="padding:8px;" class="muted">${defaultLabel}</td>
         <td style="padding:8px;">
           <input type="number" class="form-input" style="width:120px;" min="0" max="600"
-            id="qto_${s.id}" value="${override?.timeLimit || ''}" placeholder="min">
+            id="qto_${s.id}" value="${overrideInputValue}" placeholder="min">
         </td>
         <td style="padding:8px;">
           ${override ? `<button class="btn btn-danger btn-sm" onclick="removeQuizTimeOverride('${quizId}', '${s.id}')">Remove</button>` : ''}
@@ -10346,17 +10348,69 @@ function openQuizTimeOverridesModal(quizId) {
   openModal('quizTimeOverridesModal');
 }
 
+function parseQuizTimeOverrideValue(rawValue) {
+  const trimmed = String(rawValue ?? '').trim();
+
+  if (trimmed === '') {
+    return { status: 'blank', value: null };
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return { status: 'invalid', error: 'Time override must be a non-negative whole number.' };
+  }
+
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value)) {
+    return { status: 'invalid', error: 'Time override is too large.' };
+  }
+
+  return { status: 'value', value };
+}
+
 async function saveQuizTimeOverrides(quizId) {
   const students = appData.enrollments
     .filter(e => e.courseId === activeCourseId && e.role === 'student')
     .map(e => getUserById(e.userId))
     .filter(u => u);
 
+  const parsedByUserId = new Map();
   for (const s of students) {
     const input = document.getElementById(`qto_${s.id}`);
-    if (!input || input.value === '') continue;
-    const timeLimit = parseInt(input.value, 10);
-    const override = { quizId, userId: s.id, timeLimit: timeLimit || null };
+    if (!input) continue;
+
+    const parsed = parseQuizTimeOverrideValue(input.value);
+    if (parsed.status === 'invalid') {
+      input.setCustomValidity(parsed.error);
+      input.reportValidity();
+      showToast('Please enter only whole numbers 0 or greater for time overrides.', 'error');
+      return;
+    }
+
+    input.setCustomValidity('');
+    parsedByUserId.set(s.id, parsed);
+  }
+
+  const existingOverrides = appData.quizTimeOverrides || [];
+
+  for (const s of students) {
+    const parsed = parsedByUserId.get(s.id);
+    if (!parsed) continue;
+
+    const existingOverride = existingOverrides.find(o => o.quizId === quizId && o.userId === s.id);
+
+    if (parsed.status === 'blank') {
+      if (existingOverride) {
+        const deleted = await supabaseDeleteQuizTimeOverride(quizId, s.id);
+        if (deleted) {
+          appData.quizTimeOverrides = (appData.quizTimeOverrides || []).filter(
+            o => !(o.quizId === quizId && o.userId === s.id)
+          );
+        }
+      }
+      continue;
+    }
+
+    const override = { quizId, userId: s.id, timeLimit: parsed.value };
     const result = await supabaseUpsertQuizTimeOverride(override);
     if (result) {
       if (!appData.quizTimeOverrides) appData.quizTimeOverrides = [];
