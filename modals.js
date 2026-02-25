@@ -1045,7 +1045,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
     <div class="modal-overlay" id="speedGraderModal">
       <div class="modal" style="max-width:1100px; height:90vh;">
         <div class="modal-header">
-          <h2 class="modal-title" id="speedGraderTitle">SpeedGrader</h2>
+          <h2 class="modal-title" id="speedGraderTitle">Grade</h2>
           <button class="modal-close" aria-label="Close dialog" onclick="closeModal('speedGraderModal')">&times;</button>
         </div>
         <div class="modal-body" style="display:flex; flex-direction:column; height:calc(100% - 120px); overflow:hidden;">

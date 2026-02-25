@@ -2247,9 +2247,15 @@ async function saveStartHere() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let announcementsSearch = '';
+let announcementsSort = '';
 
 function updateAnnouncementsSearch(value) {
   announcementsSearch = value.toLowerCase();
+  renderUpdates();
+}
+
+function updateAnnouncementsSort(v) {
+  announcementsSort = v;
   renderUpdates();
 }
 
@@ -2269,11 +2275,16 @@ function renderUpdates() {
 
   const searchInput = document.getElementById('announcementsSearchInput');
   const updatesActions = document.getElementById('updatesActions');
-  const updatesActionsSignature = String(effectiveStaff);
+  const updatesActionsSignature = `${effectiveStaff}:${announcementsSort}`;
   if (!searchInput || updatesActions?.dataset.signature !== updatesActionsSignature) {
     setHTML('updatesActions', `
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <input type="text" class="form-input" id="announcementsSearchInput" placeholder="Search announcements..." value="${escapeHtml(announcementsSearch)}" oninput="updateAnnouncementsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <select class="form-select" onchange="updateAnnouncementsSort(this.value)" style="width:auto;" title="Sort announcements">
+          <option value="" ${announcementsSort === '' ? 'selected' : ''}>Default order</option>
+          <option value="az" ${announcementsSort === 'az' ? 'selected' : ''}>A → Z</option>
+          <option value="za" ${announcementsSort === 'za' ? 'selected' : ''}>Z → A</option>
+        </select>
         ${effectiveStaff ? `<button class="btn btn-primary" onclick="openModal('announcementModal')">New Announcement</button>` : ''}
       </div>
     `);
@@ -2286,6 +2297,8 @@ function renderUpdates() {
     .sort((a, b) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
+      if (announcementsSort === 'az') return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+      if (announcementsSort === 'za') return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 
@@ -2521,8 +2534,14 @@ async function updateAnnouncement() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let assignmentsSearch = '';
+let assignmentsSort = '';
 function updateAssignmentsSearch(value) {
   assignmentsSearch = value.toLowerCase();
+  renderAssignments();
+}
+
+function updateAssignmentsSort(v) {
+  assignmentsSort = v;
   renderAssignments();
 }
 
@@ -2541,11 +2560,16 @@ function renderAssignments() {
 
   const assignmentsSearchInput = document.getElementById('assignmentsSearchInput');
   const assignmentsActions = document.getElementById('assignmentsActions');
-  const assignmentsActionsSignature = String(isStaffUser && !studentViewMode);
+  const assignmentsActionsSignature = `${isStaffUser && !studentViewMode}:${assignmentsSort}`;
   if (!assignmentsSearchInput || assignmentsActions?.dataset.signature !== assignmentsActionsSignature) {
     setHTML('assignmentsActions', `
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <input type="text" class="form-input" id="assignmentsSearchInput" placeholder="Search assignments..." value="${escapeHtml(assignmentsSearch)}" oninput="updateAssignmentsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <select class="form-select" onchange="updateAssignmentsSort(this.value)" style="width:auto;" title="Sort assignments">
+          <option value="" ${assignmentsSort === '' ? 'selected' : ''}>Default order</option>
+          <option value="az" ${assignmentsSort === 'az' ? 'selected' : ''}>A → Z</option>
+          <option value="za" ${assignmentsSort === 'za' ? 'selected' : ''}>Z → A</option>
+        </select>
         ${isStaffUser && !studentViewMode ? `
           <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
           <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
@@ -2570,12 +2594,20 @@ function renderAssignments() {
       if (a.availableFrom && _now < new Date(a.availableFrom)) return false;
       return true;
     })
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    .sort((a, b) => {
+      if (assignmentsSort === 'az') return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+      if (assignmentsSort === 'za') return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
 
   let quizzes = appData.quizzes
     .filter(q => q.courseId === activeCourseId)
     .filter(q => effectiveStaff || q.status === 'published')
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    .sort((a, b) => {
+      if (assignmentsSort === 'az') return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+      if (assignmentsSort === 'za') return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
 
   // Filter by search
   let filteredAssignments = assignments;
@@ -4751,7 +4783,7 @@ function viewSubmissions(assignmentId) {
         <div class="modal-body">
           ${metadataHtml}
           <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-            <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">SpeedGrader</button>
+            <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">Grade</button>
             <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">Bulk Import Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="bulkReleaseGrades('${assignmentId}')">Release All Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="downloadAllSubmissions('${assignmentId}')">Download All (ZIP)</button>
@@ -4790,7 +4822,11 @@ function viewSubmissions(assignmentId) {
     </div>
   `;
   
-  document.getElementById('modalsContainer').innerHTML += html;
+  // Remove any existing submissionsModal to avoid duplicate IDs
+  document.getElementById('submissionsModal')?.remove();
+  const _smWrapper = document.createElement('div');
+  _smWrapper.innerHTML = html;
+  document.getElementById('modalsContainer').appendChild(_smWrapper.firstElementChild);
 }
 
 function downloadAllSubmissions(assignmentId) {
@@ -4863,9 +4899,6 @@ function gradeSubmission(submissionId, assignmentId) {
             </label>
           </div>
           
-          <div style="margin-top:16px;">
-            <button class="btn btn-secondary" onclick="draftGradeWithAI('${submissionId}', '${assignmentId}')">✨ Draft with AI</button>
-          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('gradeModal')">Cancel</button>
@@ -4874,8 +4907,11 @@ function gradeSubmission(submissionId, assignmentId) {
       </div>
     </div>
   `;
-  
-  document.getElementById('modalsContainer').innerHTML += html;
+
+  document.getElementById('gradeModal')?.remove();
+  const _gmWrapper = document.createElement('div');
+  _gmWrapper.innerHTML = html;
+  document.getElementById('modalsContainer').appendChild(_gmWrapper.firstElementChild);
 }
 
 function calculateRubricScore(assignmentId) {
@@ -6188,7 +6224,7 @@ function renderSpeedGrader() {
   const gradedCount = speedGraderStudents.filter(s => s.grade).length;
   const submittedCount = speedGraderStudents.filter(s => s.submission).length;
 
-  document.getElementById('speedGraderTitle').textContent = `SpeedGrader: ${assignment.title}`;
+  document.getElementById('speedGraderTitle').textContent = `Grade: ${assignment.title}`;
 
   document.getElementById('speedGraderNav').innerHTML = `
     <button class="btn btn-secondary" onclick="speedGraderPrev()" ${currentSpeedGraderStudentIndex === 0 ? 'disabled' : ''}>← Previous</button>
@@ -6511,10 +6547,37 @@ function updateFileUploadPreview() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let gradebookSearch = '';
+let gbStudentSort = 'az';   // 'az' | 'za'
+let gbColSort = null;       // { id: assignmentId, dir: 'az'|'za' } | null
 
 function updateGradebookSearch(value) {
   gradebookSearch = value.toLowerCase();
   renderGradebook();
+}
+
+function gbSortStudents(dir) {
+  gbStudentSort = dir;
+  gbColSort = null;
+  renderGradebook();
+}
+
+function gbSortColumn(id, dir) {
+  gbColSort = { id, dir };
+  renderGradebook();
+}
+
+// Natural grade comparison: letter grades use A+→F ordering,
+// numbers use numeric ascending; returns negative/0/positive (like localeCompare).
+function gbGradeNaturalCompare(aScore, bScore, assignment) {
+  const gt = assignment?.gradingType || 'points';
+  if (gt === 'letter_grade') {
+    const order = ['A+','A','A-','B+','B','B-','C+','C','C-','D+','D','D-','F'];
+    const ai = order.indexOf(String(aScore));
+    const bi = order.indexOf(String(bScore));
+    return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+  } else {
+    return Number(aScore) - Number(bScore);
+  }
 }
 
 function renderGradebook() {
@@ -6726,12 +6789,33 @@ function renderStaffGradebook() {
   const pendingInvitees = (appData.invites || [])
     .filter(i => i.courseId === activeCourseId && i.status === 'pending' && (!i.role || i.role === 'student'))
     .map(i => ({ id: 'invite_' + i.id, name: `${i.email} (invited)`, email: i.email, isPendingInvite: true }));
-  // Enrolled students sorted alphabetically; pending invitees always at bottom
+  // Enrolled students; pending invitees always at bottom
   const enrolledStudents = appData.enrollments
     .filter(e => e.courseId === activeCourseId && e.role === 'student')
     .map(e => getUserById(e.userId))
-    .filter(u => u)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter(u => u);
+
+  // Apply sort: column sort takes precedence over student name sort
+  if (gbColSort) {
+    const sortAssignment = assignments.find(a => a.id === gbColSort.id);
+    enrolledStudents.sort((a, b) => {
+      const aSub = appData.submissions.find(s => s.assignmentId === gbColSort.id && s.userId === a.id);
+      const bSub = appData.submissions.find(s => s.assignmentId === gbColSort.id && s.userId === b.id);
+      const aGrade = aSub ? appData.grades.find(g => g.submissionId === aSub.id) : null;
+      const bGrade = bSub ? appData.grades.find(g => g.submissionId === bSub.id) : null;
+      // Unsubmitted / ungraded always at bottom
+      if (!aGrade && !bGrade) return a.name.localeCompare(b.name);
+      if (!aGrade) return 1;
+      if (!bGrade) return -1;
+      const cmp = gbGradeNaturalCompare(aGrade.score, bGrade.score, sortAssignment);
+      return gbColSort.dir === 'az' ? cmp : -cmp;
+    });
+  } else {
+    enrolledStudents.sort((a, b) => {
+      const cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      return gbStudentSort === 'za' ? -cmp : cmp;
+    });
+  }
   let students = [...enrolledStudents, ...pendingInvitees];
 
   // Filter by search
@@ -6754,27 +6838,20 @@ function renderStaffGradebook() {
   
   // (stats box removed — analytics available per column header)
 
-  // For the gradebook header, flag which assignments have blind grading on
   const table = `
-    <div class="gb-scroll-btns">
-      <button id="gbScrollLeft" class="gb-scroll-btn" onclick="gbScroll(-1)" title="Scroll left" disabled>&#8592;</button>
-      <button id="gbScrollRight" class="gb-scroll-btn" onclick="gbScroll(1)" title="Scroll right">&#8594;</button>
-    </div>
-    <div id="gradebookScrollWrap" style="overflow-x:auto;" onscroll="gbUpdateScrollBtns()">
+    <div id="gradebookScrollWrap" style="overflow-x:auto; overflow-y:auto; max-height:280px; border:1px solid var(--border-light); border-radius:var(--radius);">
       <table style="width:100%; border-collapse:collapse;">
         <thead>
           <tr style="background:var(--bg-color); border-bottom:2px solid var(--border-color);">
-            <th style="padding:12px; text-align:left; position:sticky; left:0; background:var(--bg-color);">Student</th>
+            <th style="padding:12px; text-align:left; position:sticky; left:0; top:0; background:var(--bg-color); z-index:10;">
+              Student
+              <div style="display:flex; gap:4px; margin-top:6px;">
+                <button class="btn btn-secondary btn-sm" onclick="gbSortStudents('az')" style="font-size:0.7rem; padding:2px 7px;${!gbColSort && gbStudentSort === 'az' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">A→Z</button>
+                <button class="btn btn-secondary btn-sm" onclick="gbSortStudents('za')" style="font-size:0.7rem; padding:2px 7px;${!gbColSort && gbStudentSort === 'za' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">Z→A</button>
+              </div>
+            </th>
             ${assignments.map(a => {
-              const gt = a.gradingType || 'points';
-              const atype = a.assignmentType || 'essay';
-              let ptLabel = '';
-              if (gt === 'complete_incomplete') ptLabel = 'Cmplt/Incmplt';
-              else if (gt === 'letter_grade') ptLabel = 'Letter Grade';
-              else if (atype === 'no_submission') ptLabel = `${a.points ?? 0}pts (manual)`;
-              else if (atype === 'quiz') ptLabel = `${a.points ?? 0}pts (auto)`;
-              else ptLabel = `${a.points ?? 0}pts`;
-              const hiddenBadge = a.visibleToStudents === false ? '<span style="font-size:0.6rem; background:#fee2e2; color:#dc2626; border-radius:4px; padding:1px 4px; white-space:nowrap; display:inline-block; margin:1px 0;">hidden from students</span>' : '';
+              const hiddenBadge = a.visibleToStudents === false ? '<span style="padding:2px 6px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.7rem; font-weight:600; display:inline-block; margin:1px 0;">Hidden</span>' : '';
               const statsBadge = a.showStatsToStudents ? '<span style="font-size:0.6rem; background:#dbeafe; color:#1d4ed8; border-radius:4px; padding:1px 4px; white-space:nowrap; display:inline-block; margin:1px 0;">stats visible</span>' : '';
               const colMenuId = `menu-gb-col-${a.id}`;
               const allGrades = appData.submissions.filter(s => s.assignmentId === a.id)
@@ -6785,10 +6862,12 @@ function renderStaffGradebook() {
               const releaseHideBtn = anyUnreleased
                 ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkReleaseGrades('${a.id}')">Release Grades</button>`
                 : (anyReleased ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkHideGrades('${a.id}')">Hide Grades</button>` : '');
-              return `<th style="padding:12px; text-align:center; min-width:140px; position:relative;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<span class="muted" style="font-weight:normal; display:block; margin-top:2px;">(${ptLabel})</span><button class="btn btn-secondary" style="font-size:0.7rem; padding:2px 7px; margin-top:4px;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">&#9660; Actions</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">SpeedGrader</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button></div></th>`;
+              const isActiveSortCol = gbColSort && gbColSort.id === a.id;
+              const sortIndicator = isActiveSortCol ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : '';
+              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button></div></th>`;
             }).join('')}
-            <th style="padding:12px; text-align:center;">%</th>
-            ${gradeSettings ? '<th style="padding:12px; text-align:center;">Grade</th>' : ''}
+            <th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">%</th>
+            ${gradeSettings ? '<th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">Grade</th>' : ''}
           </tr>
         </thead>
         <tbody>
@@ -6870,7 +6949,6 @@ function renderStaffGradebook() {
   `;
 
   setHTML('gradebookWrap', table);
-  requestAnimationFrame(gbUpdateScrollBtns);
 }
 
 function gbUpdateScrollBtns() {
@@ -10187,6 +10265,10 @@ window.updateGradebookSearch = updateGradebookSearch;
 window.updatePeopleSearch = updatePeopleSearch;
 window.updateAssignmentsSearch = updateAssignmentsSearch;
 window.updateAnnouncementsSearch = updateAnnouncementsSearch;
+window.updateAnnouncementsSort = updateAnnouncementsSort;
+window.updateAssignmentsSort = updateAssignmentsSort;
+window.gbSortStudents = gbSortStudents;
+window.gbSortColumn = gbSortColumn;
 
 // File handling
 // File-related window.* handlers are owned by file_handling.js.
