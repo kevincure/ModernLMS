@@ -74,14 +74,6 @@ import {
   supabaseUpsertGradeSettings,
   callGeminiAPI,
   callGeminiAPIWithRetry,
-  downloadOneRosterExport,
-  initCaliperSensor,
-  caliperSessionLogin,
-  caliperViewPage,
-  caliperAssignmentSubmit,
-  caliperGradePosted,
-  caliperQuizStart,
-  caliperQuizComplete
 } from './database_interactions.js';
 
 // UI Helpers - DOM manipulation, formatting, markdown
@@ -1195,16 +1187,6 @@ function initApp() {
 
   console.log('[App] Initializing app for user:', appData.currentUser.email);
 
-  // Restore Caliper sensor config from localStorage
-  const savedCaliperEndpoint = localStorage.getItem('caliperEndpoint');
-  const savedCaliperSensorId = localStorage.getItem('caliperSensorId') || 'campus-lms';
-  if (savedCaliperEndpoint) {
-    initCaliperSensor(savedCaliperSensorId, savedCaliperEndpoint);
-  }
-
-  // Caliper: emit SessionEvent/LoggedIn (no-ops if sensor not configured)
-  caliperSessionLogin(appData.currentUser);
-
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appContainer').setAttribute('aria-hidden', 'false');
 
@@ -1355,14 +1337,6 @@ function navigateTo(page) {
       discussion:  renderDiscussion,
     };
     if (pageRenders[page]) pageRenders[page]();
-  }
-
-  // Caliper: emit ViewEvent for the page being navigated to
-  if (appData.currentUser) {
-    const pageNames = { home: 'Home', assignments: 'Assignments', gradebook: 'Gradebook',
-      modules: 'Modules', files: 'Files', people: 'People', discussion: 'Discussion',
-      updates: 'Announcements', calendar: 'Calendar', courses: 'Courses' };
-    if (pageNames[page]) caliperViewPage(appData.currentUser, page, pageNames[page]);
   }
 }
 
@@ -4656,8 +4630,6 @@ async function saveSubmission() {
   }
   
   appData.submissions.push(submission);
-  // Caliper: AssignableEvent/Submitted
-  caliperAssignmentSubmit(appData.currentUser, assignment);
   await supabaseCreateSubmission(submission);
 
   closeModal('submitModal');
@@ -4959,13 +4931,6 @@ async function saveGrade(submissionId) {
   const existingIdx = appData.grades.findIndex(g => g.submissionId === submissionId);
   if (existingIdx >= 0) appData.grades[existingIdx] = gradeObj;
   else appData.grades.push(gradeObj);
-
-  // Caliper: GradeEvent/Graded
-  const gradedAssignment = appData.assignments.find(a => {
-    const sub = appData.submissions.find(s => s.id === submissionId);
-    return sub && a.id === sub.assignmentId;
-  });
-  if (gradedAssignment) caliperGradePosted(appData.currentUser, gradedAssignment, score, gradedAssignment.points);
   closeModal('gradeModal');
   closeModal('submissionsModal');
   renderGradebook();
@@ -8062,10 +8027,6 @@ function closeMobileDrawer() {
 window.openMobileDrawer = openMobileDrawer;
 window.closeMobileDrawer = closeMobileDrawer;
 
-function saveSettings() {
-  closeModal('settingsModal');
-  showToast('Settings saved!', 'success');
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COURSE MANAGEMENT
@@ -9620,6 +9581,15 @@ function closeDiscussionThread() {
   renderDiscussion();
 }
 
+function canModerateDiscussion() {
+  return !!(activeCourseId && isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode);
+}
+
+function canDeleteDiscussionReply(reply) {
+  if (!reply) return false;
+  return canModerateDiscussion() || reply.authorId === appData.currentUser.id;
+}
+
 function closeDiscussionThreadModal() {
   document.getElementById('discussionThreadModal')?.remove();
 }
@@ -9840,6 +9810,10 @@ function dismissAiDraft() {
 }
 
 async function toggleDiscussionPin(threadId) {
+  if (!canModerateDiscussion()) {
+    showToast('Only instructors/TAs can pin threads', 'error');
+    return;
+  }
   const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
   if (!thread) return;
   const updatedThread = { ...thread, pinned: !thread.pinned };
@@ -9853,6 +9827,10 @@ async function toggleDiscussionPin(threadId) {
 }
 
 async function toggleDiscussionHide(threadId) {
+  if (!canModerateDiscussion()) {
+    showToast('Only instructors/TAs can hide threads', 'error');
+    return;
+  }
   const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
   if (!thread) return;
   const updatedThread = { ...thread, hidden: !thread.hidden };
@@ -9866,6 +9844,10 @@ async function toggleDiscussionHide(threadId) {
 }
 
 function deleteDiscussionThread(threadId) {
+  if (!canModerateDiscussion()) {
+    showToast('Only instructors/TAs can delete threads', 'error');
+    return;
+  }
   ensureModalsRendered();
   showConfirmDialog('Delete this thread and all its replies?', async () => {
     const deleted = await supabaseDeleteDiscussionThread(threadId);
@@ -9881,6 +9863,12 @@ function deleteDiscussionThread(threadId) {
 }
 
 function deleteDiscussionReply(replyId, threadId) {
+  const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
+  const reply = (thread?.replies || []).find(r => r.id === replyId);
+  if (!canDeleteDiscussionReply(reply)) {
+    showToast('You can only delete your own replies', 'error');
+    return;
+  }
   ensureModalsRendered();
   showConfirmDialog('Delete this reply?', async () => {
     const deleted = await supabaseDeleteDiscussionReply(replyId);
@@ -9888,7 +9876,6 @@ function deleteDiscussionReply(replyId, threadId) {
       showToast('Failed to delete reply', 'error');
       return;
     }
-    const thread = (appData.discussionThreads || []).find(t => t.id === threadId);
     if (thread) thread.replies = (thread.replies || []).filter(r => r.id !== replyId);
     renderDiscussion();
     showToast('Reply deleted', 'success');
@@ -10181,10 +10168,7 @@ window.removePersonFromCourse = removePersonFromCourse;
 window.revokeInvite = revokeInvite;
 
 // Settings
-window.saveSettings = saveSettings;
 window.openEditCourseModal = openEditCourseModal;
-window.downloadOneRosterExport = downloadOneRosterExport;
-window._appData = appData; // reference for modal inline handlers (e.g. OneRoster export)
 
 // Clone course (stub — redirects to Import Content)
 window.openCloneCourseModal = openCloneCourseModal;

@@ -8,8 +8,7 @@ import {
   getQuizPoints, shuffleArray, setDateTimeSelectors, getDateTimeFromSelectors, formatDate
 } from './ui_helpers.js';
 import {
-  supabaseCreateQuiz, supabaseUpdateQuiz, supabaseDeleteQuiz, supabaseUpsertQuizSubmission,
-  caliperQuizStart, caliperQuizComplete
+  supabaseCreateQuiz, supabaseUpdateQuiz, supabaseDeleteQuiz, supabaseUpsertQuizSubmission
 } from './database_interactions.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -447,7 +446,6 @@ export function takeQuiz(quizId) {
   currentQuizTakingId = quizId;
   renderQuizTakeModal(quiz);
   openModal('quizTakeModal');
-  caliperQuizStart(appData.currentUser, quiz);
 }
 
 /**
@@ -709,7 +707,6 @@ export async function submitQuiz() {
   if (existingIdx >= 0) appData.quizSubmissions[existingIdx] = submission;
   else appData.quizSubmissions.push(submission);
 
-  caliperQuizComplete(appData.currentUser, quiz, autoScore, totalPoints);
 
   if (quizTimerInterval) {
     clearInterval(quizTimerInterval);
