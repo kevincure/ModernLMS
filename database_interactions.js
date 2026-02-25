@@ -1013,6 +1013,31 @@ export async function supabaseCreateModuleItem(item, moduleId) {
   return data;
 }
 
+
+export async function supabaseUpdateModuleItem(itemId, updates) {
+  if (!supabaseClient) {
+    console.error('[Supabase] Cannot update module item: client not initialized');
+    return null;
+  }
+  console.log('[Supabase] Updating module item:', itemId, updates);
+
+  const authUser = await debugAuthState('updateModuleItem');
+  if (!authUser) {
+    console.error('[Supabase] Cannot update module item: not authenticated');
+    if (showToast) showToast('Not authenticated - please sign in again', 'error');
+    return null;
+  }
+
+  const { data, error } = await supabaseClient.from('module_items').update(updates).eq('id', itemId).select().single();
+
+  if (error) {
+    console.error('[Supabase] Error updating module item:', error);
+    if (showToast) showToast('Failed to update module item: ' + error.message, 'error');
+    return null;
+  }
+  return data;
+}
+
 export async function supabaseDeleteModuleItem(itemId) {
   if (!supabaseClient) {
     console.error('[Supabase] Cannot delete module item: client not initialized');
@@ -1565,7 +1590,8 @@ export async function supabaseCreateQuestionBank(bank) {
   const authUser = await debugAuthState('createQuestionBank');
   if (!authUser) {
     console.error('[Supabase] Cannot create question bank: not authenticated');
-    return bank;
+    if (showToast) showToast('Not authenticated - please sign in again', 'error');
+    return null;
   }
 
   const insertPayload = {
@@ -1583,7 +1609,8 @@ export async function supabaseCreateQuestionBank(bank) {
 
   if (error) {
     console.error('[Supabase] Error creating question bank:', error);
-    return bank;
+    if (showToast) showToast('Failed to create question bank: ' + error.message, 'error');
+    return null;
   }
   console.log('[Supabase] Question bank created successfully');
   return data;
@@ -1598,7 +1625,8 @@ export async function supabaseUpdateQuestionBank(bank) {
 
   const authUser = await debugAuthState('updateQuestionBank');
   if (!authUser) {
-    return bank;
+    if (showToast) showToast('Not authenticated - please sign in again', 'error');
+    return null;
   }
 
   const updatePayload = {
@@ -1613,7 +1641,8 @@ export async function supabaseUpdateQuestionBank(bank) {
 
   if (error) {
     console.error('[Supabase] Error updating question bank:', error);
-    return bank;
+    if (showToast) showToast('Failed to update question bank: ' + error.message, 'error');
+    return null;
   }
   return data;
 }
@@ -1626,12 +1655,15 @@ export async function supabaseDeleteQuestionBank(bankId) {
 
   const authUser = await debugAuthState('deleteQuestionBank');
   if (!authUser) {
-    return true;
+    if (showToast) showToast('Not authenticated - please sign in again', 'error');
+    return false;
   }
 
   const { error } = await supabaseClient.from('question_banks').delete().eq('id', bankId);
   if (error) {
     console.error('[Supabase] Error deleting question bank:', error);
+    if (showToast) showToast('Failed to delete question bank: ' + error.message, 'error');
+    return false;
   }
   return true;
 }
