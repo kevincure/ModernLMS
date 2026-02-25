@@ -199,6 +199,7 @@ function normalizeAiOperationAction(action) {
     remove_from_module: 'module_remove_item',
     move_to_module: 'module_move_item',
     rename_file: 'file_rename',
+    set_file_folder: 'file_folder',
     set_file_visibility: 'file_visibility',
     create_question_bank: 'question_bank_create',
     update_question_bank: 'question_bank_update',
@@ -596,7 +597,7 @@ async function executeAiTool(toolName, params = {}) {
       return (appData.files || [])
         .filter(f => f.courseId === activeCourseId)
         .filter(f => effectiveIsStaff || !f.hidden)
-        .map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size, hidden: !!f.hidden }));
+        .map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size, hidden: !!f.hidden, folder: f.folder || null }));
 
     case 'list_modules':
       return (appData.modules || [])
@@ -863,7 +864,7 @@ function validateActionPayload(payload) {
     if (!(appData.modules || []).find(m => m.id === moduleId && m.courseId === activeCourseId))
       return `Module "${moduleId}" not found — use list_modules`;
   }
-  if (action === 'rename_file' || action === 'set_file_visibility') {
+  if (action === 'rename_file' || action === 'set_file_visibility' || action === 'set_file_folder') {
     const fileId = payload.fileId || payload.id;
     if (!fileId) return 'Missing fileId — call list_files first';
     if (!(appData.files || []).find(f => f.id === fileId && f.courseId === activeCourseId))
@@ -1423,6 +1424,20 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'set_file_folder') {
+    const fileId = action.fileId || action.id;
+    aiThread.push({
+      role: 'action',
+      actionType: 'file_folder',
+      data: {
+        fileId,
+        fileName: action.fileName || '',
+        folder: action.folder || null,
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else if (action.action === 'update_start_here') {
     aiThread.push({
       role: 'action',
@@ -1669,6 +1684,8 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! File renamed to ${b(d.newName || '')}.`;
     case 'file_visibility':
       return `Done! File ${b(d.fileName || '')} is now <strong>${d.hidden ? 'hidden from' : 'visible to'}</strong> students.`;
+    case 'file_folder':
+      return `Done! File ${b(d.fileName || '')} ${d.folder ? `moved to folder ${b(d.folder)}` : 'removed from folder'}.`;
     case 'start_here_update':
       return `Done! The Start Here message has been updated. View it on the ${pageLink('home', 'Course Home')}.`;
     case 'module_add_item': {
@@ -2027,6 +2044,16 @@ async function executeAiOperation(operation, publish = false) {
     return true;
   }
 
+  if (action === 'file_folder') {
+    const fileId = resolved.fileId || resolved.id;
+    const file = (appData.files || []).find(f => f.id === fileId && f.courseId === activeCourseId);
+    if (!file) { showToast('File not found', 'error'); return false; }
+    file.folder = resolved.folder || null;
+    const result = await supabaseUpdateFile(file);
+    if (!result) { showToast('Failed to update file folder', 'error'); return false; }
+    return true;
+  }
+
   if (action === 'start_here_update') {
     const course = (appData.courses || []).find(c => c.id === activeCourseId);
     if (!course) { showToast('Course not found', 'error'); return false; }
@@ -2363,6 +2390,7 @@ export function renderAiThread() {
         'module_remove_item': 'Module Item',
         'module_move_item': 'Module Item',
         'file_rename': 'File',
+        'file_folder': 'File',
         'file_visibility': 'File',
         'question_bank_create': 'Question Bank',
         'question_bank_update': 'Question Bank',
@@ -2397,6 +2425,7 @@ export function renderAiThread() {
         'module_remove_item': 'Remove from',
         'module_move_item': 'Move to',
         'file_rename': 'Rename',
+        'file_folder': 'Set Folder',
         'file_visibility': msg.data?.hidden ? 'Hide' : 'Show',
         'question_bank_create': 'Create',
         'question_bank_update': 'Update',
@@ -2828,6 +2857,14 @@ function renderActionPreview(msg, idx) {
     return `
       <div class="muted" style="font-size:0.9rem; margin-bottom:10px;">File: <strong>${escapeHtml(d.fileName || d.fileId || '')}</strong></div>
       <div>${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>
+    `;
+  }
+
+  // ─── FILE FOLDER ────────────────────────────────────────────────────────
+  if (msg.actionType === 'file_folder') {
+    return `
+      <div class="muted" style="font-size:0.9rem; margin-bottom:10px;">File: <strong>${escapeHtml(d.fileName || d.fileId || '')}</strong></div>
+      ${field('Folder', textInput('folder', d.folder || ''), 0)}
     `;
   }
 

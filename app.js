@@ -157,7 +157,8 @@ import {
   clearCourseCreationSyllabusData,
   setActiveCourseId as setFileActiveCourseId,
   setStudentViewMode as setFileStudentViewMode,
-  viewFile
+  viewFile,
+  setFileFolder
 } from './file_handling.js';
 
 // Modals - all modal HTML generation
@@ -736,6 +737,24 @@ let draggedModuleItem = null;
 let studentViewMode = false; // For professor/TA to toggle student view
 let aiProcessing = false; // Track AI processing state
 let dataLoading = false; // Track data loading state
+let unsavedChanges = false; // Track unsaved form changes
+
+// Unsaved changes warning
+function markUnsaved() { unsavedChanges = true; }
+function clearUnsaved() { unsavedChanges = false; }
+window.addEventListener('beforeunload', (e) => {
+  if (unsavedChanges) { e.preventDefault(); e.returnValue = ''; }
+});
+function trackUnsavedInModal(modalId) {
+  setTimeout(() => {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    modal.querySelectorAll('input, textarea, select').forEach(el => {
+      el.addEventListener('input', markUnsaved);
+      el.addEventListener('change', markUnsaved);
+    });
+  }, 100);
+}
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1345,6 +1364,10 @@ function openLinkedFile(fileId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function navigateTo(page) {
+  if (unsavedChanges) {
+    if (!window.confirm('You have unsaved changes. Leave this page?')) return;
+    clearUnsaved();
+  }
   document.querySelectorAll('.tool-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.page === page);
   });
@@ -2501,6 +2524,7 @@ function editAnnouncement(id) {
   document.getElementById('announcementSubmitBtn').textContent = 'Save Changes';
   
   openModal('announcementModal');
+  trackUnsavedInModal('announcementModal');
 }
 
 function resetAnnouncementModal() {
@@ -2562,6 +2586,7 @@ async function updateAnnouncement() {
   closeModal('announcementModal');
   resetAnnouncementModal();
 
+  clearUnsaved();
   renderUpdates();
   renderHome();
   showToast('Announcement saved', 'success');
@@ -2680,10 +2705,12 @@ function renderAssignments() {
       }
     }
 
+    const isQuizType = a.assignmentType === 'quiz' || a.category === 'quiz' || a.category === 'exam';
     const assignmentMenu = effectiveStaff ? `
       <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-assign-${a.id}')">☰</button>
       <div id="menu-assign-${a.id}" class="floating-menu">
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Submissions (${submissionCount})</button>
+        ${isQuizType ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); previewQuiz('${a.id}')">Preview Quiz</button>` : ''}
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleAssignmentVisibility('${a.id}')">${assignmentVisibilityText}</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); editAssignment('${a.id}')">Edit</button>
         <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteAssignment('${a.id}')" style="color:var(--danger);">Delete</button>
@@ -3901,6 +3928,7 @@ function openNewAssignmentModal(assignmentId = null) {
   if (overridesBtn) overridesBtn.style.display = assignmentId ? 'inline-flex' : 'none';
 
   openModal('newAssignmentModal');
+  trackUnsavedInModal('newAssignmentModal');
 }
 
 function resetNewAssignmentModal() {
@@ -4331,6 +4359,7 @@ async function saveNewAssignment() {
     const result = await supabaseUpdateAssignment(assignment);
     if (!result) { Object.assign(assignment, original); return; }
     closeModal('newAssignmentModal');
+    clearUnsaved();
     resetNewAssignmentModal();
     renderAssignments();
     renderHome();
@@ -4454,6 +4483,96 @@ function startAssignmentQuiz(assignmentId) {
   openModal('quizTakeModal');
 }
 window.startAssignmentQuiz = startAssignmentQuiz;
+
+function previewQuiz(assignmentId) {
+  const assignment = appData.assignments.find(a => a.id === assignmentId);
+  if (!assignment || !assignment.questionBankId) {
+    showToast('No question bank linked to this assignment', 'error');
+    return;
+  }
+  const bank = (appData.questionBanks || []).find(b => b.id === assignment.questionBankId);
+  if (!bank || !(bank.questions || []).length) {
+    showToast('Question bank is empty', 'error');
+    return;
+  }
+
+  const questions = bank.questions.map(q => ({ ...q }));
+  const numQ = assignment.numQuestions && assignment.numQuestions > 0
+    ? Math.min(assignment.numQuestions, questions.length)
+    : questions.length;
+
+  // Build preview HTML showing all questions as a student would see them
+  const questionsHtml = questions.slice(0, numQ).map((q, index) => {
+    const pts = parseFloat(q.points) || 1;
+    const type = q.type || 'multiple_choice';
+    const imageHtml = q.imageUrl ? `<div style="margin:8px 0;"><img src="${escapeHtml(q.imageUrl)}" style="max-width:100%; max-height:300px; border-radius:var(--radius);" alt="Question image"></div>` : '';
+
+    let answersHtml = '';
+    if (type === 'multiple_choice' || type === 'mc_single') {
+      answersHtml = (q.options || []).map((opt, optIdx) => {
+        const optText = typeof opt === 'object' ? opt.text || '' : opt;
+        const isCorrect = parseInt(q.correctAnswer) === optIdx;
+        return `<div style="padding:6px 12px; margin:2px 0; border-radius:4px; ${isCorrect ? 'background:var(--success-light, #d4edda); border:1px solid var(--success, #28a745);' : 'background:var(--bg-color);'}">
+          ${isCorrect ? '<strong>' : ''}${escapeHtml(optText)}${isCorrect ? ' (correct)</strong>' : ''}
+        </div>`;
+      }).join('');
+    } else if (type === 'true_false') {
+      answersHtml = ['True', 'False'].map(opt => {
+        const isCorrect = q.correctAnswer === opt;
+        return `<div style="padding:6px 12px; margin:2px 0; border-radius:4px; ${isCorrect ? 'background:var(--success-light, #d4edda); border:1px solid var(--success, #28a745);' : 'background:var(--bg-color);'}">
+          ${isCorrect ? '<strong>' : ''}${opt}${isCorrect ? ' (correct)</strong>' : ''}
+        </div>`;
+      }).join('');
+    } else if (type === 'short_answer') {
+      answersHtml = `<div class="muted" style="padding:6px 12px;">Sample answer: ${escapeHtml(q.correctAnswer || 'N/A')}</div>`;
+    } else if (type === 'matching') {
+      answersHtml = (q.options || []).map(pair => {
+        const src = typeof pair === 'object' ? pair.source : '';
+        const tgt = typeof pair === 'object' ? pair.target : '';
+        return `<div style="padding:4px 12px;">${escapeHtml(src)} → ${escapeHtml(tgt)}</div>`;
+      }).join('');
+    } else if (type === 'essay' || type === 'written_response') {
+      answersHtml = `<div class="muted" style="padding:6px 12px;">[Open-ended response — manual grading]</div>`;
+    } else {
+      answersHtml = `<div class="muted" style="padding:6px 12px;">[${type}]</div>`;
+    }
+
+    return `
+      <div style="padding:16px; margin-bottom:12px; background:white; border:1px solid var(--border-light); border-radius:var(--radius);">
+        <div style="font-weight:600; margin-bottom:8px;">Q${index + 1}. ${escapeHtml(q.prompt)} <span class="muted" style="font-weight:400; font-size:0.85rem;">(${pts} pt${pts !== 1 ? 's' : ''})</span></div>
+        ${imageHtml}
+        ${answersHtml}
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('quizPreviewModal')?.remove();
+  const modalHtml = `
+    <div class="modal-overlay" id="quizPreviewModal" style="display:flex; z-index:1100;">
+      <div class="modal" style="max-width:800px; max-height:90vh;">
+        <div class="modal-header">
+          <div>
+            <h2 class="modal-title" style="font-size:1.1rem;">Quiz Preview: ${escapeHtml(assignment.title)}</h2>
+            <div class="muted" style="font-size:0.85rem;">${numQ} questions · ${questions.slice(0, numQ).reduce((s, q) => s + (parseFloat(q.points) || 1), 0)} total points · ${assignment.timeLimit ? assignment.timeLimit + ' min time limit' : 'No time limit'}</div>
+          </div>
+          <button class="modal-close" onclick="document.getElementById('quizPreviewModal').remove()">&times;</button>
+        </div>
+        <div class="modal-body" style="overflow-y:auto;">
+          <div style="padding:10px 12px; margin-bottom:12px; background:var(--primary-light); border-radius:var(--radius); font-size:0.85rem;">
+            This is an instructor preview showing all questions with correct answers highlighted. Students will see questions without answers.
+          </div>
+          ${questionsHtml}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="document.getElementById('quizPreviewModal').remove()">Close Preview</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+window.previewQuiz = previewQuiz;
+
 window.viewAssignmentQuizResult = function(assignmentId) {
   // Show the latest quiz submission for this assignment
   const sub = (appData.quizSubmissions || [])
@@ -5794,6 +5913,32 @@ function openSpeedGrader(assignmentId) {
   generateModals();
   renderSpeedGrader();
   openModal('speedGraderModal');
+
+  // Attach keyboard shortcuts for speed grader
+  if (!window._speedGraderKeyHandler) {
+    window._speedGraderKeyHandler = (e) => {
+      const modal = document.getElementById('speedGraderModal');
+      if (!modal || !modal.classList.contains('visible')) return;
+      // Don't intercept when typing in inputs
+      const tag = e.target.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+      if (e.key === 'ArrowLeft' || e.key === 'k') {
+        e.preventDefault();
+        speedGraderPrev();
+      } else if (e.key === 'ArrowRight' || e.key === 'j') {
+        e.preventDefault();
+        speedGraderNext();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveSpeedGraderGrade();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        saveSpeedGraderGrade();
+      }
+    };
+    document.addEventListener('keydown', window._speedGraderKeyHandler);
+  }
 }
 
 function renderSpeedGrader() {
@@ -5820,6 +5965,7 @@ function renderSpeedGrader() {
     <div class="speedgrader-progress">
       <span>${currentSpeedGraderStudentIndex + 1} of ${speedGraderStudents.length}</span>
       <span class="muted">(${gradedCount} graded / ${submittedCount} submitted)</span>
+      <span class="muted" style="font-size:0.7rem; display:block;">← → navigate · Ctrl+S save · Ctrl+Enter save & next</span>
     </div>
     <button class="btn btn-secondary" onclick="speedGraderNext()" ${currentSpeedGraderStudentIndex === speedGraderStudents.length - 1 ? 'disabled' : ''}>Next →</button>
   `;
@@ -5838,11 +5984,10 @@ function renderSpeedGrader() {
   const displayEmail = isBlind ? '' : (student ? student.email : '');
   const displayAvatar = isBlind ? '🙈' : (student ? student.avatar : '?');
   document.getElementById('speedGraderStudentInfo').innerHTML = `
-    <div class="user-avatar" style="width:48px; height:48px; font-size:1.2rem;">${displayAvatar}</div>
     <div>
-      <div style="font-weight:600; font-size:1.1rem;">${displayName}</div>
-      ${displayEmail ? `<div class="muted">${displayEmail}</div>` : ''}
-      ${isBlind ? '<div class="muted" style="font-size:0.8rem;">🙈 Blind grading — student identity hidden</div>' : ''}
+      <div style="font-weight:600; font-size:1.1rem;">${escapeHtml(displayName)}</div>
+      ${displayEmail ? `<div class="muted">${escapeHtml(displayEmail)}</div>` : ''}
+      ${isBlind ? '<div class="muted" style="font-size:0.8rem;">Blind grading — student identity hidden</div>' : ''}
     </div>
   `;
 
@@ -6138,9 +6283,15 @@ function updateFileUploadPreview() {
 let gradebookSearch = '';
 let gbStudentSort = 'az';   // 'az' | 'za'
 let gbColSort = null;       // { id: assignmentId, dir: 'az'|'za' } | null
+let gbFilter = 'all';       // 'all' | 'missing' | 'late' | 'ungraded'
 
 function updateGradebookSearch(value) {
   gradebookSearch = value.toLowerCase();
+  renderGradebook();
+}
+
+function updateGradebookFilter(value) {
+  gbFilter = value;
   renderGradebook();
 }
 
@@ -6355,10 +6506,16 @@ function renderStaffGradebook() {
 
   const gradeSettings = (appData.gradeSettings || []).find(gs => gs.courseId === activeCourseId);
 
-  // Actions with search
+  // Actions with search and filter
   setHTML('gradebookActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <input type="text" class="form-input" id="gradebookSearchInput" placeholder="Search students..." value="${escapeHtml(gradebookSearch)}" oninput="updateGradebookSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <select class="form-select" onchange="updateGradebookFilter(this.value)" style="width:150px;">
+        <option value="all" ${gbFilter === 'all' ? 'selected' : ''}>All students</option>
+        <option value="missing" ${gbFilter === 'missing' ? 'selected' : ''}>Missing work</option>
+        <option value="late" ${gbFilter === 'late' ? 'selected' : ''}>Late submissions</option>
+        <option value="ungraded" ${gbFilter === 'ungraded' ? 'selected' : ''}>Ungraded</option>
+      </select>
       <button class="btn btn-secondary" onclick="openCategoryWeightsModal()">Category Weights ${hasWeights ? '✓' : ''}</button>
       <button class="btn btn-secondary" onclick="openGradeSettingsModal()">Grade Settings ${gradeSettings ? '✓' : ''}</button>
       <button class="btn btn-secondary" onclick="exportGradebook()">Export CSV</button>
@@ -6384,21 +6541,34 @@ function renderStaffGradebook() {
     .map(e => getUserById(e.userId))
     .filter(u => u);
 
-  // Apply sort: column sort takes precedence over student name sort
+  // Apply sort: column sort takes precedence, then grade sort, then name sort
   if (gbColSort) {
-    const sortAssignment = assignments.find(a => a.id === gbColSort.id);
-    enrolledStudents.sort((a, b) => {
-      const aSub = appData.submissions.find(s => s.assignmentId === gbColSort.id && s.userId === a.id);
-      const bSub = appData.submissions.find(s => s.assignmentId === gbColSort.id && s.userId === b.id);
-      const aGrade = aSub ? appData.grades.find(g => g.submissionId === aSub.id) : null;
-      const bGrade = bSub ? appData.grades.find(g => g.submissionId === bSub.id) : null;
-      // Unsubmitted / ungraded always at bottom
-      if (!aGrade && !bGrade) return a.name.localeCompare(b.name);
-      if (!aGrade) return 1;
-      if (!bGrade) return -1;
-      const cmp = gbGradeNaturalCompare(aGrade.score, bGrade.score, sortAssignment);
-      return gbColSort.dir === 'az' ? cmp : -cmp;
-    });
+    if (gbColSort.id === '__grade__') {
+      // Sort by overall grade %
+      enrolledStudents.sort((a, b) => {
+        const aGrade = calculateWeightedGrade(a.id, activeCourseId);
+        const bGrade = calculateWeightedGrade(b.id, activeCourseId);
+        if (aGrade === null && bGrade === null) return a.name.localeCompare(b.name);
+        if (aGrade === null) return 1;
+        if (bGrade === null) return -1;
+        const cmp = aGrade - bGrade;
+        return gbColSort.dir === 'az' ? cmp : -cmp;
+      });
+    } else {
+      const sortAssignment = assignments.find(a => a.id === gbColSort.id);
+      enrolledStudents.sort((a, b) => {
+        const aSub = appData.submissions.find(s => s.assignmentId === gbColSort.id && s.userId === a.id);
+        const bSub = appData.submissions.find(s => s.assignmentId === gbColSort.id && s.userId === b.id);
+        const aGrade = aSub ? appData.grades.find(g => g.submissionId === aSub.id) : null;
+        const bGrade = bSub ? appData.grades.find(g => g.submissionId === bSub.id) : null;
+        // Unsubmitted / ungraded always at bottom
+        if (!aGrade && !bGrade) return a.name.localeCompare(b.name);
+        if (!aGrade) return 1;
+        if (!bGrade) return -1;
+        const cmp = gbGradeNaturalCompare(aGrade.score, bGrade.score, sortAssignment);
+        return gbColSort.dir === 'az' ? cmp : -cmp;
+      });
+    }
   } else {
     enrolledStudents.sort((a, b) => {
       const cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
@@ -6413,6 +6583,21 @@ function renderStaffGradebook() {
       s.name.toLowerCase().includes(gradebookSearch) ||
       s.email.toLowerCase().includes(gradebookSearch)
     );
+  }
+
+  // Filter by missing/late/ungraded
+  if (gbFilter !== 'all') {
+    students = students.filter(s => {
+      if (s.isPendingInvite) return false;
+      return assignments.some(a => {
+        const submission = appData.submissions.find(sub => sub.assignmentId === a.id && sub.userId === s.id);
+        const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
+        if (gbFilter === 'missing') return !submission && a.dueDate && new Date(a.dueDate) < new Date();
+        if (gbFilter === 'late') return submission && a.dueDate && new Date(submission.submittedAt) > new Date(a.dueDate);
+        if (gbFilter === 'ungraded') return submission && !grade;
+        return true;
+      });
+    });
   }
 
   if (assignments.length === 0) {
@@ -6452,9 +6637,9 @@ function renderStaffGradebook() {
                 : (anyReleased ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkHideGrades('${a.id}')">Hide Grades</button>` : '');
               const isActiveSortCol = gbColSort && gbColSort.id === a.id;
               const sortIndicator = isActiveSortCol ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : '';
-              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}${hiddenBadge ? '<br>' + hiddenBadge : ''}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button></div></th>`;
+              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}${hiddenBadge ? '<br>' + hiddenBadge : ''}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkSetZero('${a.id}')">Set Missing to 0</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkExcuseAll('${a.id}')">Excuse All Missing</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button></div></th>`;
             }).join('')}
-            <th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">%</th>
+            <th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">%${gbColSort && gbColSort.id === '__grade__' ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : ''}<div style="display:flex; gap:4px; margin-top:4px; justify-content:center;"><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'az')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'az' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">Low→High</button><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'za')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'za' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">High→Low</button></div></th>
             ${gradeSettings ? '<th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">Grade</th>' : ''}
           </tr>
         </thead>
@@ -6489,6 +6674,9 @@ function renderStaffGradebook() {
                   const displayName = a.blindGrading ? `Student ${studentIdx + 1}` : student.name;
 
                   if (grade) {
+                    if (grade.excused) {
+                      return `<td style="padding:8px 12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Excused — click to edit"><span style="font-weight:700; color:var(--primary);">EX</span></td>`;
+                    }
                     const gt = a.gradingType || 'points';
                     let cellContent = '';
                     if (gt === 'complete_incomplete') {
@@ -6783,6 +6971,12 @@ function openManualGradeModal(studentId, assignmentId) {
                 <span>Release grade to student</span>
               </label>
             </div>
+            <div class="form-group">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="manualGradeExcused" onchange="document.getElementById('manualGradeScoreSection').style.opacity = this.checked ? '0.4' : '1'">
+                <span>Excused (exclude from grade calculation)</span>
+              </label>
+            </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" onclick="closeModal('manualGradeModal')">Cancel</button>
@@ -6832,6 +7026,8 @@ function openManualGradeModal(studentId, assignmentId) {
   document.getElementById('manualGradeInfo').textContent = `${student.name} · ${assignment.title}`;
   document.getElementById('manualGradeFeedback').value = grade ? (grade.feedback || '') : '';
   document.getElementById('manualGradeReleased').checked = grade ? grade.released : true;
+  document.getElementById('manualGradeExcused').checked = grade ? !!grade.excused : false;
+  document.getElementById('manualGradeScoreSection').style.opacity = grade?.excused ? '0.4' : '1';
 
   openModal('manualGradeModal');
 }
@@ -6879,11 +7075,14 @@ async function saveManualGrade() {
     appData.submissions.push(submission);
   }
 
+  const excused = document.getElementById('manualGradeExcused')?.checked || false;
+
   const gradePayload = {
     submissionId: submission.id,
-    score: score,
+    score: excused ? 0 : score,
     feedback: feedback,
     released: released,
+    excused: excused,
     gradedBy: appData.currentUser.id,
     gradedAt: new Date().toISOString()
   };
@@ -7032,10 +7231,10 @@ function renderPeopleList() {
       `;
     } else {
       return `
-        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
+        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''} cursor:pointer;" onclick="openPersonDetailModal('${p.id}')">
           <div style="flex:1; min-width:0;">
-            <div style="font-weight:500; font-size:0.95rem;">${p.name}</div>
-            <div class="muted" style="font-size:0.8rem;">${p.email}</div>
+            <div style="font-weight:500; font-size:0.95rem;">${escapeHtml(p.name)}</div>
+            <div class="muted" style="font-size:0.8rem;">${escapeHtml(p.email)}</div>
           </div>
           ${effectiveStaff && p.id !== appData.currentUser.id ? `
             <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
@@ -7083,6 +7282,127 @@ function renderPeopleList() {
   html += renderSectionWithInvites('Students', 'student', grouped.student, invitesByRole.student);
 
   setHTML('peopleList', html || '<div class="empty-state-text">No people in this course</div>');
+}
+
+function openPersonDetailModal(userId) {
+  const person = getUserById(userId);
+  if (!person) return;
+
+  const enrollment = appData.enrollments.find(e => e.courseId === activeCourseId && e.userId === userId);
+  const roleName = enrollment ? enrollment.role : 'unknown';
+
+  // Gather assignment stats
+  const courseAssignments = appData.assignments.filter(a => a.courseId === activeCourseId && isAssignmentVisibleInGradebook(a));
+  const now = new Date();
+
+  let lateAssignments = [];
+  let missingAssignments = [];
+  let gradedCount = 0;
+  let totalScore = 0;
+  let totalPoints = 0;
+
+  courseAssignments.forEach(a => {
+    const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === userId);
+    const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
+
+    if (!submission && a.dueDate && new Date(a.dueDate) < now) {
+      missingAssignments.push(a);
+    } else if (submission && a.dueDate && new Date(submission.submittedAt) > new Date(a.dueDate)) {
+      lateAssignments.push(a);
+    }
+
+    if (grade && !grade.excused) {
+      gradedCount++;
+      totalScore += parseFloat(grade.score) || 0;
+      totalPoints += parseFloat(a.points) || 0;
+    }
+  });
+
+  // Discussion posts
+  const discussionPosts = (appData.discussionThreads || [])
+    .filter(t => t.courseId === activeCourseId)
+    .reduce((count, t) => {
+      let c = t.authorId === userId ? 1 : 0;
+      c += (t.replies || []).filter(r => r.authorId === userId).length;
+      return count + c;
+    }, 0);
+
+  // Overall grade
+  const overallPct = totalPoints > 0 ? ((totalScore / totalPoints) * 100).toFixed(1) : 'N/A';
+  const weightedGrade = calculateWeightedGrade(userId, activeCourseId);
+  const displayGrade = weightedGrade !== null ? weightedGrade.toFixed(1) + '%' : (overallPct !== 'N/A' ? overallPct + '%' : 'N/A');
+
+  // Enrolled date
+  const enrolledAt = enrollment?.enrolledAt || enrollment?.createdAt;
+
+  const lateHtml = lateAssignments.length > 0
+    ? lateAssignments.map(a => `<li style="margin-bottom:4px;">${escapeHtml(a.title)} <span class="muted">(due ${formatDate(a.dueDate)})</span></li>`).join('')
+    : '<li class="muted">None</li>';
+
+  const missingHtml = missingAssignments.length > 0
+    ? missingAssignments.map(a => `<li style="margin-bottom:4px;">${escapeHtml(a.title)} <span class="muted">(due ${formatDate(a.dueDate)})</span></li>`).join('')
+    : '<li class="muted">None</li>';
+
+  document.getElementById('personDetailModal')?.remove();
+  const modalHtml = `
+    <div class="modal-overlay" id="personDetailModal" style="display:flex; z-index:1100;">
+      <div class="modal" style="max-width:550px;">
+        <div class="modal-header">
+          <h2 class="modal-title" style="font-size:1.1rem;">${escapeHtml(person.name)}</h2>
+          <button class="modal-close" onclick="document.getElementById('personDetailModal').remove()">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+            <div>
+              <div class="muted" style="font-size:0.8rem;">Email</div>
+              <div style="font-size:0.9rem;">${escapeHtml(person.email)}</div>
+            </div>
+            <div>
+              <div class="muted" style="font-size:0.8rem;">Role</div>
+              <div style="font-size:0.9rem; text-transform:capitalize;">${roleName}</div>
+            </div>
+            <div>
+              <div class="muted" style="font-size:0.8rem;">Enrolled</div>
+              <div style="font-size:0.9rem;">${enrolledAt ? formatDate(enrolledAt) : 'Unknown'}</div>
+            </div>
+            <div>
+              <div class="muted" style="font-size:0.8rem;">Overall Grade</div>
+              <div style="font-size:0.9rem; font-weight:600;">${displayGrade}</div>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:16px;">
+            <div style="background:var(--bg-color); padding:12px; border-radius:var(--radius); text-align:center;">
+              <div style="font-size:1.3rem; font-weight:700;">${gradedCount}/${courseAssignments.length}</div>
+              <div class="muted" style="font-size:0.75rem;">Graded</div>
+            </div>
+            <div style="background:var(--bg-color); padding:12px; border-radius:var(--radius); text-align:center;">
+              <div style="font-size:1.3rem; font-weight:700; ${missingAssignments.length > 0 ? 'color:var(--danger);' : ''}">${missingAssignments.length}</div>
+              <div class="muted" style="font-size:0.75rem;">Missing</div>
+            </div>
+            <div style="background:var(--bg-color); padding:12px; border-radius:var(--radius); text-align:center;">
+              <div style="font-size:1.3rem; font-weight:700;">${discussionPosts}</div>
+              <div class="muted" style="font-size:0.75rem;">Discussion Posts</div>
+            </div>
+          </div>
+
+          <div style="margin-bottom:12px;">
+            <div style="font-weight:600; font-size:0.9rem; margin-bottom:6px; color:var(--danger);">Late Submissions (${lateAssignments.length})</div>
+            <ul style="margin:0; padding-left:20px; font-size:0.85rem;">${lateHtml}</ul>
+          </div>
+
+          <div>
+            <div style="font-weight:600; font-size:0.9rem; margin-bottom:6px; color:var(--warning,#f59e0b);">Missing Assignments (${missingAssignments.length})</div>
+            <ul style="margin:0; padding-left:20px; font-size:0.85rem;">${missingHtml}</ul>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="document.getElementById('personDetailModal').remove()">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
 }
 
 function renderPeople() {
@@ -8408,7 +8728,7 @@ function calculateWeightedGrade(userId, courseId) {
       if (!assignment) return;
       const submission = appData.submissions.find(s => s.assignmentId === assignment.id && s.userId === userId);
       const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-      if (grade && grade.released) {
+      if (grade && grade.released && !grade.excused) {
         const gt = assignment.gradingType || 'points';
         if (gt === 'complete_incomplete') {
           // complete/incomplete: 100% or 0% regardless of points value (may be 0)
@@ -8429,7 +8749,7 @@ function calculateWeightedGrade(userId, courseId) {
       catAssignments.forEach(a => {
         const sub = appData.submissions.find(s => s.assignmentId === a.id && s.userId === userId);
         const grade = sub ? appData.grades.find(g => g.submissionId === sub.id) : null;
-        if (grade && grade.released) {
+        if (grade && grade.released && !grade.excused) {
           const gt = a.gradingType || 'points';
           if (gt === 'complete_incomplete') {
             // Treat as 1-point binary so it contributes to the category average
@@ -8575,6 +8895,101 @@ function bulkHideGrades(assignmentId) {
   });
 }
 window.bulkHideGrades = bulkHideGrades;
+
+function bulkSetZero(assignmentId) {
+  ensureModalsRendered();
+  showConfirmDialog('Set all unsubmitted students to 0 for this assignment?', async () => {
+    const assignment = appData.assignments.find(a => a.id === assignmentId);
+    if (!assignment) return;
+    const enrolledStudents = appData.enrollments
+      .filter(e => e.courseId === assignment.courseId && e.role === 'student')
+      .map(e => e.userId);
+
+    let count = 0;
+    for (const userId of enrolledStudents) {
+      const submission = appData.submissions.find(s => s.assignmentId === assignmentId && s.userId === userId);
+      if (!submission) {
+        // Create placeholder submission and grade of 0
+        const newSubmission = {
+          id: generateId(),
+          assignmentId: assignmentId,
+          userId: userId,
+          text: '[No submission - zero grade]',
+          fileName: null,
+          fileData: null,
+          submittedAt: new Date().toISOString(),
+          isManual: true
+        };
+        const savedSub = await supabaseCreateSubmission(newSubmission);
+        if (!savedSub) continue;
+        appData.submissions.push(newSubmission);
+
+        const gradePayload = {
+          submissionId: newSubmission.id,
+          score: 0,
+          feedback: 'No submission received',
+          released: true,
+          excused: false,
+          gradedBy: appData.currentUser.id,
+          gradedAt: new Date().toISOString()
+        };
+        await supabaseUpsertGrade(gradePayload);
+        appData.grades.push(gradePayload);
+        count++;
+      }
+    }
+    renderGradebook();
+    showToast(`Set ${count} missing submission${count !== 1 ? 's' : ''} to zero`, 'success');
+  });
+}
+window.bulkSetZero = bulkSetZero;
+
+function bulkExcuseAll(assignmentId) {
+  ensureModalsRendered();
+  showConfirmDialog('Excuse all students who have not submitted this assignment?', async () => {
+    const assignment = appData.assignments.find(a => a.id === assignmentId);
+    if (!assignment) return;
+    const enrolledStudents = appData.enrollments
+      .filter(e => e.courseId === assignment.courseId && e.role === 'student')
+      .map(e => e.userId);
+
+    let count = 0;
+    for (const userId of enrolledStudents) {
+      const submission = appData.submissions.find(s => s.assignmentId === assignmentId && s.userId === userId);
+      if (!submission) {
+        const newSubmission = {
+          id: generateId(),
+          assignmentId: assignmentId,
+          userId: userId,
+          text: '[Excused]',
+          fileName: null,
+          fileData: null,
+          submittedAt: new Date().toISOString(),
+          isManual: true
+        };
+        const savedSub = await supabaseCreateSubmission(newSubmission);
+        if (!savedSub) continue;
+        appData.submissions.push(newSubmission);
+
+        const gradePayload = {
+          submissionId: newSubmission.id,
+          score: 0,
+          feedback: 'Excused',
+          released: true,
+          excused: true,
+          gradedBy: appData.currentUser.id,
+          gradedAt: new Date().toISOString()
+        };
+        await supabaseUpsertGrade(gradePayload);
+        appData.grades.push(gradePayload);
+        count++;
+      }
+    }
+    renderGradebook();
+    showToast(`Excused ${count} missing submission${count !== 1 ? 's' : ''}`, 'success');
+  });
+}
+window.bulkExcuseAll = bulkExcuseAll;
 
 function viewSubmissionHistory(assignmentId, userId) {
   const submissions = appData.submissions
@@ -8807,20 +9222,40 @@ function renderDiscussion() {
   }
 }
 
+let discussionSearch = '';
+
+function updateDiscussionSearch(value) {
+  discussionSearch = value.toLowerCase();
+  renderDiscussion();
+}
+
 function renderDiscussionList(isStaffUser, course) {
   setText('discussionSubtitle', course.name);
-  setHTML('discussionActions', isStaffUser ? `
-    <button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">New Thread</button>
-  ` : `
-    <button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">Start Discussion</button>
+  setHTML('discussionActions', `
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <input type="text" class="form-input" id="discussionSearchInput" placeholder="Search discussions..." value="${escapeHtml(discussionSearch)}" oninput="updateDiscussionSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      ${isStaffUser ? `<button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">New Thread</button>` : `<button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">Start Discussion</button>`}
+    </div>
   `);
 
-  const threads = (appData.discussionThreads || [])
+  let threads = (appData.discussionThreads || [])
     .filter(t => t.courseId === activeCourseId && (!t.hidden || isStaffUser))
     .sort((a, b) => {
       if (a.pinned !== b.pinned) return b.pinned ? 1 : -1;
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
+
+  // Apply search filter (matches title, content, and reply content)
+  if (discussionSearch) {
+    threads = threads.filter(t => {
+      if (t.title.toLowerCase().includes(discussionSearch)) return true;
+      if (t.content && t.content.toLowerCase().includes(discussionSearch)) return true;
+      if ((t.replies || []).some(r => r.content && r.content.toLowerCase().includes(discussionSearch))) return true;
+      const author = getUserById(t.authorId);
+      if (author && author.name.toLowerCase().includes(discussionSearch)) return true;
+      return false;
+    });
+  }
 
   if (threads.length === 0) {
     setHTML('discussionContent', '<div class="empty-state"><div class="empty-state-title">No discussions yet</div><div class="empty-state-text">Be the first to start a conversation!</div></div>');
@@ -9531,6 +9966,7 @@ window.processBulkGrades = processBulkGrades;
 window.bulkReleaseGrades = bulkReleaseGrades;
 
 // People management
+window.openPersonDetailModal = openPersonDetailModal;
 window.openAddPersonModal = openAddPersonModal;
 window.addPersonToCourse = addPersonToCourse;
 window.removePersonFromCourse = removePersonFromCourse;
@@ -9580,6 +10016,7 @@ window.toggleStudentView = toggleStudentView;
 // Search and sort
 window.updateModulesSearch = updateModulesSearch;
 window.updateGradebookSearch = updateGradebookSearch;
+window.updateGradebookFilter = updateGradebookFilter;
 window.updatePeopleSearch = updatePeopleSearch;
 window.updateAssignmentsSearch = updateAssignmentsSearch;
 window.updateAnnouncementsSearch = updateAnnouncementsSearch;
@@ -9592,6 +10029,7 @@ window.gbSortColumn = gbSortColumn;
 // File-related window.* handlers are owned by file_handling.js.
 // Register only app.js-defined globals here to prevent duplicate exports.
 window.viewFile = viewFile;
+window.setFileFolder = setFileFolder;
 window.openModuleFile = openModuleFile;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -9940,6 +10378,7 @@ window.saveDeadlineOverrides = saveDeadlineOverrides;
 window.removeDeadlineOverride = removeDeadlineOverride;
 
 // Discussion board
+window.updateDiscussionSearch = updateDiscussionSearch;
 window.openDiscussionThread = openDiscussionThread;
 window.closeDiscussionThread = closeDiscussionThread;
 window.openCreateDiscussionThreadModal = openCreateDiscussionThreadModal;

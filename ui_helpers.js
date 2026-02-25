@@ -319,6 +319,33 @@ export function renderMarkdown(text) {
     html = html.replace(`@@PRESERVED${index}@@`, block);
   });
 
+  // LaTeX rendering via KaTeX
+  if (typeof katex !== 'undefined') {
+    // Display math: $$ ... $$ (block)
+    html = html.replace(/\$\$([\s\S]*?)\$\$/g, (match, tex) => {
+      try {
+        return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+      } catch { return match; }
+    });
+    // Inline math: $ ... $ (but not $$ and not currency like $5)
+    html = html.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, tex) => {
+      try {
+        return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
+      } catch { return match; }
+    });
+    // Also support \( ... \) for inline and \[ ... \] for display
+    html = html.replace(/\\\[([\s\S]*?)\\\]/g, (match, tex) => {
+      try {
+        return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+      } catch { return match; }
+    });
+    html = html.replace(/\\\(([\s\S]*?)\\\)/g, (match, tex) => {
+      try {
+        return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
+      } catch { return match; }
+    });
+  }
+
   return html;
 }
 

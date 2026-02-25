@@ -941,7 +941,8 @@ function renderFilesList() {
 
   if (filesSearch) {
     files = files.filter(f => f.name.toLowerCase().includes(filesSearch) ||
-      (f.externalUrl || '').toLowerCase().includes(filesSearch));
+      (f.externalUrl || '').toLowerCase().includes(filesSearch) ||
+      (f.folder || '').toLowerCase().includes(filesSearch));
   }
 
   files.sort((a, b) => {
@@ -952,6 +953,8 @@ function renderFilesList() {
       case 'name-desc': return b.name.localeCompare(a.name);
       case 'size-asc': return a.size - b.size;
       case 'size-desc': return b.size - a.size;
+      case 'folder-asc': return (a.folder || '').localeCompare(b.folder || '');
+      case 'folder-desc': return (b.folder || '').localeCompare(a.folder || '');
       default: return new Date(b.uploadedAt) - new Date(a.uploadedAt);
     }
   });
@@ -963,7 +966,32 @@ function renderFilesList() {
     return;
   }
 
-  setHTML('filesList', files.map(f => renderFileCard(f, effectiveStaff)).join(''));
+  // Group by folder if sorting by folder, otherwise flat list
+  if (filesSort === 'folder-asc' || filesSort === 'folder-desc') {
+    const grouped = {};
+    files.forEach(f => {
+      const folder = f.folder || '(No folder)';
+      if (!grouped[folder]) grouped[folder] = [];
+      grouped[folder].push(f);
+    });
+    let html = '';
+    const folderNames = Object.keys(grouped).sort((a, b) => {
+      if (a === '(No folder)') return 1;
+      if (b === '(No folder)') return -1;
+      return filesSort === 'folder-asc' ? a.localeCompare(b) : b.localeCompare(a);
+    });
+    folderNames.forEach(folder => {
+      html += `<div style="margin-bottom:24px;">
+        <h3 style="font-family:var(--font-serif); font-size:1rem; margin-bottom:8px; color:var(--text-secondary); display:flex; align-items:center; gap:8px;">
+          <span style="font-size:1.1rem;">📁</span> ${escapeHtml(folder)} <span class="muted" style="font-size:0.8rem; font-weight:400;">(${grouped[folder].length})</span>
+        </h3>
+        ${grouped[folder].map(f => renderFileCard(f, effectiveStaff)).join('')}
+      </div>`;
+    });
+    setHTML('filesList', html);
+  } else {
+    setHTML('filesList', files.map(f => renderFileCard(f, effectiveStaff)).join(''));
+  }
 }
 
 // Renders a single file card (shared between renderFiles and renderFilesList)
@@ -983,6 +1011,7 @@ function renderFileCard(f, effectiveStaff) {
     <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-file-${f.id}')">☰</button>
     <div id="menu-file-${f.id}" class="floating-menu">
       <button class="btn btn-secondary btn-sm" onclick="closeMenu(); renameFile('${f.id}')">Rename</button>
+      <button class="btn btn-secondary btn-sm" onclick="closeMenu(); setFileFolder('${f.id}')">Set Folder</button>
       ${!isExternal ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); updateFileContent('${f.id}')">Replace File</button>` : ''}
       ${isPlaceholder ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); convertPlaceholderToLink('${f.id}')">Add Link</button>` : ''}
       <button class="btn btn-secondary btn-sm" onclick="closeMenu(); toggleFileVisibility('${f.id}')">${visibilityText}</button>
@@ -990,13 +1019,15 @@ function renderFileCard(f, effectiveStaff) {
     </div>
   ` : '';
 
+  const folderBadge = f.folder ? `<span style="padding:2px 8px; margin-left:8px; border-radius:4px; background:var(--primary-light); color:var(--primary); font-size:0.75rem; font-weight:500;">📁 ${escapeHtml(f.folder)}</span>` : '';
+
   return `
     <div class="card"
          style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}"
          ${isPlaceholder && effectiveStaff ? `ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border-color)'" ondrop="handlePlaceholderFileDrop(event, '${f.id}'); this.style.borderColor='var(--border-color)'"` : ''}>
       <div class="card-header">
         <div style="flex:1;">
-          <div class="card-title" ${(!isPlaceholder && !isExternal) ? `onclick="window.viewFile('${f.id}')" style="cursor:pointer;"` : ''}>${icon ? icon + ' ' : ''}${escapeHtml(f.name)} ${visibilityBadge}</div>
+          <div class="card-title" ${(!isPlaceholder && !isExternal) ? `onclick="window.viewFile('${f.id}')" style="cursor:pointer;"` : ''}>${icon ? icon + ' ' : ''}${escapeHtml(f.name)} ${visibilityBadge}${folderBadge}</div>
           <div class="muted">
             ${isExternal ? 'External link' : isPlaceholder ? 'Placeholder - upload or add link' : formatFileSize(f.size)}
             · ${uploader ? 'Added by ' + uploader.name : ''} on ${formatDate(f.uploadedAt)}
@@ -1044,6 +1075,8 @@ export function renderFiles() {
         <option value="name-desc" ${filesSort === 'name-desc' ? 'selected' : ''}>Name Z-A</option>
         <option value="size-desc" ${filesSort === 'size-desc' ? 'selected' : ''}>Largest first</option>
         <option value="size-asc" ${filesSort === 'size-asc' ? 'selected' : ''}>Smallest first</option>
+        <option value="folder-asc" ${filesSort === 'folder-asc' ? 'selected' : ''}>By folder A-Z</option>
+        <option value="folder-desc" ${filesSort === 'folder-desc' ? 'selected' : ''}>By folder Z-A</option>
       </select>
       ${isStaffUser ? `<button class="btn btn-primary" onclick="openModal('fileUploadModal')">Upload File</button>` : ''}
     </div>
@@ -1055,6 +1088,66 @@ export function renderFiles() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // FILE UPLOAD
 // ═══════════════════════════════════════════════════════════════════════════════
+
+export async function setFileFolder(fileId) {
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  // Get existing folders for autocomplete
+  const existingFolders = [...new Set(
+    appData.files
+      .filter(f => f.courseId === activeCourseId && f.folder)
+      .map(f => f.folder)
+  )].sort();
+
+  const suggestionsHtml = existingFolders.length > 0
+    ? `<div style="margin-top:8px;"><div class="muted" style="font-size:0.8rem; margin-bottom:4px;">Existing folders:</div>${existingFolders.map(f => `<button class="btn btn-secondary btn-sm" style="margin:2px;" onclick="document.getElementById('fileFolderInput').value='${escapeHtml(f)}'">${escapeHtml(f)}</button>`).join('')}</div>`
+    : '';
+
+  const currentFolder = file.folder || '';
+  document.getElementById('fileFolderModal')?.remove();
+  const modalHtml = `
+    <div class="modal-overlay" id="fileFolderModal" style="display:flex; z-index:1100;">
+      <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+          <h2 class="modal-title" style="font-size:1rem;">Set Folder</h2>
+          <button class="modal-close" onclick="document.getElementById('fileFolderModal').remove()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="muted" style="margin-bottom:8px;">${escapeHtml(file.name)}</div>
+          <div class="form-group">
+            <label class="form-label">Folder (leave blank to remove)</label>
+            <input type="text" class="form-input" id="fileFolderInput" value="${escapeHtml(currentFolder)}" placeholder="e.g. Lecture Notes or Week 1/Readings">
+          </div>
+          ${suggestionsHtml}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="document.getElementById('fileFolderModal').remove()">Cancel</button>
+          <button class="btn btn-primary" onclick="window._saveFileFolder('${fileId}')">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  setTimeout(() => document.getElementById('fileFolderInput')?.focus(), 50);
+}
+
+window._saveFileFolder = async function(fileId) {
+  const input = document.getElementById('fileFolderInput');
+  const folder = input ? input.value.trim() : '';
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+
+  file.folder = folder || null;
+  const result = await supabaseUpdateFile(file);
+  if (!result) {
+    showToast('Failed to update folder', 'error');
+    return;
+  }
+  document.getElementById('fileFolderModal')?.remove();
+  renderFilesList();
+  showToast(folder ? `Moved to "${folder}"` : 'Removed from folder', 'success');
+};
 
 export function handleFilesDrop(e) {
   e.preventDefault();

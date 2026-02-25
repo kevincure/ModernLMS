@@ -217,6 +217,8 @@ export function renderQuizQuestions() {
       `;
     }
 
+    const imagePreview = q.imageUrl ? `<div style="margin:8px 0;"><img src="${escapeHtml(q.imageUrl)}" style="max-width:100%; max-height:200px; border-radius:var(--radius); border:1px solid var(--border-light);" alt="Question image"></div>` : '';
+
     return `
       <div class="quiz-question-card">
         <div class="quiz-question-header">
@@ -224,6 +226,10 @@ export function renderQuizQuestions() {
             <label class="form-label">Question ${index + 1}</label>
             <input type="text" class="form-input" value="${escapeHtml(q.prompt)}" oninput="window.updateQuizQuestion(${index}, 'prompt', this.value)" placeholder="Write the question...">
           </div>
+          <div class="form-group" style="margin-top:4px;">
+            <input type="text" class="form-input" value="${escapeHtml(q.imageUrl || '')}" oninput="window.updateQuizQuestion(${index}, 'imageUrl', this.value)" placeholder="Image URL (optional)" style="font-size:0.85rem;">
+          </div>
+          ${imagePreview}
           <div class="quiz-question-meta">
             <select class="form-select" onchange="window.updateQuizQuestion(${index}, 'type', this.value)">
               ${typeOptions}
@@ -261,6 +267,13 @@ export function updateQuizQuestion(index, field, value) {
 
   if (field === 'correctAnswer' && question.type === 'multiple_choice') {
     question.correctAnswer = parseInt(value, 10);
+    return;
+  }
+
+  if (field === 'imageUrl') {
+    question.imageUrl = value || null;
+    // Re-render to show/hide preview
+    renderQuizQuestions();
     return;
   }
 
@@ -469,6 +482,7 @@ export function renderQuizTakeModal(quiz) {
     const type = q.type || 'mc_single';
     const pts = parseFloat(q.points) || 1;
     const hintHtml = q.hint ? `<div class="quiz-hint" style="margin-top:4px;"><button class="btn btn-secondary btn-sm" style="font-size:0.8rem;" onclick="this.nextElementSibling.style.display='block';this.style.display='none';">Show Hint</button><div style="display:none; margin-top:4px; padding:8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(q.hint)}</div></div>` : '';
+    const imageHtml = q.imageUrl ? `<div style="margin:8px 0;"><img src="${escapeHtml(q.imageUrl)}" style="max-width:100%; max-height:300px; border-radius:var(--radius);" alt="Question image"></div>` : '';
 
     if (type === 'mc_single' || type === 'multiple_choice') {
       let opts = q.options || [];
@@ -476,6 +490,7 @@ export function renderQuizTakeModal(quiz) {
       return `
         <div class="quiz-question-block">
           <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${imageHtml}
           ${hintHtml}
           ${opts.map((opt, optIndex) => `
             <label class="quiz-answer-option">
@@ -493,6 +508,7 @@ export function renderQuizTakeModal(quiz) {
       return `
         <div class="quiz-question-block">
           <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — select all that apply)</span></div>
+          ${imageHtml}
           ${hintHtml}
           ${opts.map((opt, optIndex) => `
             <label class="quiz-answer-option">
@@ -508,6 +524,7 @@ export function renderQuizTakeModal(quiz) {
       return `
         <div class="quiz-question-block">
           <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${imageHtml}
           ${hintHtml}
           ${['True', 'False'].map(option => `
             <label class="quiz-answer-option">
@@ -523,6 +540,7 @@ export function renderQuizTakeModal(quiz) {
       return `
         <div class="quiz-question-block">
           <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${imageHtml}
           ${hintHtml}
           <input type="text" class="form-input" id="quizAnswer${index}" placeholder="Type your answer here...">
         </div>
@@ -535,6 +553,7 @@ export function renderQuizTakeModal(quiz) {
       return `
         <div class="quiz-question-block">
           <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+          ${imageHtml}
           ${hintHtml}
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
             <div style="font-size:0.8rem; color:var(--text-secondary); padding-bottom:4px;">Source</div>

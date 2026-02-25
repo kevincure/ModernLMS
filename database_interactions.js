@@ -270,7 +270,8 @@ export async function loadDataFromSupabase() {
       feedback: g.feedback,
       released: g.released,
       gradedBy: g.graded_by,
-      gradedAt: g.graded_at
+      gradedAt: g.graded_at,
+      excused: g.excused || false
     }));
 
     appData.announcements = (announcementsRes.data || []).map(a => ({
@@ -297,7 +298,8 @@ export async function loadDataFromSupabase() {
       description: f.description,
       isPlaceholder: f.is_placeholder,
       isYouTube: f.is_youtube,
-      hidden: f.hidden || false
+      hidden: f.hidden || false,
+      folder: f.folder || null
     }));
 
     // Transform quizzes with their questions
@@ -1165,7 +1167,8 @@ export async function supabaseCreateGrade(grade) {
     score: grade.score,
     feedback: grade.feedback || null,
     released: grade.released || false,
-    graded_by: grade.gradedBy || appData.currentUser?.id
+    graded_by: grade.gradedBy || appData.currentUser?.id,
+    excused: grade.excused || false
   }, { onConflict: 'submission_id' }).select().single();
 
   if (error) {
@@ -1514,7 +1517,8 @@ export async function supabaseCreateFile(file) {
     description: file.description,
     is_placeholder: file.isPlaceholder,
     is_youtube: file.isYouTube,
-    hidden: file.hidden || false
+    hidden: file.hidden || false,
+    folder: file.folder || null
   };
 
   const { data, error } = await supabaseClient.from('files').insert(modernPayload).select().single();
@@ -1600,7 +1604,8 @@ export async function supabaseUpdateFile(file) {
     description: file.description,
     is_placeholder: file.isPlaceholder,
     is_youtube: file.isYouTube,
-    hidden: file.hidden || false
+    hidden: file.hidden || false,
+    folder: file.folder || null
   };
 
   const { data, error } = await supabaseClient.from('files').update(modernPayload).eq('id', file.id).select().maybeSingle();
