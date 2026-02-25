@@ -50,6 +50,7 @@ import {
   supabaseUpdateModule,
   supabaseDeleteModule,
   supabaseCreateModuleItem,
+  supabaseUpdateModuleItem,
   supabaseDeleteModuleItem,
   supabaseCreateRubric,
   supabaseUpdateRubric,
@@ -473,8 +474,8 @@ function showConfigError() {
   }
 }
 
-// Global debug function - call window.checkAuth() from browser console to verify auth state
-window.checkAuth = async function() {
+// Global debug function - call window.debugCheckAuth() from browser console to verify auth state
+window.debugCheckAuth = async function() {
   console.log('=== Supabase Auth Debug ===');
 
   if (!supabaseClient) {
@@ -1216,8 +1217,16 @@ function initApp() {
   const courses = getUserCourses(appData.currentUser.id);
   console.log('[App] User courses:', courses.length);
 
-  if (courses.length > 0 && !activeCourseId) {
-    activeCourseId = courses[0].id;
+  // Reset leaked/stale course selection (e.g. after logout/login as another user)
+  if (courses.length === 0) {
+    activeCourseId = null;
+    studentViewMode = false;
+  } else {
+    const hasSelectedCourse = courses.some(c => c.id === activeCourseId);
+    if (!hasSelectedCourse) {
+      activeCourseId = courses[0].id;
+      studentViewMode = false;
+    }
   }
 
   // Keep extracted modules (AI/quiz/files/modals) in sync on initial bootstrap.
@@ -1225,7 +1234,6 @@ function initApp() {
     updateModuleActiveCourse(activeCourseId);
   }
 
-  populateCourseSelector();
   renderAll();
   navigateTo('courses');
 
@@ -1235,34 +1243,14 @@ function initApp() {
   console.log('[App] App initialized successfully');
 }
 
-function populateCourseSelector() {
-  const courses = getUserCourses(appData.currentUser.id);
-  const select = document.getElementById('courseSelect');
-
-  if (!select) {
-    return;
-  }
-  
-  if (courses.length === 0) {
-    select.innerHTML = '<option value="">No courses</option>';
-    return;
-  }
-  
-  select.innerHTML = courses.map(c => 
-    `<option value="${c.id}" ${c.id === activeCourseId ? 'selected' : ''}>${c.name} (${c.role})</option>`
-  ).join('');
-}
-
 function switchCourse(courseId) {
   activeCourseId = courseId;
   updateModuleActiveCourse(courseId); // Notify modules of course change
-  populateCourseSelector();
   renderAll();
   navigateTo('home');
 }
 
 function renderAll() {
-  populateCourseSelector(); // Update dropdown
   renderTopBarCourse();
   renderTopBarActions();
   renderTopBarViewToggle();
@@ -1662,7 +1650,12 @@ async function createCourse() {
   };
 
   // Save to Supabase
-  await supabaseCreateCourse(course);
+  const savedCourse = await supabaseCreateCourse(course);
+  if (!savedCourse) {
+    console.error('[createCourse] Failed to persist course; aborting local state mutation', { courseId, name, code });
+    showToast('Failed to create course in database', 'error');
+    return;
+  }
 
   // Update local state
   appData.courses.push(course);
@@ -1674,7 +1667,12 @@ async function createCourse() {
   };
 
   // Save enrollment to Supabase
-  await supabaseCreateEnrollment(enrollment);
+  const savedEnrollment = await supabaseCreateEnrollment(enrollment);
+  if (!savedEnrollment) {
+    console.error('[createCourse] Course was created but instructor enrollment failed; aborting local enrollment state mutation', { courseId, userId: appData.currentUser.id });
+    showToast('Course created, but failed to enroll you as instructor. Please retry or contact admin.', 'error');
+    return;
+  }
 
   // Update local state
   appData.enrollments.push(enrollment);
@@ -1699,8 +1697,12 @@ async function createCourse() {
             courseId: courseId,
             role: 'student'
           };
-          await supabaseCreateEnrollment(studentEnrollment);
-          appData.enrollments.push(studentEnrollment);
+          const enrolledStudent = await supabaseCreateEnrollment(studentEnrollment);
+          if (enrolledStudent) {
+            appData.enrollments.push(studentEnrollment);
+          } else {
+            console.error('[createCourse] Failed to auto-enroll existing user from course invite list', { courseId, email, userId: user.id });
+          }
         }
       } else {
         // User doesn't exist - create invite (default to student role)
@@ -1711,8 +1713,12 @@ async function createCourse() {
           status: 'pending',
           sentAt: new Date().toISOString()
         };
-        await supabaseCreateInvite(invite);
-        appData.invites.push(invite);
+        const savedInvite = await supabaseCreateInvite(invite);
+        if (savedInvite?.id) {
+          appData.invites.push({ ...invite, id: savedInvite.id });
+        } else {
+          console.error('[createCourse] Failed to create invite during course creation', { courseId, email });
+        }
       }
     }
   }
@@ -1756,9 +1762,13 @@ async function createCourse() {
             questions: [],
             isPlaceholder: true
           };
-          await supabaseCreateQuiz(newQuiz);
-          appData.quizzes.push(newQuiz);
-          refId = newQuiz.id;
+          const savedQuiz = await supabaseCreateQuiz(newQuiz);
+          if (savedQuiz) {
+            appData.quizzes.push(newQuiz);
+            refId = newQuiz.id;
+          } else {
+            console.error('[createCourse] Failed to create placeholder quiz from syllabus import', { courseId, title: item.title });
+          }
         } else if (item.type === 'reading') {
           const newFile = {
             id: generateId(),
@@ -1772,9 +1782,13 @@ async function createCourse() {
             uploadedBy: appData.currentUser.id,
             uploadedAt: new Date().toISOString()
           };
-          await supabaseCreateFile(newFile);
-          appData.files.push(newFile);
-          refId = newFile.id;
+          const savedFile = await supabaseCreateFile(newFile);
+          if (savedFile) {
+            appData.files.push(newFile);
+            refId = newFile.id;
+          } else {
+            console.error('[createCourse] Failed to create placeholder reading file from syllabus import', { courseId, title: item.title });
+          }
         } else {
           const newAssignment = {
             id: generateId(),
@@ -1788,9 +1802,13 @@ async function createCourse() {
             createdAt: new Date().toISOString(),
             isPlaceholder: true
           };
-          await supabaseCreateAssignment(newAssignment);
-          appData.assignments.push(newAssignment);
-          refId = newAssignment.id;
+          const savedAssignment = await supabaseCreateAssignment(newAssignment);
+          if (savedAssignment) {
+            appData.assignments.push(newAssignment);
+            refId = newAssignment.id;
+          } else {
+            console.error('[createCourse] Failed to create placeholder assignment from syllabus import', { courseId, title: item.title });
+          }
         }
 
         if (refId) {
@@ -1804,9 +1822,22 @@ async function createCourse() {
         }
       }
 
-      await supabaseCreateModule(newModule);
+      const savedModule = await supabaseCreateModule(newModule);
+      if (!savedModule) {
+        console.error('[createCourse] Failed to create module from syllabus import', { courseId, moduleName: mod.name });
+        continue;
+      }
+
       for (const moduleItem of newModule.items) {
-        await supabaseCreateModuleItem(moduleItem, newModule.id);
+        const savedModuleItem = await supabaseCreateModuleItem(moduleItem, newModule.id);
+        if (!savedModuleItem) {
+          console.error('[createCourse] Failed to create module item from syllabus import', {
+            courseId,
+            moduleId: newModule.id,
+            itemType: moduleItem.type,
+            refId: moduleItem.refId
+          });
+        }
       }
       appData.modules.push(newModule);
       modulesImported++;
@@ -1903,7 +1934,11 @@ async function acceptInvite(inviteId) {
   appData.enrollments.push(enrollment);
 
   // Mark invite accepted
-  await supabaseUpdateInviteStatus(inviteId, 'accepted');
+  const inviteAccepted = await supabaseUpdateInviteStatus(inviteId, 'accepted');
+  if (!inviteAccepted) {
+    showToast('Failed to update invite status', 'error');
+    return;
+  }
   const inv = appData.invites.find(i => i.id === inviteId);
   if (inv) inv.status = 'accepted';
 
@@ -1924,7 +1959,11 @@ async function acceptInvite(inviteId) {
 window.acceptInvite = acceptInvite;
 
 async function rejectInvite(inviteId) {
-  await supabaseUpdateInviteStatus(inviteId, 'rejected');
+  const inviteRejected = await supabaseUpdateInviteStatus(inviteId, 'rejected');
+  if (!inviteRejected) {
+    showToast('Failed to update invite status', 'error');
+    return;
+  }
   const inv = (appData.invites || []).find(i => i.id === inviteId);
   if (inv) inv.status = 'rejected';
 
@@ -2349,6 +2388,11 @@ async function toggleAnnouncementVisibility(id) {
 }
 
 async function createAnnouncement() {
+  if (!activeCourseId) {
+    showToast('Please select an active course first', 'error');
+    return;
+  }
+
   const title = document.getElementById('announcementTitle').value.trim();
   const content = document.getElementById('announcementContent').value.trim();
   const pinned = document.getElementById('announcementPinned').checked;
@@ -2446,6 +2490,10 @@ async function saveAnnouncementChanges() {
 
 async function updateAnnouncement() {
   if (!currentEditAnnouncementId) return;
+  if (!activeCourseId) {
+    showToast('Please select an active course first', 'error');
+    return;
+  }
 
   const announcement = appData.announcements.find(a => a.id === currentEditAnnouncementId);
   if (!announcement) return;
@@ -2783,7 +2831,7 @@ function renderCalendar() {
   const items = [
     ...appData.assignments
       .filter(a => a.courseId === activeCourseId)
-      .filter(a => effectiveStaff || a.status === 'published')
+      .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
       .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status })),
     ...appData.quizzes
       .filter(q => q.courseId === activeCourseId)
@@ -2830,13 +2878,14 @@ function exportCalendarICS() {
   if (!activeCourseId) return;
   const course = getCourseById(activeCourseId);
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isStaffUser && !studentViewMode;
 
   const items = [
     ...(appData.assignments || [])
-      .filter(a => a.courseId === activeCourseId && (isStaffUser || a.status === 'published') && a.dueDate)
+      .filter(a => a.courseId === activeCourseId && (effectiveStaff || (a.status === 'published' && !a.hidden)) && a.dueDate)
       .map(a => ({ id: a.id, title: `[Assignment] ${a.title}`, date: new Date(a.dueDate), description: a.description || '' })),
     ...(appData.quizzes || [])
-      .filter(q => q.courseId === activeCourseId && (isStaffUser || q.status === 'published') && q.dueDate)
+      .filter(q => q.courseId === activeCourseId && (effectiveStaff || q.status === 'published') && q.dueDate)
       .map(q => ({ id: q.id, title: `[Quiz] ${q.title}`, date: new Date(q.dueDate), description: q.description || '' }))
   ];
 
@@ -2915,61 +2964,8 @@ function normalizeContentStatus(status) {
 }
 
 async function createAssignment() {
-  const title = document.getElementById('assignmentTitle').value.trim();
-  const description = document.getElementById('assignmentDescription').value.trim();
-  const category = document.getElementById('assignmentCategory').value;
-  const points = parseInt(document.getElementById('assignmentPoints').value);
-  const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
-  const allowLate = document.getElementById('assignmentAllowLate').checked;
-  const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
-  const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
-  const blindGrading = document.getElementById('assignmentBlindGrading')?.checked || false;
-
-  if (!title || !description || !points || !dueDate) {
-    showToast('Please fill in all required fields', 'error');
-    return;
-  }
-
-  const assignmentId = generateId();
-  const assignment = {
-    id: assignmentId,
-    courseId: activeCourseId,
-    title: title,
-    description: description,
-    category: category,
-    points: points,
-    status: status,
-    hidden: status !== 'published',
-    dueDate: new Date(dueDate).toISOString(),
-    createdAt: new Date().toISOString(),
-    allowLateSubmissions: allowLate,
-    lateDeduction: lateDeduction,
-    allowResubmission: allowResubmit,
-    blindGrading: blindGrading,
-    rubric: null
-  };
-
-  try {
-    // Save to Supabase
-    const result = await supabaseCreateAssignment(assignment);
-    if (!result) {
-      return; // Error already shown by supabase function
-    }
-
-    // Update local state
-    appData.assignments.push(assignment);
-  
-
-    closeModal('assignmentModal');
-    resetAssignmentModal();
-    renderAssignments();
-    renderHome();
-    showToast('Assignment created!', 'success');
-  } catch (err) {
-    console.error('[createAssignment] Error:', err);
-    showToast('Failed to create assignment: ' + err.message, 'error');
-  }
+  // Deprecated path — routed to the CC 1.4 assignment modal
+  openNewAssignmentModal();
 }
 
 function openCreateAssignmentTypeModal() {
@@ -3018,108 +3014,35 @@ function confirmCreateType() {
 
   if (type === 'quiz') {
     openQuizModal();
-  } else {
-    openAssignmentModal();
-    document.getElementById('assignmentCategory').value = type;
+    return;
+  }
+
+  // Route all assignment creation through the new CC 1.4 modal.
+  openNewAssignmentModal();
+  if (type === 'essay' || type === 'homework' || type === 'project') {
+    setAssignmentType('essay');
   }
 }
 
 let currentEditAssignmentId = null;
 
 function openAssignmentModal(assignmentId = null) {
-  ensureModalsRendered();
-  currentEditAssignmentId = assignmentId;
-  const assignment = assignmentId ? appData.assignments.find(a => a.id === assignmentId) : null;
-
-  document.getElementById('assignmentModalTitle').textContent = assignment ? 'Edit Assignment' : 'New Assignment';
-  document.getElementById('assignmentSubmitBtn').textContent = assignment ? 'Save Changes' : 'Create';
-  document.getElementById('assignmentTitle').value = assignment ? assignment.title : '';
-  document.getElementById('assignmentDescription').value = assignment ? assignment.description : '';
-  document.getElementById('assignmentCategory').value = assignment ? assignment.category : 'homework';
-  document.getElementById('assignmentPoints').value = assignment ? assignment.points : '100';
-  setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', assignment ? assignment.dueDate : null);
-  document.getElementById('assignmentStatus').value = assignment ? normalizeContentStatus(assignment.status) : 'draft';
-  document.getElementById('assignmentAllowLate').checked = assignment ? assignment.allowLateSubmissions !== false : true;
-  document.getElementById('assignmentLateDeduction').value = assignment ? assignment.lateDeduction || 0 : '10';
-  document.getElementById('assignmentAllowResubmit').checked = assignment ? assignment.allowResubmission !== false : true;
-
-  openModal('assignmentModal');
+  // Deprecated path — use the new CC 1.4 assignment modal
+  openNewAssignmentModal(assignmentId);
 }
 
 function resetAssignmentModal() {
-  currentEditAssignmentId = null;
-  document.getElementById('assignmentModalTitle').textContent = 'New Assignment';
-  document.getElementById('assignmentSubmitBtn').textContent = 'Create';
-  document.getElementById('assignmentTitle').value = '';
-  document.getElementById('assignmentDescription').value = '';
-  document.getElementById('assignmentCategory').value = 'homework';
-  document.getElementById('assignmentPoints').value = '100';
-  setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', null);
-  document.getElementById('assignmentStatus').value = 'draft';
-  document.getElementById('assignmentAllowLate').checked = true;
-  document.getElementById('assignmentLateDeduction').value = '10';
-  document.getElementById('assignmentAllowResubmit').checked = true;
+  // Deprecated path — kept as a no-op for backward compatibility with stale onclick handlers
 }
 
 async function saveAssignmentChanges() {
-  if (currentEditAssignmentId) {
-    await updateAssignment();
-  } else {
-    await createAssignment();
-  }
+  // Deprecated path — delegate to the new assignment save flow
+  await saveNewAssignment();
 }
 
 async function updateAssignment() {
-  if (!currentEditAssignmentId) return;
-
-  const assignment = appData.assignments.find(a => a.id === currentEditAssignmentId);
-  if (!assignment) return;
-
-  const title = document.getElementById('assignmentTitle').value.trim();
-  const description = document.getElementById('assignmentDescription').value.trim();
-  const category = document.getElementById('assignmentCategory').value;
-  const points = parseInt(document.getElementById('assignmentPoints').value);
-  const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
-  const allowLate = document.getElementById('assignmentAllowLate').checked;
-  const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
-  const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
-
-  if (!title || !description || !points || !dueDate) {
-    showToast('Please fill in all required fields', 'error');
-    return;
-  }
-
-  const previousStatus = assignment.status;
-
-  // Store original values for rollback
-  const original = { ...assignment };
-
-  assignment.title = title;
-  assignment.description = description;
-  assignment.category = category;
-  assignment.points = points;
-  assignment.status = status;
-  assignment.hidden = status !== 'published';
-  assignment.dueDate = new Date(dueDate).toISOString();
-  assignment.allowLateSubmissions = allowLate;
-  assignment.lateDeduction = lateDeduction;
-  assignment.allowResubmission = allowResubmit;
-
-  // Save to Supabase
-  const result = await supabaseUpdateAssignment(assignment);
-  if (!result) {
-    // Rollback
-    Object.assign(assignment, original);
-    return;
-  }
-
-
-  closeModal('assignmentModal');
-  resetAssignmentModal();
-  renderAssignments();
-  renderHome();
-  showToast('Assignment updated!', 'success');
+  // Deprecated path — delegate to the new assignment save flow
+  await saveNewAssignment();
 }
 
 function editAssignment(assignmentId) {
@@ -3235,9 +3158,13 @@ function deleteQuestionBank(bankId) {
 
   ensureModalsRendered();
   showConfirmDialog(`Delete "${bank.name}"? This cannot be undone.`, async () => {
-    await supabaseDeleteQuestionBank(bankId);
+    const deleted = await supabaseDeleteQuestionBank(bankId);
+    if (!deleted) {
+      showToast('Failed to delete question bank', 'error');
+      return;
+    }
     appData.questionBanks = appData.questionBanks.filter(b => b.id !== bankId);
-  
+
     renderQuestionBankList();
     showToast('Question bank deleted', 'success');
   });
@@ -3936,12 +3863,20 @@ async function saveQuestionBank() {
   if (currentEditQuestionBankId) {
     const bank = appData.questionBanks.find(b => b.id === currentEditQuestionBankId);
     if (bank) {
-      bank.name = name;
-      bank.description = description;
-      bank.defaultPointsPerQuestion = defaultPts;
-      bank.randomize = randomize;
-      bank.questions = questionBankDraftQuestions;
-      await supabaseUpdateQuestionBank(bank);
+      const updatedBank = {
+        ...bank,
+        name,
+        description,
+        defaultPointsPerQuestion: defaultPts,
+        randomize,
+        questions: questionBankDraftQuestions
+      };
+      const persisted = await supabaseUpdateQuestionBank(updatedBank);
+      if (!persisted) {
+        showToast('Failed to update question bank', 'error');
+        return;
+      }
+      Object.assign(bank, updatedBank);
       // Refresh auto-calculated points for any quiz assignments using this bank
       (appData.assignments || []).forEach(a => {
         if (a.questionBankId === bank.id && a.assignmentType === 'quiz') {
@@ -3961,8 +3896,12 @@ async function saveQuestionBank() {
       createdAt: new Date().toISOString(),
       createdBy: appData.currentUser?.id
     };
+    const persisted = await supabaseCreateQuestionBank(newBank);
+    if (!persisted) {
+      showToast('Failed to create question bank', 'error');
+      return;
+    }
     appData.questionBanks.push(newBank);
-    await supabaseCreateQuestionBank(newBank);
   }
 
   closeModal('questionBankEditModal');
@@ -4020,7 +3959,7 @@ function openNewAssignmentModal(assignmentId = null) {
       document.getElementById('newAssignmentMaxFileSize').value = assignment.maxFileSizeMb || 50;
       document.getElementById('essayGradingType').value = assignment.gradingType || 'points';
       handleGradingTypeChange('essay');
-      document.getElementById('newAssignmentPoints').value = assignment.points || 100;
+      document.getElementById('newAssignmentPoints').value = assignment.points ?? 100;
       const limitGroup = document.getElementById('resubmitLimitGroup');
       if (limitGroup) limitGroup.style.display = 'flex';
       document.getElementById('newAssignmentAttempts').value = assignment.submissionAttempts || '';
@@ -4048,7 +3987,7 @@ function openNewAssignmentModal(assignmentId = null) {
     } else if (atype === 'no_submission') {
       document.getElementById('noSubGradingType').value = assignment.gradingType || 'points';
       handleGradingTypeChange('nosub');
-      document.getElementById('newAssignmentNoSubPoints').value = assignment.points || 100;
+      document.getElementById('newAssignmentNoSubPoints').value = assignment.points ?? 100;
     }
 
     // Dates — load into date+time-select pairs
@@ -4337,6 +4276,11 @@ function syncAvailableUntilToDueDate() {
 window.syncAvailableUntilToDueDate = syncAvailableUntilToDueDate;
 
 async function saveNewAssignment() {
+  if (!activeCourseId) {
+    showToast('No active course selected', 'error');
+    return;
+  }
+
   // Determine which assignment type is selected
   const radio = document.querySelector('input[name="newAssignmentType"]:checked');
   const assignmentType = radio ? radio.value : 'essay';
@@ -4367,7 +4311,12 @@ async function saveNewAssignment() {
 
   if (assignmentType === 'essay') {
     gradingType = document.getElementById('essayGradingType').value;
-    points = gradingType === 'points' ? (parseFloat(document.getElementById('newAssignmentPoints').value) || 100) : 0;
+    if (gradingType === 'points') {
+      const rawPoints = parseFloat(document.getElementById('newAssignmentPoints').value);
+      points = Number.isFinite(rawPoints) ? rawPoints : 100;
+    } else {
+      points = 0;
+    }
     const textChecked = document.getElementById('newAssignmentModalityText').checked;
     const fileChecked = document.getElementById('newAssignmentModalityFile').checked;
     if (!textChecked && !fileChecked) {
@@ -4413,7 +4362,12 @@ async function saveNewAssignment() {
 
   } else if (assignmentType === 'no_submission') {
     gradingType = document.getElementById('noSubGradingType').value;
-    points = gradingType === 'points' ? (parseFloat(document.getElementById('newAssignmentNoSubPoints').value) || 0) : 0;
+    if (gradingType === 'points') {
+      const rawNoSubPoints = parseFloat(document.getElementById('newAssignmentNoSubPoints').value);
+      points = Number.isFinite(rawNoSubPoints) ? rawNoSubPoints : 0;
+    } else {
+      points = 0;
+    }
   }
 
   if (!title) {
@@ -4444,8 +4398,8 @@ async function saveNewAssignment() {
   const legacyCategory = assignmentType === 'quiz' ? 'quiz' :
                          assignmentType === 'no_submission' ? 'participation' : 'essay';
 
-  // No-submission assignments are always draft/hidden — no dates needed
-  const effectiveStatus = assignmentType === 'no_submission' ? 'draft' : status;
+  // Status/visibility follow the same logic for all assignment types
+  const effectiveStatus = status;
 
   const fields = {
     title, description, points,
@@ -4980,10 +4934,6 @@ async function saveGrade(submissionId) {
     return;
   }
 
-  // Remove existing grade if any from local state
-  appData.grades = appData.grades.filter(g => g.submissionId !== submissionId);
-
-  // Create new grade
   const gradeObj = {
     submissionId: submissionId,
     score: score,
@@ -4993,10 +4943,17 @@ async function saveGrade(submissionId) {
     gradedAt: new Date().toISOString()
   };
 
-  // Save to Supabase
-  await supabaseUpsertGrade(gradeObj);
+  // Persist first; mutate local state only on success
+  const savedGrade = await supabaseUpsertGrade(gradeObj);
+  if (!savedGrade) {
+    showToast('Failed to save grade', 'error');
+    return;
+  }
 
-  appData.grades.push(gradeObj);
+  const existingIdx = appData.grades.findIndex(g => g.submissionId === submissionId);
+  if (existingIdx >= 0) appData.grades[existingIdx] = gradeObj;
+  else appData.grades.push(gradeObj);
+
   // Caliper: GradeEvent/Graded
   const gradedAssignment = appData.assignments.find(a => {
     const sub = appData.submissions.find(s => s.id === submissionId);
@@ -5531,18 +5488,31 @@ async function handleModuleDrop(event) {
 
   if (draggedIndex === -1 || targetIndex === -1) return;
 
-  // Reorder
-  const [removed] = modules.splice(draggedIndex, 1);
-  modules.splice(targetIndex, 0, removed);
+  const reordered = [...modules];
+  const [removed] = reordered.splice(draggedIndex, 1);
+  reordered.splice(targetIndex, 0, removed);
 
-  // Update positions in local state and Supabase
-  for (let i = 0; i < modules.length; i++) {
-    const mod = appData.modules.find(x => x.id === modules[i].id);
-    if (mod && mod.position !== i) {
-      mod.position = i;
-      await supabaseUpdateModule(mod);
+  const updates = [];
+  for (let i = 0; i < reordered.length; i++) {
+    if (reordered[i].position !== i) {
+      updates.push({ moduleId: reordered[i].id, position: i });
     }
   }
+
+  for (const update of updates) {
+    const module = appData.modules.find(x => x.id === update.moduleId);
+    if (!module) continue;
+    const persisted = await supabaseUpdateModule({ ...module, position: update.position });
+    if (!persisted) {
+      showToast('Failed to reorder modules', 'error');
+      return;
+    }
+  }
+
+  updates.forEach(update => {
+    const module = appData.modules.find(x => x.id === update.moduleId);
+    if (module) module.position = update.position;
+  });
 
   renderModules();
 }
@@ -5586,42 +5556,49 @@ async function handleModuleItemDrop(event) {
 
   if (!sourceModule || !targetModule) return;
 
-  const sourceItemIndex = sourceModule.items.findIndex(i => i.id === draggedModuleItem.itemId);
+  const sourceItems = (sourceModule.items || []).map(item => ({ ...item }));
+  const targetItems = sourceModule.id === targetModule.id
+    ? sourceItems
+    : (targetModule.items || []).map(item => ({ ...item }));
+
+  const sourceItemIndex = sourceItems.findIndex(i => i.id === draggedModuleItem.itemId);
   if (sourceItemIndex === -1) return;
 
-  const [movedItem] = sourceModule.items.splice(sourceItemIndex, 1);
+  const [movedItem] = sourceItems.splice(sourceItemIndex, 1);
 
   if (targetEl) {
     const targetItemId = targetEl.dataset.itemId;
-    const targetItemIndex = targetModule.items.findIndex(i => i.id === targetItemId);
-    targetModule.items.splice(targetItemIndex, 0, movedItem);
+    const targetItemIndex = targetItems.findIndex(i => i.id === targetItemId);
+    targetItems.splice(targetItemIndex, 0, movedItem);
   } else {
-    targetModule.items.push(movedItem);
+    targetItems.push(movedItem);
   }
 
-  // Update positions
-  sourceModule.items.forEach((item, i) => item.position = i);
-  targetModule.items.forEach((item, i) => item.position = i);
+  sourceItems.forEach((item, i) => { item.position = i; });
+  targetItems.forEach((item, i) => { item.position = i; });
 
-  // Persist to Supabase - update the module_item's module_id if it changed
+  const updates = [];
   if (sourceModule.id !== targetModule.id) {
-    // Item moved to different module - update module_id
-    await supabaseClient.from('module_items').update({
-      module_id: targetModule.id,
-      position: movedItem.position
-    }).eq('id', movedItem.id);
+    updates.push({ id: movedItem.id, payload: { module_id: targetModule.id, position: movedItem.position } });
   }
-
-  // Update positions for source module items
-  for (const item of sourceModule.items) {
-    await supabaseClient.from('module_items').update({ position: item.position }).eq('id', item.id);
-  }
-
-  // Update positions for target module items (if different from source)
+  sourceItems.forEach(item => updates.push({ id: item.id, payload: { position: item.position } }));
   if (sourceModule.id !== targetModule.id) {
-    for (const item of targetModule.items) {
-      await supabaseClient.from('module_items').update({ position: item.position }).eq('id', item.id);
+    targetItems.forEach(item => {
+      if (item.id !== movedItem.id) updates.push({ id: item.id, payload: { position: item.position } });
+    });
+  }
+
+  for (const update of updates) {
+    const persisted = await supabaseUpdateModuleItem(update.id, update.payload);
+    if (!persisted) {
+      showToast('Failed to reorder module items', 'error');
+      return;
     }
+  }
+
+  sourceModule.items = sourceItems;
+  if (sourceModule.id !== targetModule.id) {
+    targetModule.items = targetItems;
   }
 
   renderModules();
@@ -5658,8 +5635,13 @@ async function saveModule() {
     // Update existing module
     const module = appData.modules.find(m => m.id === moduleId);
     if (module) {
+      const updatedModule = { ...module, name };
+      const persisted = await supabaseUpdateModule(updatedModule);
+      if (!persisted) {
+        showToast('Failed to update module', 'error');
+        return;
+      }
       module.name = name;
-      await supabaseUpdateModule(module);
     }
   } else {
     // Create new module
@@ -5674,7 +5656,11 @@ async function saveModule() {
       items: []
     };
 
-    await supabaseCreateModule(newModule);
+    const persisted = await supabaseCreateModule(newModule);
+    if (!persisted) {
+      showToast('Failed to create module', 'error');
+      return;
+    }
     appData.modules.push(newModule);
   }
 
@@ -5782,7 +5768,11 @@ async function addModuleItem() {
   };
 
   // Save to Supabase
-  await supabaseCreateModuleItem(newItem, moduleId);
+  const persisted = await supabaseCreateModuleItem(newItem, moduleId);
+  if (!persisted) {
+    showToast('Failed to add item to module', 'error');
+    return;
+  }
 
   // Update local state
   module.items.push(newItem);
@@ -5798,7 +5788,11 @@ async function removeModuleItem(moduleId, itemId) {
   if (!module) return;
 
   // Delete from Supabase
-  await supabaseDeleteModuleItem(itemId);
+  const deleted = await supabaseDeleteModuleItem(itemId);
+  if (!deleted) {
+    showToast('Failed to remove module item', 'error');
+    return;
+  }
 
   // Update local state
   module.items = module.items.filter(i => i.id !== itemId);
@@ -7227,36 +7221,35 @@ async function saveManualGrade() {
       submittedAt: new Date().toISOString(),
       isManual: true
     };
+
+    // Persist before local mutation
+    const savedSubmission = await supabaseCreateSubmission(submission);
+    if (!savedSubmission) {
+      showToast('Failed to create submission record for manual grade', 'error');
+      return;
+    }
     appData.submissions.push(submission);
-
-    // Save submission to Supabase
-    await supabaseCreateSubmission(submission);
   }
 
-  // Update or create grade
-  let existingGrade = appData.grades.find(g => g.submissionId === submission.id);
+  const gradePayload = {
+    submissionId: submission.id,
+    score: score,
+    feedback: feedback,
+    released: released,
+    gradedBy: appData.currentUser.id,
+    gradedAt: new Date().toISOString()
+  };
 
-  if (existingGrade) {
-    existingGrade.score = score;
-    existingGrade.feedback = feedback;
-    existingGrade.released = released;
-    existingGrade.gradedBy = appData.currentUser.id;
-    existingGrade.gradedAt = new Date().toISOString();
-  } else {
-    existingGrade = {
-      submissionId: submission.id,
-      score: score,
-      feedback: feedback,
-      released: released,
-      gradedBy: appData.currentUser.id,
-      gradedAt: new Date().toISOString()
-    };
-    appData.grades.push(existingGrade);
+  const savedGrade = await supabaseUpsertGrade(gradePayload);
+  if (!savedGrade) {
+    showToast('Failed to save grade', 'error');
+    return;
   }
 
-  // Save grade to Supabase
-  await supabaseUpsertGrade(existingGrade);
-
+  // Update local only after successful persistence
+  const gradeIdx = appData.grades.findIndex(g => g.submissionId === submission.id);
+  if (gradeIdx >= 0) appData.grades[gradeIdx] = gradePayload;
+  else appData.grades.push(gradePayload);
 
   closeModal('manualGradeModal');
   renderGradebook();
@@ -7394,7 +7387,7 @@ function renderPeopleList() {
             <div class="muted" style="font-size:0.8rem;">${p.email}</div>
           </div>
           ${isStaffUser && p.id !== appData.currentUser.id ? `
-            <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
+            <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
           ` : ''}
         </div>
       `;
@@ -7533,7 +7526,7 @@ function renderPeople() {
             <div class="muted" style="font-size:0.8rem;">${p.email}</div>
           </div>
           ${isStaffUser && p.id !== appData.currentUser.id ? `
-            <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
+            <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
           ` : ''}
         </div>
       `;
@@ -8059,22 +8052,28 @@ async function updateCourse() {
   const course = getCourseById(currentEditCourseId);
   if (!course) return;
 
-  course.name = document.getElementById('editCourseName').value.trim();
-  course.code = document.getElementById('editCourseCode').value.trim();
-  course.description = document.getElementById('editCourseDescription').value.trim();
-  course.active = document.getElementById('editCourseActive').checked;
+  const updatedCourse = {
+    ...course,
+    name: document.getElementById('editCourseName').value.trim(),
+    code: document.getElementById('editCourseCode').value.trim(),
+    description: document.getElementById('editCourseDescription').value.trim(),
+    active: document.getElementById('editCourseActive').checked
+  };
 
-  if (!course.name || !course.code) {
+  if (!updatedCourse.name || !updatedCourse.code) {
     showToast('Please fill in course name and code', 'error');
     return;
   }
 
-  // Save to Supabase
-  const result = await supabaseUpdateCourse(course);
+  // Save to Supabase first; only mutate local state after successful persistence
+  const result = await supabaseUpdateCourse(updatedCourse);
   if (!result) {
-    return; // Error already shown
+    console.error('[updateCourse] Failed to persist course update; local state unchanged', { courseId: currentEditCourseId });
+    showToast('Failed to update course in database', 'error');
+    return;
   }
 
+  Object.assign(course, updatedCourse);
   closeModal('editCourseModal');
   renderAll();
   showToast('Course updated', 'success');
@@ -8205,20 +8204,31 @@ async function executeImportContent() {
         questions: (bank.questions || []).map(q => ({ ...q, id: generateId(), bankId: newBankId })),
         createdAt: new Date().toISOString()
       };
-      await supabaseCreateQuestionBank(newBank);
-      if (!appData.questionBanks) appData.questionBanks = [];
-      appData.questionBanks.push(newBank);
-      importedCount++;
+      const savedBank = await supabaseCreateQuestionBank(newBank);
+      if (savedBank) {
+        if (!appData.questionBanks) appData.questionBanks = [];
+        appData.questionBanks.push(newBank);
+        importedCount++;
+      } else {
+        console.error('[executeImportContent] Failed to import question bank', { sourceBankId: bank.id, destCourseId });
+      }
     }
   }
 
   // 2. Assignments (remap question bank IDs if banks were also imported)
+  // Supports all assignment types: essay, quiz, and no_submission
   if (selectedTypes.includes('assignments')) {
     const ids = selectedIds['assignments'];
     const pool = appData.assignments.filter(a => a.courseId === sourceCourseId && (!ids || ids.has(a.id)));
     for (const assignment of pool) {
       const newId = generateId();
       assignmentIdMap[assignment.id] = newId;
+
+      const assignmentType = assignment.assignmentType || 'essay';
+      const mappedQuestionBankId = assignment.questionBankId && bankIdMap[assignment.questionBankId]
+        ? bankIdMap[assignment.questionBankId]
+        : assignment.questionBankId;
+
       const newA = {
         ...assignment,
         id: newId,
@@ -8226,13 +8236,32 @@ async function executeImportContent() {
         status: 'draft',
         dueDate: new Date(Date.now() + 86400000 * 14).toISOString(),
         createdAt: new Date().toISOString(),
-        questionBankId: assignment.questionBankId && bankIdMap[assignment.questionBankId]
-          ? bankIdMap[assignment.questionBankId]
-          : assignment.questionBankId
+        assignmentType,
+        questionBankId: mappedQuestionBankId
       };
-      await supabaseCreateAssignment(newA);
-      appData.assignments.push(newA);
-      importedCount++;
+
+      // Normalize key fields for known assignment subtypes
+      if (assignmentType === 'quiz') {
+        newA.gradingType = assignment.gradingType || 'points';
+        newA.timeLimit = assignment.timeLimit || null;
+        newA.submissionAttempts = assignment.submissionAttempts || null;
+        newA.randomizeQuestions = assignment.randomizeQuestions === true;
+      } else if (assignmentType === 'no_submission') {
+        newA.submissionModalities = [];
+        newA.allowResubmission = false;
+      }
+
+      const savedAssignment = await supabaseCreateAssignment(newA);
+      if (savedAssignment) {
+        appData.assignments.push(newA);
+        importedCount++;
+      } else {
+        console.error('[executeImportContent] Failed to import assignment', {
+          sourceAssignmentId: assignment.id,
+          destCourseId,
+          assignmentType
+        });
+      }
     }
   }
 
@@ -8265,7 +8294,11 @@ async function executeImportContent() {
         hidden: mod.hidden || false,
         items: []
       };
-      await supabaseCreateModule(newMod);
+      const savedModule = await supabaseCreateModule(newMod);
+      if (!savedModule) {
+        console.error('[executeImportContent] Failed to import module', { sourceModuleId: mod.id, destCourseId });
+        continue;
+      }
       for (const item of (mod.items || [])) {
         let newRefId = item.refId;
         if (item.type === 'assignment' && assignmentIdMap[item.refId]) newRefId = assignmentIdMap[item.refId];
@@ -8278,8 +8311,17 @@ async function executeImportContent() {
           url: item.url,
           position: item.position
         };
-        await supabaseCreateModuleItem(newItem, newMod.id);
-        newMod.items.push(newItem);
+        const savedModuleItem = await supabaseCreateModuleItem(newItem, newMod.id);
+        if (savedModuleItem) {
+          newMod.items.push(newItem);
+        } else {
+          console.error('[executeImportContent] Failed to import module item', {
+            sourceModuleId: mod.id,
+            destModuleId: newMod.id,
+            itemType: item.type,
+            refId: item.refId
+          });
+        }
       }
       if (!appData.modules) appData.modules = [];
       appData.modules.push(newMod);
@@ -8302,9 +8344,13 @@ async function executeImportContent() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      await supabaseCreateAnnouncement(newAnn);
-      appData.announcements.push(newAnn);
-      importedCount++;
+      const savedAnnouncement = await supabaseCreateAnnouncement(newAnn);
+      if (savedAnnouncement) {
+        appData.announcements.push(newAnn);
+        importedCount++;
+      } else {
+        console.error('[executeImportContent] Failed to import announcement', { sourceAnnouncementId: ann.id, destCourseId });
+      }
     }
   }
 
@@ -8500,25 +8546,8 @@ async function addPersonToCourse() {
 }
 
 function removePersonFromCourse(userId, courseId) {
-  const user = getUserById(userId);
-
-  // Ensure modals exist before calling confirm
-  if (!document.getElementById('confirmModal')) {
-    generateModals();
-  }
-
-  showConfirmDialog(`Remove ${user.name} from this course?`, async () => {
-    // Delete from Supabase
-    const result = await supabaseDeleteEnrollment(userId, courseId);
-    if (!result) {
-      return; // Error already shown
-    }
-
-    // Update local state
-    appData.enrollments = appData.enrollments.filter(e => !(e.userId === userId && e.courseId === courseId));
-    renderPeople();
-    showToast(`Removed ${user.name}`, 'success');
-  });
+  // Enrollment removals are now restricted to organization admin workflows.
+  showToast('Removing enrolled users is restricted to Admin. You can still revoke pending invites here.', 'warning');
 }
 
 function revokeInvite(inviteId) {
@@ -8653,19 +8682,25 @@ async function saveRubric() {
 
   if (existingRubric) {
     // Update existing rubric in Supabase
-    await supabaseUpdateRubric(existingRubric.id, rubricCriteria);
+    const updatedRubric = await supabaseUpdateRubric(existingRubric.id, rubricCriteria);
+    if (!updatedRubric) {
+      showToast('Failed to update rubric', 'error');
+      return;
+    }
     existingRubric.criteria = JSON.parse(JSON.stringify(rubricCriteria));
   } else {
     // Create new rubric in Supabase
     const result = await supabaseCreateRubric(currentRubricAssignment, rubricCriteria);
-    if (result) {
-      appData.rubrics.push({
-        id: result.id,
-        assignmentId: currentRubricAssignment,
-        criteria: JSON.parse(JSON.stringify(rubricCriteria))
-      });
-      assignment.rubric = result.id;
+    if (!result) {
+      showToast('Failed to create rubric', 'error');
+      return;
     }
+    appData.rubrics.push({
+      id: result.id,
+      assignmentId: currentRubricAssignment,
+      criteria: JSON.parse(JSON.stringify(rubricCriteria))
+    });
+    assignment.rubric = result.id;
   }
 
   closeModal('rubricModal');
@@ -8785,22 +8820,36 @@ async function saveCategoryWeights() {
     return;
   }
 
-  // Delete old weights for this course from Supabase
   const existingCategories = appData.gradeCategories.filter(c => c.courseId === activeCourseId);
+
+  // 1) Persist new weights first
+  const persistedWeights = [];
+  for (const weight of weights) {
+    const created = await supabaseCreateGradeCategory(weight);
+    if (!created) {
+      // Best-effort cleanup of newly-created rows in this attempt
+      for (const createdWeight of persistedWeights) {
+        if (createdWeight.id) await supabaseDeleteGradeCategory(createdWeight.id);
+      }
+      showToast('Failed to save assignment weights', 'error');
+      return;
+    }
+    persistedWeights.push({ ...weight, id: created.id || weight.id });
+  }
+
+  // 2) Remove prior persisted rows
   for (const cat of existingCategories) {
-    if (cat.id) {
-      await supabaseDeleteGradeCategory(cat.id);
+    if (!cat.id) continue;
+    const deleted = await supabaseDeleteGradeCategory(cat.id);
+    if (!deleted) {
+      showToast('Failed to replace old assignment weights', 'error');
+      return;
     }
   }
 
-  // Remove old weights for this course from local state
+  // 3) Mutate local only after all persistence succeeded
   appData.gradeCategories = appData.gradeCategories.filter(c => c.courseId !== activeCourseId);
-
-  // Add new weights to Supabase and local state
-  for (const weight of weights) {
-    await supabaseCreateGradeCategory(weight);
-    appData.gradeCategories.push(weight);
-  }
+  appData.gradeCategories.push(...persistedWeights);
 
   closeModal('categoryWeightsModal');
   renderGradebook();
@@ -9068,7 +9117,7 @@ function openUnifiedContentModal() {
 function createFromUnified(type) {
   closeModal('unifiedContentModal');
   if (type === 'assignment') {
-    openAssignmentModal();
+    openNewAssignmentModal();
   } else if (type === 'quiz') {
     openQuizModal();
   } else if (type === 'announcement') {
@@ -10146,7 +10195,7 @@ function openQuizTimeOverridesModal(quizId) {
         <td style="padding:8px;">${escapeHtml(s.name)}</td>
         <td style="padding:8px;" class="muted">${defaultLabel}</td>
         <td style="padding:8px;">
-          <input type="number" class="form-input" style="width:120px;" min="1" max="600"
+          <input type="number" class="form-input" style="width:120px;" min="0" max="600"
             id="qto_${s.id}" value="${override?.timeLimit || ''}" placeholder="min">
         </td>
         <td style="padding:8px;">
