@@ -359,12 +359,27 @@ function updateModuleStudentViewMode(mode) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let _openMenuId = null;
+let _menuOriginalParent = null;
+let _menuOriginalNextSibling = null;
 
 function closeMenu() {
   if (_openMenuId) {
     const menu = document.getElementById(_openMenuId);
-    if (menu) menu.classList.remove('menu-open');
+    if (menu) {
+      menu.classList.remove('menu-open');
+      // Restore menu to its original DOM position to avoid orphaned body-level elements
+      if (_menuOriginalParent) {
+        if (document.contains(_menuOriginalParent)) {
+          _menuOriginalParent.insertBefore(menu, _menuOriginalNextSibling || null);
+        } else {
+          // Original parent was removed by a re-render — discard the orphaned menu
+          menu.remove();
+        }
+      }
+    }
     _openMenuId = null;
+    _menuOriginalParent = null;
+    _menuOriginalNextSibling = null;
   }
 }
 
@@ -382,6 +397,13 @@ function toggleMenu(event, menuId) {
 
   const menu = document.getElementById(menuId);
   if (!menu) return;
+
+  // Move menu to <body> so it escapes any overflow / stacking-context ancestor
+  // (e.g. gradebook scroll container with overflow-y:auto).
+  // Track where it came from so closeMenu() can restore it.
+  _menuOriginalParent = menu.parentElement;
+  _menuOriginalNextSibling = menu.nextSibling;
+  document.body.appendChild(menu);
 
   const btn = event.currentTarget;
   const rect = btn.getBoundingClientRect();
@@ -6839,7 +6861,7 @@ function renderStaffGradebook() {
   // (stats box removed — analytics available per column header)
 
   const table = `
-    <div id="gradebookScrollWrap" style="overflow-x:auto; overflow-y:auto; max-height:280px; border:1px solid var(--border-light); border-radius:var(--radius);">
+    <div id="gradebookScrollWrap" style="overflow-x:auto; overflow-y:auto; max-height:420px; border:1px solid var(--border-light); border-radius:var(--radius);">
       <table style="width:100%; border-collapse:collapse;">
         <thead>
           <tr style="background:var(--bg-color); border-bottom:2px solid var(--border-color);">
@@ -6852,7 +6874,6 @@ function renderStaffGradebook() {
             </th>
             ${assignments.map(a => {
               const hiddenBadge = a.visibleToStudents === false ? '<span style="padding:2px 6px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.7rem; font-weight:600; display:inline-block; margin:1px 0;">Hidden</span>' : '';
-              const statsBadge = a.showStatsToStudents ? '<span style="font-size:0.6rem; background:#dbeafe; color:#1d4ed8; border-radius:4px; padding:1px 4px; white-space:nowrap; display:inline-block; margin:1px 0;">stats visible</span>' : '';
               const colMenuId = `menu-gb-col-${a.id}`;
               const allGrades = appData.submissions.filter(s => s.assignmentId === a.id)
                 .map(s => appData.grades.find(g => g.submissionId === s.id))
@@ -6864,7 +6885,7 @@ function renderStaffGradebook() {
                 : (anyReleased ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkHideGrades('${a.id}')">Hide Grades</button>` : '');
               const isActiveSortCol = gbColSort && gbColSort.id === a.id;
               const sortIndicator = isActiveSortCol ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : '';
-              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}<br>${hiddenBadge}${hiddenBadge && statsBadge ? ' ' : ''}${statsBadge}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button></div></th>`;
+              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}${hiddenBadge ? '<br>' + hiddenBadge : ''}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button></div></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">%</th>
             ${gradeSettings ? '<th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">Grade</th>' : ''}
@@ -6885,15 +6906,15 @@ function renderStaffGradebook() {
               ? 'border-bottom:1px solid var(--border-light); opacity:0.45;'
               : 'border-bottom:1px solid var(--border-light);';
             const nameStyle = student.isPendingInvite
-              ? 'padding:12px; position:sticky; left:0; background:var(--bg-card); color:var(--text-muted); font-style:italic;'
-              : 'padding:12px; position:sticky; left:0; background:var(--bg-card);';
+              ? 'padding:5px 12px; position:sticky; left:0; background:var(--bg-card); color:var(--text-muted); font-style:italic;'
+              : 'padding:5px 12px; position:sticky; left:0; background:var(--bg-card);';
             const row = `
               <tr style="${rowStyle}">
                 <td style="${nameStyle}">${student.isPendingInvite ? `${student.email} <span style="font-size:0.75rem;">(invited)</span>` : escapeHtml(student.name)}</td>
                 ${assignments.map(a => {
                   // Pending invitees have no user account yet — show non-clickable placeholder
                   if (student.isPendingInvite) {
-                    return `<td style="padding:12px; text-align:center;">—</td>`;
+                    return `<td style="padding:5px 12px; text-align:center;">—</td>`;
                   }
                   const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === student.id);
                   const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
@@ -6915,29 +6936,31 @@ function renderStaffGradebook() {
                       totalPoints += a.points;
                       cellContent = `${grade.score}`;
                     }
-                    const unreleasedBadge = grade.released ? '' : '<span style="font-size:0.65rem; background:#fee2e2; color:#dc2626; border-radius:3px; padding:1px 4px; margin-left:4px;">unreleased</span>';
-                    return `<td style="padding:12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${cellContent}${unreleasedBadge}</td>`;
+                    const visibilityBadge = grade.released
+                      ? '<div style="font-size:0.6rem; color:var(--success); margin-top:1px;">Visible</div>'
+                      : '<div style="font-size:0.6rem; color:var(--danger); margin-top:1px;">Hidden</div>';
+                    return `<td style="padding:8px 12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${cellContent}${visibilityBadge}</td>`;
                   }
-                  return `<td style="padding:12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
+                  return `<td style="padding:5px 12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
                 ${student.isPendingInvite
-                  ? `<td style="padding:12px; text-align:center;">—</td>${gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : ''}`
+                  ? `<td style="padding:5px 12px; text-align:center;">—</td>${gradeSettings ? '<td style="padding:5px 12px; text-align:center;">—</td>' : ''}`
                   : `${(() => {
                   const weightedGrade = calculateWeightedGrade(student.id, activeCourseId);
                   if (weightedGrade !== null) {
                     const pct = Math.min(weightedGrade + (gradeSettings?.curve || 0), 100);
                     const pctStr = pct.toFixed(1) + '%' + (gradeSettings?.curve ? ` (+${gradeSettings.curve}% curve)` : '');
                     const letterGrade = gradeSettings ? getLetterGrade(pct, gradeSettings) : null;
-                    return '<td style="padding:12px; text-align:center; font-weight:600;">' + pctStr + '</td>' +
-                      (gradeSettings ? '<td style="padding:12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
+                    return '<td style="padding:5px 12px; text-align:center; font-weight:600;">' + pctStr + '</td>' +
+                      (gradeSettings ? '<td style="padding:5px 12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
                   }
-                  if (totalPoints === 0) return '<td style="padding:12px; text-align:center;">—</td>' + (gradeSettings ? '<td style="padding:12px; text-align:center;">—</td>' : '');
+                  if (totalPoints === 0) return '<td style="padding:5px 12px; text-align:center;">—</td>' + (gradeSettings ? '<td style="padding:5px 12px; text-align:center;">—</td>' : '');
                   const curvedScore = Math.min(totalScore + (gradeSettings ? (gradeSettings.curve || 0) * totalPoints / 100 : 0), totalPoints);
                   const pct = (curvedScore / totalPoints) * 100;
                   const pctStr = pct.toFixed(1) + '%' + (gradeSettings?.curve ? ` (+${gradeSettings.curve}% curve)` : '');
                   const letterGrade = gradeSettings ? getLetterGrade(pct, gradeSettings) : null;
-                  return '<td style="padding:12px; text-align:center; font-weight:600;">' + pctStr + '</td>' +
-                    (gradeSettings ? '<td style="padding:12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
+                  return '<td style="padding:5px 12px; text-align:center; font-weight:600;">' + pctStr + '</td>' +
+                    (gradeSettings ? '<td style="padding:5px 12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
                 })()}`}
               </tr>
             `;

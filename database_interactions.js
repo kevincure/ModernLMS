@@ -239,6 +239,18 @@ export async function loadDataFromSupabase() {
       latePenaltyType: a.late_penalty_type || 'per_day',
       visibleToStudents: a.visible_to_students !== false,
       showStatsToStudents: a.show_stats_to_students === true,
+      // Quiz-specific
+      questionBankId: a.question_bank_id || null,
+      numQuestions: a.num_questions || null,
+      timeLimit: a.time_limit || null,
+      randomizeQuestions: a.randomize_questions === true,
+      // Essay-specific
+      submissionModalities: a.submission_modalities || null,
+      allowedFileTypes: a.allowed_file_types || null,
+      maxFileSizeMb: a.max_file_size_mb || null,
+      // Shared
+      gradingNotes: a.grading_notes || null,
+      blindGrading: a.blind_grading === true,
       rubric: null
     }));
 
@@ -701,16 +713,34 @@ export async function supabaseCreateAssignment(assignment) {
     course_id: assignment.courseId,
     title: assignment.title,
     description: assignment.description || null,
-    points: assignment.points || 100,
+    points: assignment.points || 0,
     status: assignment.status || 'draft',
     due_date: assignment.dueDate || null,
     available_from: assignment.availableFrom || null,
     available_until: assignment.availableUntil || null,
     allow_late_submissions: assignment.allowLateSubmissions !== false,
     late_deduction: assignment.lateDeduction || 10,
+    late_penalty_type: assignment.latePenaltyType || 'per_day',
     allow_resubmission: assignment.allowResubmission !== false,
+    submission_attempts: assignment.submissionAttempts || null,
     hidden: assignment.hidden || false,
     category: assignment.category || 'homework',
+    grading_type: assignment.gradingType || 'points',
+    assignment_type: assignment.assignmentType || 'essay',
+    visible_to_students: assignment.visibleToStudents !== false,
+    show_stats_to_students: assignment.showStatsToStudents === true,
+    // Quiz-specific
+    question_bank_id: assignment.questionBankId || null,
+    num_questions: assignment.numQuestions || null,
+    time_limit: assignment.timeLimit || null,
+    randomize_questions: assignment.randomizeQuestions === true,
+    // Essay-specific
+    submission_modalities: assignment.submissionModalities || null,
+    allowed_file_types: assignment.allowedFileTypes || null,
+    max_file_size_mb: assignment.maxFileSizeMb || null,
+    // Shared
+    grading_notes: assignment.gradingNotes || null,
+    blind_grading: assignment.blindGrading === true,
     created_by: appData.currentUser?.id
   };
 
@@ -749,6 +779,7 @@ export async function supabaseUpdateAssignment(assignment) {
     available_until: assignment.availableUntil || null,
     allow_late_submissions: assignment.allowLateSubmissions,
     late_deduction: assignment.lateDeduction,
+    late_penalty_type: assignment.latePenaltyType || 'per_day',
     allow_resubmission: assignment.allowResubmission,
     submission_attempts: assignment.submissionAttempts || null,
     grading_type: assignment.gradingType || 'points',
@@ -756,7 +787,19 @@ export async function supabaseUpdateAssignment(assignment) {
     hidden: assignment.hidden || false,
     category: assignment.category,
     visible_to_students: assignment.visibleToStudents !== false,
-    show_stats_to_students: assignment.showStatsToStudents === true
+    show_stats_to_students: assignment.showStatsToStudents === true,
+    // Quiz-specific
+    question_bank_id: assignment.questionBankId || null,
+    num_questions: assignment.numQuestions || null,
+    time_limit: assignment.timeLimit || null,
+    randomize_questions: assignment.randomizeQuestions === true,
+    // Essay-specific
+    submission_modalities: assignment.submissionModalities || null,
+    allowed_file_types: assignment.allowedFileTypes || null,
+    max_file_size_mb: assignment.maxFileSizeMb || null,
+    // Shared
+    grading_notes: assignment.gradingNotes || null,
+    blind_grading: assignment.blindGrading === true
   };
 
   const { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
