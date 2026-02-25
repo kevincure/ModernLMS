@@ -1368,25 +1368,32 @@ async function replaceFileContent(fileRecord, uploadedFile, { publish = true } =
   }
 
   const previousStoragePath = fileRecord.storagePath;
-  fileRecord.name = uploadedFile.name;
-  fileRecord.type = uploadedFile.name.split('.').pop().toLowerCase();
-  fileRecord.size = uploadedFile.size;
-  fileRecord.storagePath = uploadData.path;
-  fileRecord.isPlaceholder = false;
-  fileRecord.hidden = !publish;
-  fileRecord.externalUrl = null;
-  fileRecord.isYouTube = false;
+  const updatedFile = {
+    ...fileRecord,
+    name: uploadedFile.name,
+    type: uploadedFile.name.split('.').pop().toLowerCase(),
+    size: uploadedFile.size,
+    storagePath: uploadData.path,
+    isPlaceholder: false,
+    hidden: !publish,
+    externalUrl: null,
+    isYouTube: false
+  };
 
-  let result = await supabaseUpdateFile(fileRecord);
+  let result = await supabaseUpdateFile(updatedFile);
   if (!result) {
     // Fallback for rows that were never persisted previously
-    result = await supabaseCreateFile(fileRecord);
+    result = await supabaseCreateFile(updatedFile);
   }
 
   if (!result) {
+    // Best-effort cleanup to avoid orphaned uploaded storage objects when metadata persistence fails
+    await supabaseClient.storage.from('course-files').remove([uploadData.path]);
     showToast('Failed to save file metadata', 'error');
     return;
   }
+
+  Object.assign(fileRecord, updatedFile);
 
   if (previousStoragePath && previousStoragePath !== uploadData.path) {
     await supabaseClient.storage.from('course-files').remove([previousStoragePath]);
@@ -1444,12 +1451,20 @@ async function _confirmPlaceholderLink(fileId) {
   const file = appData.files.find(f => f.id === fileId);
   if (!file) return;
   const convertedUrl = convertYouTubeUrl(url);
-  file.externalUrl = convertedUrl;
-  file.isYouTube = convertedUrl !== url;
-  file.isPlaceholder = false;
-  file.type = 'external';
-  file.hidden = false;
-  await supabaseUpdateFile(file);
+  const updatedFile = {
+    ...file,
+    externalUrl: convertedUrl,
+    isYouTube: convertedUrl !== url,
+    isPlaceholder: false,
+    type: 'external',
+    hidden: false
+  };
+  const persisted = await supabaseUpdateFile(updatedFile);
+  if (!persisted) {
+    showToast('Failed to save external link', 'error');
+    return;
+  }
+  Object.assign(file, updatedFile);
   window.closeModal('addExternalLinkModal');
   renderFiles();
   if (renderModulesCallback) renderModulesCallback();

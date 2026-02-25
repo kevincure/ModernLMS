@@ -50,6 +50,7 @@ import {
   supabaseUpdateModule,
   supabaseDeleteModule,
   supabaseCreateModuleItem,
+  supabaseUpdateModuleItem,
   supabaseDeleteModuleItem,
   supabaseCreateRubric,
   supabaseUpdateRubric,
@@ -2830,7 +2831,7 @@ function renderCalendar() {
   const items = [
     ...appData.assignments
       .filter(a => a.courseId === activeCourseId)
-      .filter(a => effectiveStaff || a.status === 'published')
+      .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
       .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status })),
     ...appData.quizzes
       .filter(q => q.courseId === activeCourseId)
@@ -2877,13 +2878,14 @@ function exportCalendarICS() {
   if (!activeCourseId) return;
   const course = getCourseById(activeCourseId);
   const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isStaffUser && !studentViewMode;
 
   const items = [
     ...(appData.assignments || [])
-      .filter(a => a.courseId === activeCourseId && (isStaffUser || a.status === 'published') && a.dueDate)
+      .filter(a => a.courseId === activeCourseId && (effectiveStaff || (a.status === 'published' && !a.hidden)) && a.dueDate)
       .map(a => ({ id: a.id, title: `[Assignment] ${a.title}`, date: new Date(a.dueDate), description: a.description || '' })),
     ...(appData.quizzes || [])
-      .filter(q => q.courseId === activeCourseId && (isStaffUser || q.status === 'published') && q.dueDate)
+      .filter(q => q.courseId === activeCourseId && (effectiveStaff || q.status === 'published') && q.dueDate)
       .map(q => ({ id: q.id, title: `[Quiz] ${q.title}`, date: new Date(q.dueDate), description: q.description || '' }))
   ];
 
@@ -3156,9 +3158,13 @@ function deleteQuestionBank(bankId) {
 
   ensureModalsRendered();
   showConfirmDialog(`Delete "${bank.name}"? This cannot be undone.`, async () => {
-    await supabaseDeleteQuestionBank(bankId);
+    const deleted = await supabaseDeleteQuestionBank(bankId);
+    if (!deleted) {
+      showToast('Failed to delete question bank', 'error');
+      return;
+    }
     appData.questionBanks = appData.questionBanks.filter(b => b.id !== bankId);
-  
+
     renderQuestionBankList();
     showToast('Question bank deleted', 'success');
   });
@@ -3857,12 +3863,20 @@ async function saveQuestionBank() {
   if (currentEditQuestionBankId) {
     const bank = appData.questionBanks.find(b => b.id === currentEditQuestionBankId);
     if (bank) {
-      bank.name = name;
-      bank.description = description;
-      bank.defaultPointsPerQuestion = defaultPts;
-      bank.randomize = randomize;
-      bank.questions = questionBankDraftQuestions;
-      await supabaseUpdateQuestionBank(bank);
+      const updatedBank = {
+        ...bank,
+        name,
+        description,
+        defaultPointsPerQuestion: defaultPts,
+        randomize,
+        questions: questionBankDraftQuestions
+      };
+      const persisted = await supabaseUpdateQuestionBank(updatedBank);
+      if (!persisted) {
+        showToast('Failed to update question bank', 'error');
+        return;
+      }
+      Object.assign(bank, updatedBank);
       // Refresh auto-calculated points for any quiz assignments using this bank
       (appData.assignments || []).forEach(a => {
         if (a.questionBankId === bank.id && a.assignmentType === 'quiz') {
@@ -3882,8 +3896,12 @@ async function saveQuestionBank() {
       createdAt: new Date().toISOString(),
       createdBy: appData.currentUser?.id
     };
+    const persisted = await supabaseCreateQuestionBank(newBank);
+    if (!persisted) {
+      showToast('Failed to create question bank', 'error');
+      return;
+    }
     appData.questionBanks.push(newBank);
-    await supabaseCreateQuestionBank(newBank);
   }
 
   closeModal('questionBankEditModal');
@@ -5470,18 +5488,31 @@ async function handleModuleDrop(event) {
 
   if (draggedIndex === -1 || targetIndex === -1) return;
 
-  // Reorder
-  const [removed] = modules.splice(draggedIndex, 1);
-  modules.splice(targetIndex, 0, removed);
+  const reordered = [...modules];
+  const [removed] = reordered.splice(draggedIndex, 1);
+  reordered.splice(targetIndex, 0, removed);
 
-  // Update positions in local state and Supabase
-  for (let i = 0; i < modules.length; i++) {
-    const mod = appData.modules.find(x => x.id === modules[i].id);
-    if (mod && mod.position !== i) {
-      mod.position = i;
-      await supabaseUpdateModule(mod);
+  const updates = [];
+  for (let i = 0; i < reordered.length; i++) {
+    if (reordered[i].position !== i) {
+      updates.push({ moduleId: reordered[i].id, position: i });
     }
   }
+
+  for (const update of updates) {
+    const module = appData.modules.find(x => x.id === update.moduleId);
+    if (!module) continue;
+    const persisted = await supabaseUpdateModule({ ...module, position: update.position });
+    if (!persisted) {
+      showToast('Failed to reorder modules', 'error');
+      return;
+    }
+  }
+
+  updates.forEach(update => {
+    const module = appData.modules.find(x => x.id === update.moduleId);
+    if (module) module.position = update.position;
+  });
 
   renderModules();
 }
@@ -5525,42 +5556,49 @@ async function handleModuleItemDrop(event) {
 
   if (!sourceModule || !targetModule) return;
 
-  const sourceItemIndex = sourceModule.items.findIndex(i => i.id === draggedModuleItem.itemId);
+  const sourceItems = (sourceModule.items || []).map(item => ({ ...item }));
+  const targetItems = sourceModule.id === targetModule.id
+    ? sourceItems
+    : (targetModule.items || []).map(item => ({ ...item }));
+
+  const sourceItemIndex = sourceItems.findIndex(i => i.id === draggedModuleItem.itemId);
   if (sourceItemIndex === -1) return;
 
-  const [movedItem] = sourceModule.items.splice(sourceItemIndex, 1);
+  const [movedItem] = sourceItems.splice(sourceItemIndex, 1);
 
   if (targetEl) {
     const targetItemId = targetEl.dataset.itemId;
-    const targetItemIndex = targetModule.items.findIndex(i => i.id === targetItemId);
-    targetModule.items.splice(targetItemIndex, 0, movedItem);
+    const targetItemIndex = targetItems.findIndex(i => i.id === targetItemId);
+    targetItems.splice(targetItemIndex, 0, movedItem);
   } else {
-    targetModule.items.push(movedItem);
+    targetItems.push(movedItem);
   }
 
-  // Update positions
-  sourceModule.items.forEach((item, i) => item.position = i);
-  targetModule.items.forEach((item, i) => item.position = i);
+  sourceItems.forEach((item, i) => { item.position = i; });
+  targetItems.forEach((item, i) => { item.position = i; });
 
-  // Persist to Supabase - update the module_item's module_id if it changed
+  const updates = [];
   if (sourceModule.id !== targetModule.id) {
-    // Item moved to different module - update module_id
-    await supabaseClient.from('module_items').update({
-      module_id: targetModule.id,
-      position: movedItem.position
-    }).eq('id', movedItem.id);
+    updates.push({ id: movedItem.id, payload: { module_id: targetModule.id, position: movedItem.position } });
   }
-
-  // Update positions for source module items
-  for (const item of sourceModule.items) {
-    await supabaseClient.from('module_items').update({ position: item.position }).eq('id', item.id);
-  }
-
-  // Update positions for target module items (if different from source)
+  sourceItems.forEach(item => updates.push({ id: item.id, payload: { position: item.position } }));
   if (sourceModule.id !== targetModule.id) {
-    for (const item of targetModule.items) {
-      await supabaseClient.from('module_items').update({ position: item.position }).eq('id', item.id);
+    targetItems.forEach(item => {
+      if (item.id !== movedItem.id) updates.push({ id: item.id, payload: { position: item.position } });
+    });
+  }
+
+  for (const update of updates) {
+    const persisted = await supabaseUpdateModuleItem(update.id, update.payload);
+    if (!persisted) {
+      showToast('Failed to reorder module items', 'error');
+      return;
     }
+  }
+
+  sourceModule.items = sourceItems;
+  if (sourceModule.id !== targetModule.id) {
+    targetModule.items = targetItems;
   }
 
   renderModules();
@@ -5597,8 +5635,13 @@ async function saveModule() {
     // Update existing module
     const module = appData.modules.find(m => m.id === moduleId);
     if (module) {
+      const updatedModule = { ...module, name };
+      const persisted = await supabaseUpdateModule(updatedModule);
+      if (!persisted) {
+        showToast('Failed to update module', 'error');
+        return;
+      }
       module.name = name;
-      await supabaseUpdateModule(module);
     }
   } else {
     // Create new module
@@ -5613,7 +5656,11 @@ async function saveModule() {
       items: []
     };
 
-    await supabaseCreateModule(newModule);
+    const persisted = await supabaseCreateModule(newModule);
+    if (!persisted) {
+      showToast('Failed to create module', 'error');
+      return;
+    }
     appData.modules.push(newModule);
   }
 
@@ -5721,7 +5768,11 @@ async function addModuleItem() {
   };
 
   // Save to Supabase
-  await supabaseCreateModuleItem(newItem, moduleId);
+  const persisted = await supabaseCreateModuleItem(newItem, moduleId);
+  if (!persisted) {
+    showToast('Failed to add item to module', 'error');
+    return;
+  }
 
   // Update local state
   module.items.push(newItem);
@@ -5737,7 +5788,11 @@ async function removeModuleItem(moduleId, itemId) {
   if (!module) return;
 
   // Delete from Supabase
-  await supabaseDeleteModuleItem(itemId);
+  const deleted = await supabaseDeleteModuleItem(itemId);
+  if (!deleted) {
+    showToast('Failed to remove module item', 'error');
+    return;
+  }
 
   // Update local state
   module.items = module.items.filter(i => i.id !== itemId);
