@@ -72,7 +72,8 @@ export function initFileHandlingModule(deps) {
   generateModalsCallback = deps.generateModals;
   confirm = deps.confirm;
 
-  // Set up global window functions for onclick handlers
+  // File-handling window.* exports are owned in this module.
+  // Keep app.js focused on globals defined in app.js to avoid duplicate assignments.
   window.handleDragOver = handleDragOver;
   window.handleDragLeave = handleDragLeave;
   window.handleSyllabusDrop = handleSyllabusDrop;

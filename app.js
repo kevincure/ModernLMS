@@ -10219,17 +10219,15 @@ window.toggleStudentView = toggleStudentView;
 
 // Search and sort
 window.updateModulesSearch = updateModulesSearch;
-window.updateFilesSearch = updateFilesSearch;
-window.updateFilesSort = updateFilesSort;
 window.updateGradebookSearch = updateGradebookSearch;
 window.updatePeopleSearch = updatePeopleSearch;
 window.updateAssignmentsSearch = updateAssignmentsSearch;
 window.updateAnnouncementsSearch = updateAnnouncementsSearch;
 
 // File handling
-window.handleFilesDrop = handleFilesDrop;
+// File-related window.* handlers are owned by file_handling.js.
+// Register only app.js-defined globals here to prevent duplicate exports.
 window.viewFile = viewFile;
-window.updateFileUploadPreview = updateFileUploadPreview;
 window.openModuleFile = openModuleFile;
 
 // ═══════════════════════════════════════════════════════════════════════════════
