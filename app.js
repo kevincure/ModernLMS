@@ -354,6 +354,15 @@ function updateModuleStudentViewMode(mode) {
   setAIStudentViewMode(mode);
 }
 
+function setStudentViewModeState(mode) {
+  studentViewMode = !!mode;
+  updateModuleStudentViewMode(studentViewMode);
+}
+
+function isEffectiveStaffForActiveCourse() {
+  return !!(activeCourseId && isStaff(appData.currentUser?.id, activeCourseId) && !studentViewMode);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // FLOATING CONTEXT MENU SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1224,12 +1233,12 @@ function initApp() {
   // Reset leaked/stale course selection (e.g. after logout/login as another user)
   if (courses.length === 0) {
     activeCourseId = null;
-    studentViewMode = false;
+    setStudentViewModeState(false);
   } else {
     const hasSelectedCourse = courses.some(c => c.id === activeCourseId);
     if (!hasSelectedCourse) {
       activeCourseId = courses[0].id;
-      studentViewMode = false;
+      setStudentViewModeState(false);
     }
   }
 
@@ -1288,7 +1297,7 @@ function renderTopBarCourse() {
   if (!activeCourseId) {
     titleEl.textContent = 'Select a course';
     subtitleEl.textContent = 'Choose a course from the Courses tab';
-    studentViewMode = false; // Reset view mode when no course selected
+    setStudentViewModeState(false); // Reset view mode when no course selected
     renderTopBarViewToggle();
     return;
   }
@@ -6958,9 +6967,12 @@ function togglePeopleSort(role) {
 window.togglePeopleSort = togglePeopleSort;
 
 function renderPeopleList() {
-  if (!activeCourseId) return;
+  if (!activeCourseId) {
+    setHTML('peopleList', '<div class="empty-state-text">No active course</div>');
+    return;
+  }
 
-  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isEffectiveStaffForActiveCourse();
 
   let people = appData.enrollments
     .filter(e => e.courseId === activeCourseId)
@@ -6989,7 +7001,7 @@ function renderPeopleList() {
   };
 
   // Get pending invites (also filtered by search), grouped by role
-  let allPendingInvites = isStaffUser && appData.invites
+  let allPendingInvites = effectiveStaff && appData.invites
     ? appData.invites.filter(i => i.courseId === activeCourseId && i.status === 'pending')
     : [];
 
@@ -7025,7 +7037,7 @@ function renderPeopleList() {
             <div style="font-weight:500; font-size:0.95rem;">${p.name}</div>
             <div class="muted" style="font-size:0.8rem;">${p.email}</div>
           </div>
-          ${isStaffUser && p.id !== appData.currentUser.id ? `
+          ${effectiveStaff && p.id !== appData.currentUser.id ? `
             <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
           ` : ''}
         </div>
@@ -7083,133 +7095,19 @@ function renderPeople() {
 
   const course = getCourseById(activeCourseId);
   setText('peopleSubtitle', course.name);
-
-  let people = appData.enrollments
-    .filter(e => e.courseId === activeCourseId)
-    .map(e => ({ ...getUserById(e.userId), role: e.role }))
-    .filter(p => p.id)
-    .sort((a, b) => {
-      const roleOrder = { instructor: 0, ta: 1, student: 2 };
-      if (roleOrder[a.role] !== roleOrder[b.role]) return roleOrder[a.role] - roleOrder[b.role];
-      return a.name.localeCompare(b.name);
-    });
-
-  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isEffectiveStaffForActiveCourse();
 
   // Actions with search
   setHTML('peopleActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <input type="text" class="form-input" id="peopleSearchInput" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" oninput="updatePeopleSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      ${isStaffUser ? `
+      ${effectiveStaff ? `
         <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
         <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
       ` : ''}
     </div>
   `);
-
-  // Filter by search
-  if (peopleSearch) {
-    people = people.filter(p =>
-      p.name.toLowerCase().includes(peopleSearch) ||
-      p.email.toLowerCase().includes(peopleSearch)
-    );
-  }
-  
-  // Show as clean table instead of blocky cards
-  let html = '';
-
-  const grouped = {
-    instructor: people.filter(p => p.role === 'instructor'),
-    ta: people.filter(p => p.role === 'ta'),
-    student: people.filter(p => p.role === 'student')
-  };
-
-  // Get pending invites (also filtered by search), grouped by role
-  let allPendingInvites = isStaffUser && appData.invites
-    ? appData.invites.filter(i => i.courseId === activeCourseId && i.status === 'pending')
-    : [];
-
-  if (peopleSearch) {
-    allPendingInvites = allPendingInvites.filter(inv =>
-      inv.email.toLowerCase().includes(peopleSearch)
-    );
-  }
-
-  // Group invites by role (default to 'student' if no role specified)
-  const invitesByRole = {
-    instructor: allPendingInvites.filter(i => i.role === 'instructor'),
-    ta: allPendingInvites.filter(i => i.role === 'ta'),
-    student: allPendingInvites.filter(i => !i.role || i.role === 'student')
-  };
-
-  // Helper function to render a single person row
-  const renderPersonRow = (p, idx, total, isInvite = false) => {
-    const bgColor = isInvite ? 'var(--warning-light)' : 'white';
-    const borderColor = isInvite ? 'var(--warning)' : 'var(--border-light)';
-
-    if (isInvite) {
-      return `
-        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; background:var(--warning-light); ${idx < total - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:500; font-size:0.95rem;">${escapeHtml(p.email)}</div>
-            <div style="font-size:0.8rem; color:var(--warning);">Invited ${formatDate(p.sentAt)} · Awaiting sign-up</div>
-          </div>
-          <button class="btn btn-secondary btn-sm" onclick="revokeInvite('${p.id}')" style="padding:4px 12px; color:var(--danger);">Revoke</button>
-        </div>
-      `;
-    } else {
-      return `
-        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:500; font-size:0.95rem;">${p.name}</div>
-            <div class="muted" style="font-size:0.8rem;">${p.email}</div>
-          </div>
-          ${isStaffUser && p.id !== appData.currentUser.id ? `
-            <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
-          ` : ''}
-        </div>
-      `;
-    }
-  };
-
-  // Helper function to render a section with invites at top
-  const renderSectionWithInvites = (title, role, members, invites) => {
-    const totalCount = members.length + invites.length;
-    if (totalCount === 0) return '';
-
-    let sortedMembers = [...members];
-    if (members.length > 1) {
-      const dir = peopleSortDir[role] || 'asc';
-      sortedMembers.sort((a, b) => dir === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name));
-    }
-
-    const allItems = [...invites.map(i => ({ ...i, isInvite: true })), ...sortedMembers.map(m => ({ ...m, isInvite: false }))];
-
-    const sortBtn = members.length > 1 ? `
-      <button onclick="togglePeopleSort('${role}')" title="Sort alphabetically"
-        style="background:none; border:none; cursor:pointer; font-size:0.8rem; color:var(--text-muted); padding:0 6px; font-weight:normal;">
-        ${peopleSortDir[role] === 'asc' ? '▲ A–Z' : '▼ Z–A'}
-      </button>` : '';
-
-    return `
-      <div style="margin-bottom:32px;">
-        <h3 style="font-family:var(--font-serif); font-size:1.1rem; margin-bottom:12px; color:var(--text-color); display:flex; align-items:center; gap:8px;">
-          <span>${title} (${members.length}${invites.length > 0 ? ` + ${invites.length} pending` : ''})</span>
-          ${sortBtn}
-        </h3>
-        <div style="background:white; border:1px solid var(--border-light); border-radius:var(--radius); overflow:hidden;">
-          ${allItems.map((item, idx) => renderPersonRow(item, idx, allItems.length, item.isInvite)).join('')}
-        </div>
-      </div>
-    `;
-  };
-
-  // Render in order: Instructors, TAs, Students - each with their pending invites at top
-  html += renderSectionWithInvites('Instructors', 'instructor', grouped.instructor, invitesByRole.instructor);
-  html += renderSectionWithInvites('Teaching Assistants', 'ta', grouped.ta, invitesByRole.ta);
-  html += renderSectionWithInvites('Students', 'student', grouped.student, invitesByRole.student);
-
-  setHTML('peopleList', html || '<div class="empty-state-text">No people in this course</div>');
+  renderPeopleList();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -7973,6 +7871,10 @@ async function executeImportContent() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function openAddPersonModal() {
+  if (!isEffectiveStaffForActiveCourse()) {
+    showToast('This action is unavailable in student view.', 'error');
+    return;
+  }
   ensureModalsRendered();
   document.getElementById('addPersonEmail').value = '';
   document.getElementById('addPersonRole').value = 'student';
@@ -7980,6 +7882,10 @@ function openAddPersonModal() {
 }
 
 function openBulkStudentImportModal() {
+  if (!isEffectiveStaffForActiveCourse()) {
+    showToast('This action is unavailable in student view.', 'error');
+    return;
+  }
   ensureModalsRendered();
   const fileInput = document.getElementById('bulkStudentFile');
   if (fileInput) fileInput.value = '';
@@ -7989,6 +7895,10 @@ function openBulkStudentImportModal() {
 }
 
 function processBulkStudentImport() {
+  if (!isEffectiveStaffForActiveCourse()) {
+    showToast('This action is unavailable in student view.', 'error');
+    return;
+  }
   const fileInput = document.getElementById('bulkStudentFile');
   const defaultRole = document.getElementById('bulkStudentRole').value;
 
@@ -8093,6 +8003,10 @@ function processBulkStudentImport() {
 }
 
 async function addPersonToCourse() {
+  if (!isEffectiveStaffForActiveCourse()) {
+    showToast('This action is unavailable in student view.', 'error');
+    return;
+  }
   const email = document.getElementById('addPersonEmail').value.trim();
   const role = document.getElementById('addPersonRole').value;
 
@@ -8155,11 +8069,19 @@ async function addPersonToCourse() {
 }
 
 function removePersonFromCourse(userId, courseId) {
+  if (!isEffectiveStaffForActiveCourse()) {
+    showToast('This action is unavailable in student view.', 'error');
+    return;
+  }
   // Enrollment removals are now restricted to organization admin workflows.
   showToast('Removing enrolled users is restricted to Admin. You can still revoke pending invites here.', 'warning');
 }
 
 function revokeInvite(inviteId) {
+  if (!isEffectiveStaffForActiveCourse()) {
+    showToast('This action is unavailable in student view.', 'error');
+    return;
+  }
   const invite = appData.invites.find(i => i.id === inviteId);
   if (!invite) return;
 
@@ -9425,8 +9347,7 @@ function renderTopBarViewToggle() {
 
 
 function toggleStudentView() {
-  studentViewMode = !studentViewMode;
-  updateModuleStudentViewMode(studentViewMode);
+  setStudentViewModeState(!studentViewMode);
   // Clear AI thread so history doesn't bleed between instructor and student context
   clearAiThread();
   renderAiThread();
