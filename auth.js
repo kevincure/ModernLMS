@@ -16,7 +16,6 @@ let appData = null;
 let initAppCallback = null;
 let renderAllCallback = null;
 let navigateToCallback = null;
-let populateCourseSelectorCallback = null;
 let getUserCoursesCallback = null;
 
 // Guard variables to prevent duplicate bootstrap
@@ -32,7 +31,6 @@ export function initAuthModule(deps) {
   initAppCallback = deps.initApp;
   renderAllCallback = deps.renderAll;
   navigateToCallback = deps.navigateTo;
-  populateCourseSelectorCallback = deps.populateCourseSelector;
   getUserCoursesCallback = deps.getUserCourses;
 }
 
@@ -169,6 +167,8 @@ export async function handleSignedIn(user) {
  */
 export function handleSignedOut() {
   console.log('[Auth] User signed out');
+  bootstrappingUserId = null;
+  bootstrappingPromise = null;
   appData.currentUser = null;
   // Reset app data to defaults
   Object.assign(appData, JSON.parse(JSON.stringify(DEFAULT_DATA)));
@@ -188,8 +188,8 @@ export async function logout() {
     }
   }
 
-  appData.currentUser = null;
-  showLoginScreen();
+  // Ensure immediate local cleanup even if SIGNED_OUT callback is delayed/missed.
+  handleSignedOut();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
