@@ -723,7 +723,6 @@ let currentSpeedGraderAssignmentId = null;
 let currentSpeedGraderStudentIndex = 0;
 let speedGraderStudents = [];
 let mediaRecorder = null;
-let audioChunks = [];
 let draggedModuleItem = null;
 let studentViewMode = false; // For professor/TA to toggle student view
 let aiProcessing = false; // Track AI processing state
@@ -1746,25 +1745,33 @@ async function createCourse() {
         let refId = null;
 
         if (item.type === 'quiz') {
-          const newQuiz = {
+          const newAssignment = {
             id: generateId(),
             courseId: courseId,
             title: item.title,
-            description: item.description || 'Placeholder - add questions',
+            description: item.description || 'Placeholder quiz/exam - link a question bank',
+            assignmentType: 'quiz',
+            gradingType: 'points',
+            submissionModalities: ['text'],
+            questionBankId: null,
+            numQuestions: null,
+            randomizeQuestions: false,
+            points: 100,
             status: 'draft',
             dueDate: item.dueDate || new Date(Date.now() + 86400000 * 14).toISOString(),
             createdAt: new Date().toISOString(),
-            timeLimit: 30,
-            attempts: 1,
-            questions: [],
-            isPlaceholder: true
+            category: 'quiz',
+            isPlaceholder: true,
+            allowLateSubmissions: true,
+            allowResubmission: false,
+            createdBy: appData.currentUser.id
           };
-          const savedQuiz = await supabaseCreateQuiz(newQuiz);
-          if (savedQuiz) {
-            appData.quizzes.push(newQuiz);
-            refId = newQuiz.id;
+          const savedAssignment = await supabaseCreateAssignment(newAssignment);
+          if (savedAssignment) {
+            appData.assignments.push(newAssignment);
+            refId = newAssignment.id;
           } else {
-            console.error('[createCourse] Failed to create placeholder quiz from syllabus import', { courseId, title: item.title });
+            console.error('[createCourse] Failed to create placeholder quiz assignment from syllabus import', { courseId, title: item.title });
           }
         } else if (item.type === 'reading') {
           const newFile = {
@@ -2622,27 +2629,16 @@ function renderAssignments() {
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 
-  let quizzes = appData.quizzes
-    .filter(q => q.courseId === activeCourseId)
-    .filter(q => effectiveStaff || q.status === 'published')
-    .sort((a, b) => {
-      if (assignmentsSort === 'az') return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
-      if (assignmentsSort === 'za') return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
-
-  // Filter by search
+  // Standalone quiz cards are deprecated; assignments list is assignment-backed only.
   let filteredAssignments = assignments;
-  let filteredQuizzes = quizzes;
   if (assignmentsSearch) {
     filteredAssignments = assignments.filter(a => a.title.toLowerCase().includes(assignmentsSearch));
-    filteredQuizzes = quizzes.filter(q => q.title.toLowerCase().includes(assignmentsSearch));
   }
 
-  if (filteredAssignments.length === 0 && filteredQuizzes.length === 0) {
+  if (filteredAssignments.length === 0) {
     setHTML('assignmentsList', assignmentsSearch
       ? '<div class="empty-state"><div class="empty-state-text">No assignments match your search</div></div>'
-      : '<div class="empty-state"><div class="empty-state-title">No assignments or quizzes yet</div></div>');
+      : '<div class="empty-state"><div class="empty-state-title">No assignments yet</div></div>');
     return;
   }
   
@@ -2764,76 +2760,10 @@ function renderAssignments() {
     `;
   }).join('');
 
-  const quizCards = filteredQuizzes.map(q => {
-    const dueDate = new Date(q.dueDate);
-    const isPast = dueDate < new Date();
-    const quizPoints = getQuizPoints(q);
-    const submissions = appData.quizSubmissions.filter(s => s.quizId === q.id);
-    const mySubmissions = submissions.filter(s => s.userId === appData.currentUser.id);
-    const latestSubmission = mySubmissions.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))[0];
-    const attemptsUsed = mySubmissions.length;
-    const attemptsAllowed = q.attempts ? q.attempts : null;
-    const attemptsLeft = attemptsAllowed ? Math.max(attemptsAllowed - attemptsUsed, 0) : null;
-    const isPlaceholder = q.isPlaceholder;
-
-    const statusBadge = q.status === 'closed' ? '<span style="padding:4px 8px; background:var(--border-color); color:var(--text-muted); border-radius:4px; font-size:0.75rem; font-weight:600;">CLOSED</span>' : '';
-
-    // Single visibility badge for staff — replaces DRAFT label
-    const visibilityBadge = effectiveStaff && q.status !== 'published' ?
-      `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" onclick="toggleQuizVisibility('${q.id}')" title="Click to publish">Hidden</span>` : '';
-
-    const myTimeOverride = (appData.quizTimeOverrides || []).find(o => o.quizId === q.id && o.userId === appData.currentUser.id);
-    const effectiveTimeLimit = myTimeOverride ? myTimeOverride.timeLimit : q.timeLimit;
-    const timeLimitLabel = effectiveTimeLimit
-      ? `${effectiveTimeLimit} min once you begin${myTimeOverride ? ' (personalized)' : ''}`
-      : 'No time limit';
-    const attemptsLabel = attemptsAllowed ? `${attemptsLeft} of ${attemptsAllowed} left` : 'Unlimited attempts';
-    const submissionStatus = latestSubmission
-      ? (latestSubmission.released ? `Score: ${latestSubmission.score}/${quizPoints}` : 'Submitted · awaiting review')
-      : 'Not started';
-
-    return `
-      <div class="card" ${isPlaceholder ? 'style="border-style:dashed; opacity:0.9;"' : ''}>
-        <div class="card-header">
-          <div>
-            <div class="card-title">${escapeHtml(q.title)} ${statusBadge} ${visibilityBadge}</div>
-            <div class="muted">${formatDueDate(q.dueDate)} · ${quizPoints} points · ${timeLimitLabel}</div>
-            <div class="muted" style="font-size:0.85rem;">${attemptsLabel} · ${submissionStatus}</div>
-          </div>
-          <div style="display:flex; gap:8px; align-items:center;">
-            ${effectiveStaff ? `
-              <button class="btn btn-secondary btn-sm" data-menu-btn onclick="toggleMenu(event, 'menu-quiz-${q.id}')">&#9776;</button>
-              <div id="menu-quiz-${q.id}" class="floating-menu">
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewQuizSubmissions('${q.id}')">Submissions (${submissions.length})</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); openQuizTimeOverridesModal('${q.id}')">Time Overrides</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewQuizDetails('${q.id}')">Preview</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); openQuizModal('${q.id}')">Edit</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeMenu(); deleteQuiz('${q.id}')" style="color:var(--danger);">Delete</button>
-              </div>
-            ` : latestSubmission ? `
-              <button class="btn btn-secondary btn-sm" onclick="viewQuizSubmission('${q.id}')">View Submission</button>
-              ${!isPast && (!attemptsAllowed || attemptsLeft > 0) ? `<button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Retake</button>` : ''}
-            ` : q.status === 'published' && !isPast ? `
-              <button class="btn btn-primary btn-sm" onclick="takeQuiz('${q.id}')">Take Quiz</button>
-            ` : ''}
-          </div>
-        </div>
-        <div class="markdown-content">${renderMarkdownWithLinkedFiles(q.description || '')}</div>
-      </div>
-    `;
-  }).join('');
-
   const sections = [];
   if (filteredAssignments.length > 0) {
     sections.push(assignmentCards);
   }
-  if (filteredQuizzes.length > 0) {
-    sections.push(`
-      <div class="section-header">Quizzes</div>
-      ${quizCards}
-    `);
-  }
-
   setHTML('assignmentsList', sections.join(''));
 }
 
@@ -2868,10 +2798,6 @@ function renderCalendar() {
       .filter(a => a.courseId === activeCourseId)
       .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
       .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status })),
-    ...appData.quizzes
-      .filter(q => q.courseId === activeCourseId)
-      .filter(q => effectiveStaff || q.status === 'published')
-      .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate, status: q.status }))
   ].filter(item => {
     const date = new Date(item.dueDate);
     return date >= start && date <= end;
@@ -2998,82 +2924,7 @@ function normalizeContentStatus(status) {
   return status || 'draft';
 }
 
-async function createAssignment() {
-  // Deprecated path — routed to the CC 1.4 assignment modal
-  openNewAssignmentModal();
-}
 
-function openCreateAssignmentTypeModal() {
-  ensureModalsRendered();
-  // Create simple type selector modal
-  if (!document.getElementById('createTypeModal')) {
-    const modalHtml = `
-      <div class="modal-overlay" id="createTypeModal">
-        <div class="modal" style="max-width:400px;">
-          <div class="modal-header">
-            <h2 class="modal-title">Create New</h2>
-            <button class="modal-close" onclick="closeModal('createTypeModal')">&times;</button>
-          </div>
-          <div class="modal-body">
-            <div class="form-group">
-              <label class="form-label">What would you like to create?</label>
-              <select class="form-select" id="createTypeSelect" onchange="handleCreateTypeChange()">
-                <option value="homework">Homework</option>
-                <option value="essay">Essay</option>
-                <option value="project">Project</option>
-                <option value="exam">Exam</option>
-                <option value="quiz">Quiz</option>
-              </select>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeModal('createTypeModal')">Cancel</button>
-            <button class="btn btn-primary" onclick="confirmCreateType()">Continue</button>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-  }
-  document.getElementById('createTypeSelect').value = 'homework';
-  openModal('createTypeModal');
-}
-
-function handleCreateTypeChange() {
-  // Could add dynamic hints here if needed
-}
-
-function confirmCreateType() {
-  const type = document.getElementById('createTypeSelect').value;
-  closeModal('createTypeModal');
-
-  if (type === 'quiz') {
-    openQuizModal();
-    return;
-  }
-
-  // Route all assignment creation through the new CC 1.4 modal.
-  openNewAssignmentModal();
-  if (type === 'essay' || type === 'homework' || type === 'project') {
-    setAssignmentType('essay');
-  }
-}
-
-let currentEditAssignmentId = null;
-
-function openAssignmentModal(assignmentId = null) {
-  // Deprecated path — use the new CC 1.4 assignment modal
-  openNewAssignmentModal(assignmentId);
-}
-
-function resetAssignmentModal() {
-  // Deprecated path — kept as a no-op for backward compatibility with stale onclick handlers
-}
-
-async function saveAssignmentChanges() {
-  // Deprecated path — delegate to the new assignment save flow
-  await saveNewAssignment();
-}
 
 async function updateAssignment() {
   // Deprecated path — delegate to the new assignment save flow
@@ -5125,26 +4976,6 @@ function updateQuizPointsTotal() {
 }
 
 
-function deleteQuiz(quizId) {
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (!quiz) return;
-
-  ensureModalsRendered();
-  showConfirmDialog(`Delete "${quiz.title}"? This will also delete all submissions.`, async () => {
-    // Delete from Supabase
-    const success = await supabaseDeleteQuiz(quizId);
-    if (!success) return;
-
-    // Update local state
-    appData.quizzes = appData.quizzes.filter(q => q.id !== quizId);
-    appData.quizSubmissions = appData.quizSubmissions.filter(s => s.quizId !== quizId);
-  
-    renderAssignments();
-    renderHome();
-    showToast('Quiz deleted', 'success');
-  });
-}
-
 
 function renderQuizTakeModal(quiz) {
   const container = document.getElementById('quizTakeQuestions');
@@ -5721,9 +5552,6 @@ function updateAddItemOptions() {
   if (type === 'assignment') {
     const assignments = appData.assignments.filter(a => a.courseId === activeCourseId);
     options = assignments.map(a => `<option value="${a.id}">${a.title}${a.status === 'draft' ? ' (draft)' : ''}</option>`);
-  } else if (type === 'quiz') {
-    const quizzes = appData.quizzes.filter(q => q.courseId === activeCourseId);
-    options = quizzes.map(q => `<option value="${q.id}">${q.title}${q.status === 'draft' ? ' (draft)' : ''}</option>`);
   } else if (type === 'file') {
     const files = appData.files.filter(f => f.courseId === activeCourseId);
     options = files.map(f => `<option value="${f.id}">${f.name}</option>`);
@@ -5910,276 +5738,6 @@ function renderSyllabusParsedPreview(parsed) {
   `;
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// AI AUDIO INPUT
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function openAudioInputModal() {
-  generateModals();
-  document.getElementById('audioFile').value = '';
-  document.getElementById('audioPreview').innerHTML = '';
-  document.getElementById('audioTranscription').value = '';
-  document.getElementById('audioOutputType').value = 'announcement';
-  document.getElementById('audioParsedPreview').innerHTML = '<div class="muted">Record or upload audio to transcribe and create LMS objects</div>';
-  updateAudioRecordingState(false);
-  openModal('audioInputModal');
-}
-
-function updateAudioRecordingState(isRecording) {
-  const startBtn = document.getElementById('audioStartRecording');
-  const stopBtn = document.getElementById('audioStopRecording');
-
-  if (startBtn) startBtn.style.display = isRecording ? 'none' : 'inline-flex';
-  if (stopBtn) stopBtn.style.display = isRecording ? 'inline-flex' : 'none';
-}
-
-async function startAudioRecording() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
-
-    mediaRecorder = new MediaRecorder(stream);
-
-    mediaRecorder.ondataavailable = (event) => {
-      audioChunks.push(event.data);
-    };
-
-    mediaRecorder.onstop = () => {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      const audioUrl = URL.createObjectURL(audioBlob);
-
-      document.getElementById('audioPreview').innerHTML = `
-        <audio controls src="${audioUrl}" style="width:100%;"></audio>
-        <div class="muted" style="margin-top:8px;">Recording complete. Click "Transcribe" to process.</div>
-      `;
-
-      // Store blob for later use
-      document.getElementById('audioPreview').dataset.audioBlob = audioUrl;
-      window.lastRecordedAudioBlob = audioBlob;
-
-      stream.getTracks().forEach(track => track.stop());
-    };
-
-    mediaRecorder.start();
-    updateAudioRecordingState(true);
-    showToast('Recording started...', 'info');
-
-  } catch (err) {
-    console.error('Audio recording error:', err);
-    showToast('Could not access microphone: ' + err.message, 'error');
-  }
-}
-
-function stopAudioRecording() {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
-    updateAudioRecordingState(false);
-    showToast('Recording stopped', 'success');
-  }
-}
-
-async function transcribeAudio() {
-  let audioData = null;
-  let mimeType = 'audio/webm';
-
-  // Check for uploaded file first
-  const fileInput = document.getElementById('audioFile');
-  if (fileInput.files.length > 0) {
-    const file = fileInput.files[0];
-    mimeType = file.type || 'audio/webm';
-    audioData = await fileToBase64(file);
-  } else if (window.lastRecordedAudioBlob) {
-    audioData = await fileToBase64(window.lastRecordedAudioBlob);
-  }
-
-  if (!audioData) {
-    showToast('Please record or upload audio first', 'error');
-    return;
-  }
-
-  const outputType = document.getElementById('audioOutputType').value;
-
-  let systemPrompt = '';
-  if (outputType === 'announcement') {
-    systemPrompt = `Transcribe this audio and convert it into a course announcement. The user may specify timing like "send at midnight tomorrow" or "post this now".
-
-FORMATTING for content (supports markdown):
-- Use **bold** for emphasis, *italic* for terms
-- Use bullet lists with "- item" format
-- Use headers with ## or ###
-- Embed YouTube videos by placing the full URL on its own line
-- Use \`code\` for inline code
-
-Return ONLY valid JSON:
-{
-  "transcription": "The full transcription of the audio",
-  "announcement": {
-    "title": "A clear title for the announcement",
-    "content": "The announcement content with markdown formatting as appropriate",
-    "scheduledFor": "ISO date string if a specific time was mentioned, or null for immediate"
-  }
-}`;
-  } else {
-    systemPrompt = `Transcribe this audio and convert it into a quiz. The user may specify details like "five questions", "due at 2pm on Dec 18", "available immediately", "randomized order", "pull from question bank". Return ONLY valid JSON:
-{
-  "transcription": "The full transcription of the audio",
-  "quiz": {
-    "title": "Quiz title",
-    "description": "Quiz description",
-    "dueDate": "ISO date string if mentioned",
-    "availableFrom": "ISO date string if mentioned, or null for immediate",
-    "timeLimit": "number in minutes if mentioned, or 0 for unlimited",
-    "randomizeQuestions": true/false,
-    "questionBankName": "Name of question bank if mentioned, or null",
-    "questionCount": "number of questions to include"
-  }
-}`;
-  }
-
-  try {
-    showToast('Transcribing audio with Gemini...', 'info');
-
-    const contents = [{
-      parts: [
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: audioData
-          }
-        },
-        { text: systemPrompt }
-      ]
-    }];
-
-    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.2 });
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const text = data.candidates[0].content.parts[0].text;
-    const parsed = parseAiJsonResponse(text);
-
-    // Show transcription
-    document.getElementById('audioTranscription').value = parsed.transcription || '';
-
-    // Render preview
-    renderAudioParsedPreview(parsed, outputType);
-    showToast('Audio transcribed successfully!', 'success');
-
-  } catch (err) {
-    console.error('Audio transcription error:', err);
-    showToast('Transcription failed: ' + err.message, 'error');
-  }
-}
-
-
-let parsedAudioData = null;
-
-function renderAudioParsedPreview(parsed, outputType) {
-  parsedAudioData = { ...parsed, outputType };
-  const preview = document.getElementById('audioParsedPreview');
-
-  if (outputType === 'announcement' && parsed.announcement) {
-    const ann = parsed.announcement;
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">${escapeHtml(ann.title || 'Untitled')}</div>
-        </div>
-        <div class="markdown-content">${renderMarkdown(ann.content || '')}</div>
-        ${ann.scheduledFor ? `<div class="muted" style="margin-top:12px;">📅 Scheduled for: ${new Date(ann.scheduledFor).toLocaleString()}</div>` : '<div class="muted" style="margin-top:12px;">📤 Ready to post immediately</div>'}
-      </div>
-      <button class="btn btn-primary" onclick="applyAudioParsedResult()" style="margin-top:16px;">Create Announcement</button>
-    `;
-  } else if (outputType === 'quiz' && parsed.quiz) {
-    const quiz = parsed.quiz;
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">${escapeHtml(quiz.title || 'Untitled Quiz')}</div>
-        </div>
-        <div class="markdown-content">${renderMarkdown(quiz.description || '')}</div>
-        <div style="margin-top:12px;">
-          ${quiz.dueDate ? `<div class="muted">📅 Due: ${new Date(quiz.dueDate).toLocaleString()}</div>` : ''}
-          ${quiz.availableFrom ? `<div class="muted">🔓 Available from: ${new Date(quiz.availableFrom).toLocaleString()}</div>` : '<div class="muted">🔓 Available immediately</div>'}
-          ${quiz.timeLimit ? `<div class="muted">⏱️ Time limit: ${quiz.timeLimit} minutes</div>` : ''}
-          ${quiz.randomizeQuestions ? '<div class="muted">🔀 Questions randomized</div>' : ''}
-          ${quiz.questionBankName ? `<div class="muted">📚 Pull from: ${escapeHtml(quiz.questionBankName)}</div>` : ''}
-          ${quiz.questionCount ? `<div class="muted">📝 ${quiz.questionCount} questions</div>` : ''}
-        </div>
-      </div>
-      <button class="btn btn-primary" onclick="applyAudioParsedResult()" style="margin-top:16px;">Create Quiz</button>
-    `;
-  } else {
-    preview.innerHTML = '<div class="muted">Could not parse audio content</div>';
-  }
-}
-
-async function applyAudioParsedResult() {
-  if (!parsedAudioData) {
-    showToast('No parsed data to apply', 'error');
-    return;
-  }
-
-  if (parsedAudioData.outputType === 'announcement' && parsedAudioData.announcement) {
-    const ann = parsedAudioData.announcement;
-
-    const newAnnouncement = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: ann.title || 'Untitled Announcement',
-      content: ann.content || '',
-      pinned: false,
-      authorId: appData.currentUser.id,
-      createdAt: new Date().toISOString(),
-      scheduledFor: ann.scheduledFor || null
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateAnnouncement(newAnnouncement);
-    if (!result) {
-      return; // Error already shown
-    }
-
-    appData.announcements.push(newAnnouncement);
-    closeModal('audioInputModal');
-    renderUpdates();
-    showToast('Announcement created!', 'success');
-
-  } else if (parsedAudioData.outputType === 'quiz' && parsedAudioData.quiz) {
-    const quiz = parsedAudioData.quiz;
-
-    const newQuiz = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: quiz.title || 'Untitled Quiz',
-      description: quiz.description || '',
-      status: 'draft',
-      dueDate: quiz.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-      createdAt: new Date().toISOString(),
-      timeLimit: quiz.timeLimit || 0,
-      attempts: 1,
-      randomizeQuestions: quiz.randomizeQuestions || false,
-      questionPoolEnabled: !!quiz.questionBankName,
-      questionSelectCount: quiz.questionCount || 5,
-      questions: []
-    };
-
-    // Save to Supabase
-    const result = await supabaseCreateQuiz(newQuiz);
-    if (!result) {
-      return; // Error already shown
-    }
-
-    appData.quizzes.push(newQuiz);
-    closeModal('audioInputModal');
-
-    // Open quiz editor
-    openQuizModal(newQuiz.id);
-    showToast('Quiz created! Add questions to complete it.', 'success');
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SPEEDGRADER
@@ -7819,7 +7377,7 @@ function openAiCreateModal(type = 'announcement', assignmentId = null) {
   }
   
   document.getElementById('aiCreatePrompt').value = '';
-  document.getElementById('aiQuestionCount').value = '5';
+
   updateAiCreateType();
   renderAiDraftPreview();
   openModal('aiCreateModal');
@@ -7828,9 +7386,7 @@ function openAiCreateModal(type = 'announcement', assignmentId = null) {
 function updateAiCreateType() {
   aiDraftType = document.getElementById('aiCreateType').value;
   const rubricGroup = document.getElementById('aiRubricGroup');
-  const quizGroup = document.getElementById('aiQuizGroup');
   if (rubricGroup) rubricGroup.style.display = aiDraftType === 'rubric' ? 'block' : 'none';
-  if (quizGroup) quizGroup.style.display = aiDraftType === 'quiz' ? 'block' : 'none';
 }
 
 
@@ -7868,13 +7424,6 @@ function normalizeAiDraft(draft, type) {
     };
   }
 
-  if (type === 'quiz') {
-    return {
-      title: typeof draft.title === 'string' ? draft.title : '',
-      description: typeof draft.description === 'string' ? draft.description : '',
-      questions: Array.isArray(draft.questions) ? draft.questions : []
-    };
-  }
 
   if (type === 'rubric') {
     return {
@@ -7904,16 +7453,6 @@ function renderAiDraftPreview() {
     return;
   }
   
-  if (aiDraftType === 'quiz') {
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-title">${aiDraft.title || 'Untitled quiz'}</div>
-        <div class="markdown-content">${renderMarkdown(aiDraft.description || '')}</div>
-        <div class="muted" style="margin-top:8px;">${(aiDraft.questions || []).length} questions</div>
-      </div>
-    `;
-    return;
-  }
   
   preview.innerHTML = `
     <div class="card">
@@ -7939,14 +7478,7 @@ function applyAiDraft() {
     openModal('announcementModal');
     return;
   }
-  
-  if (aiDraftType === 'quiz') {
-    aiQuizDraft = aiDraft;
-    closeModal('aiCreateModal');
-    openQuizModal();
-    return;
-  }
-  
+
   const assignmentId = document.getElementById('aiRubricAssignment').value;
   if (!assignmentId) {
     showToast('Select an assignment for the rubric', 'error');
@@ -9183,56 +8715,6 @@ function calculateLateDeduction(assignment, submittedAt) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// UNIFIED CONTENT CREATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function openUnifiedContentModal() {
-  ensureModalsRendered();
-  openModal('unifiedContentModal');
-}
-
-function createFromUnified(type) {
-  closeModal('unifiedContentModal');
-  if (type === 'assignment') {
-    openNewAssignmentModal();
-  } else if (type === 'quiz') {
-    openQuizModal();
-  } else if (type === 'announcement') {
-    openAnnouncementModal();
-  } else if (type === 'file') {
-    openModal('fileUploadModal');
-  } else if (type === 'external-link') {
-    openExternalLinkModal();
-  } else if (type === 'ai-assist') {
-    openAiCreateModal();
-  }
-}
-
-// New Assignment dropdown functions
-function toggleNewAssignmentDropdown() {
-  const dropdown = document.getElementById('newAssignmentDropdown');
-  if (dropdown) {
-    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-  }
-}
-
-function closeNewAssignmentDropdown() {
-  const dropdown = document.getElementById('newAssignmentDropdown');
-  if (dropdown) {
-    dropdown.style.display = 'none';
-  }
-}
-
-// Close dropdown when clicking outside
-document.addEventListener('click', (e) => {
-  const dropdown = document.getElementById('newAssignmentDropdown');
-  const btn = document.getElementById('newAssignmentBtn');
-  if (dropdown && btn && !dropdown.contains(e.target) && !btn.contains(e.target)) {
-    dropdown.style.display = 'none';
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // EXTERNAL LINK SUPPORT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -9378,112 +8860,9 @@ async function toggleAssignmentVisibility(assignmentId) {
 // VIEW QUIZ DETAILS (Full Preview)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function viewQuizDetails(quizId) {
-  const quiz = appData.quizzes.find(q => q.id === quizId);
-  if (!quiz) return;
-
-  const questions = quiz.questions || [];
-  const totalPoints = getQuizPoints(quiz);
-
-  const questionsHtml = questions.map((q, idx) => {
-    let optionsHtml = '';
-    if (q.type === 'multiple_choice') {
-      optionsHtml = `<div class="quiz-options" style="margin-top:8px;">
-        ${q.options.map((opt, i) => `
-          <div style="padding:4px 8px; ${i === q.correctAnswer ? 'background:var(--success-light); border-radius:4px;' : ''}">
-            ${i === q.correctAnswer ? '✓' : '○'} ${escapeHtml(opt)}
-          </div>
-        `).join('')}
-      </div>`;
-    } else if (q.type === 'true_false') {
-      optionsHtml = `<div style="margin-top:8px;">
-        <div style="padding:4px 8px; ${q.correctAnswer === 'True' ? 'background:var(--success-light); border-radius:4px;' : ''}">
-          ${q.correctAnswer === 'True' ? '✓' : '○'} True
-        </div>
-        <div style="padding:4px 8px; ${q.correctAnswer === 'False' ? 'background:var(--success-light); border-radius:4px;' : ''}">
-          ${q.correctAnswer === 'False' ? '✓' : '○'} False
-        </div>
-      </div>`;
-    } else {
-      optionsHtml = `<div class="muted" style="margin-top:8px; font-style:italic;">Short answer question${q.correctAnswer ? ` (Sample: ${escapeHtml(q.correctAnswer)})` : ''}</div>`;
-    }
-
-    return `
-      <div class="card" style="margin-bottom:12px;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-          <strong>Q${idx + 1}. ${escapeHtml(q.prompt)}</strong>
-          <span class="muted">${q.points} pts</span>
-        </div>
-        <div class="muted" style="font-size:0.85rem;">${q.type.replace('_', ' ')}</div>
-        ${optionsHtml}
-      </div>
-    `;
-  }).join('');
-
-  const html = `
-    <div class="modal-overlay visible" id="quizDetailsModal">
-      <div class="modal" style="max-width:800px; max-height:90vh;">
-        <div class="modal-header">
-          <h2 class="modal-title">Quiz Preview: ${escapeHtml(quiz.title)}</h2>
-          <button class="modal-close" onclick="closeModal('quizDetailsModal')">&times;</button>
-        </div>
-        <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
-          <div class="card" style="background:var(--primary-light); margin-bottom:16px;">
-            <div class="card-header">
-              <div>
-                <div class="card-title">Quiz Settings</div>
-              </div>
-              <div style="text-align:right;">
-                <div><strong>${totalPoints} points</strong></div>
-                <div class="muted">${questions.length} questions</div>
-              </div>
-            </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-top:12px;">
-              <div><strong>Due:</strong> ${formatDate(quiz.dueDate)}</div>
-              <div><strong>Time Limit:</strong> ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'None'}</div>
-              <div><strong>Attempts:</strong> ${quiz.attempts || 'Unlimited'}</div>
-              <div><strong>Randomize:</strong> ${quiz.randomizeQuestions ? 'Yes' : 'No'}</div>
-              <div><strong>Status:</strong> ${quiz.status}</div>
-              ${quiz.questionPoolEnabled ? `<div><strong>Pool:</strong> ${quiz.questionSelectCount} of ${questions.length}</div>` : ''}
-            </div>
-          </div>
-
-          <div class="section-header">Questions</div>
-          ${questionsHtml || '<div class="muted">No questions added yet</div>'}
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('quizDetailsModal')">Close</button>
-          <button class="btn btn-primary" onclick="closeModal('quizDetailsModal'); openQuizModal('${quizId}')">Edit Quiz</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('modalsContainer').innerHTML += html;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// STUDENT VIEW TOGGLE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function toggleStudentView() {
-  studentViewMode = !studentViewMode;
-  updateModuleStudentViewMode(studentViewMode); // also calls setAIStudentViewMode
-  // Clear AI thread so professor-view history doesn't bleed into student view and vice versa
-  clearAiThread();
-  renderAiThread();
-  renderTopBarViewToggle();
-  renderAll();
-  showToast(studentViewMode ? 'Viewing as student' : 'Back to instructor view', 'info');
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// DISCUSSION BOARD
-// ═══════════════════════════════════════════════════════════════════════════════
-
 let activeDiscussionThreadId = null; // null = thread list; string = thread detail
 let discussionAiDraft = null; // { threadId, text, originalText } — pending AI reply draft
-// Expose draft so inline oninput handler can mutate it
+
 Object.defineProperty(window, 'discussionAiDraft', {
   get() { return discussionAiDraft; },
   set(v) { discussionAiDraft = v; }
@@ -10044,6 +9423,18 @@ function renderTopBarViewToggle() {
   }
 }
 
+
+function toggleStudentView() {
+  studentViewMode = !studentViewMode;
+  updateModuleStudentViewMode(studentViewMode);
+  // Clear AI thread so history doesn't bleed between instructor and student context
+  clearAiThread();
+  renderAiThread();
+  renderTopBarViewToggle();
+  renderAll();
+  showToast(studentViewMode ? 'Viewing as student' : 'Back to instructor view', 'info');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // API RETRY LOGIC
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -10117,20 +9508,14 @@ window.viewAnnouncement = viewAnnouncement;
 window.toggleAnnouncementVisibility = toggleAnnouncementVisibility;
 
 // Assignments
-window.createAssignment = createAssignment;
 window.editAssignment = editAssignment;
 window.deleteAssignment = deleteAssignment;
-window.saveAssignmentChanges = saveAssignmentChanges;
 window.saveNewAssignment = saveNewAssignment;
 window.openNewAssignmentModal = openNewAssignmentModal;
 window.resetNewAssignmentModal = resetNewAssignmentModal;
 window.openDeadlineOverridesFromModal = openDeadlineOverridesFromModal;
 window.handleNewAssignmentTypeChange = handleNewAssignmentTypeChange;
-window.openAssignmentModal = openAssignmentModal;
 window.toggleAssignmentVisibility = toggleAssignmentVisibility;
-window.openCreateAssignmentTypeModal = openCreateAssignmentTypeModal;
-window.handleCreateTypeChange = handleCreateTypeChange;
-window.confirmCreateType = confirmCreateType;
 
 // Submissions and grading
 window.submitAssignment = submitAssignment;
@@ -10181,8 +9566,6 @@ window.updateQuizQuestion = updateQuizQuestion;
 window.updateQuizOption = updateQuizOption;
 window.addQuizQuestion = addQuizQuestion;
 // removeQuizQuestion and toggleQuizVisibility are exported by quiz_logic.js
-window.deleteQuiz = deleteQuiz;
-window.viewQuizDetails = viewQuizDetails;
 window.viewQuizSubmission = viewQuizSubmission;
 
 // Modules
@@ -10267,17 +9650,8 @@ window.openAiCreateModal = openAiCreateModal;
 window.applyAiDraft = applyAiDraft;
 
 // Audio recording
-window.openAudioInputModal = openAudioInputModal;
-window.startAudioRecording = startAudioRecording;
-window.stopAudioRecording = stopAudioRecording;
-window.transcribeAudio = transcribeAudio;
-window.applyAudioParsedResult = applyAudioParsedResult;
 
 // Unified content creation
-window.openUnifiedContentModal = openUnifiedContentModal;
-window.createFromUnified = createFromUnified;
-window.toggleNewAssignmentDropdown = toggleNewAssignmentDropdown;
-window.closeNewAssignmentDropdown = closeNewAssignmentDropdown;
 
 // Student view
 window.toggleStudentView = toggleStudentView;

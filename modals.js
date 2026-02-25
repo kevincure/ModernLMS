@@ -39,53 +39,6 @@ export function generateModals() {
     : '<option value="">No modules available</option>';
 
   setHTML('modalsContainer', `
-    <!-- Unified Content Creation Modal -->
-    <div class="modal-overlay" id="unifiedContentModal">
-      <div class="modal" style="max-width:600px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Create New Content</h2>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('unifiedContentModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:12px;">
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('assignment')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">📝</div>
-              <div class="demo-title">Assignment</div>
-              <div class="demo-sub">Homework, essays, projects</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('quiz')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">❓</div>
-              <div class="demo-title">Quiz</div>
-              <div class="demo-sub">Multiple choice, true/false</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('announcement')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">📢</div>
-              <div class="demo-title">Announcement</div>
-              <div class="demo-sub">Announcements for students</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('file')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">📄</div>
-              <div class="demo-title">File</div>
-              <div class="demo-sub">Upload documents</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('external-link')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">🔗</div>
-              <div class="demo-title">External Link</div>
-              <div class="demo-sub">YouTube, websites</div>
-            </button>
-            <button class="demo-btn" style="padding:20px; text-align:left;" onclick="createFromUnified('ai-assist')">
-              <div style="font-size:1.5rem; margin-bottom:8px;">✨</div>
-              <div class="demo-title">AI Generate</div>
-              <div class="demo-sub">Draft with AI assistance</div>
-            </button>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('unifiedContentModal')">Cancel</button>
-        </div>
-      </div>
-    </div>
-
     <!-- External Link Modal -->
     <div class="modal-overlay" id="externalLinkModal">
       <div class="modal">
@@ -231,178 +184,6 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('pendingInvitesModal')">Close</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Assignment Modal -->
-    <div class="modal-overlay" id="assignmentModal">
-      <div class="modal">
-        <div class="modal-header">
-          <h2 class="modal-title" id="assignmentModalTitle">New Assignment</h2>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('assignmentModal'); resetAssignmentModal();">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label" for="assignmentTitle">Title</label>
-            <input type="text" class="form-input" id="assignmentTitle" placeholder="Enter title">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="assignmentDescription">Description</label>
-            <div class="editor-toolbar" style="display:flex; gap:4px; margin-bottom:6px;" role="toolbar" aria-label="Text formatting">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertLink('assignmentDescription')" title="Insert Link">Link</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertFileLink('assignmentDescription')" title="Insert File">File</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="insertVideo('assignmentDescription')" title="Insert Video">Video</button>
-            </div>
-            <textarea class="form-textarea" id="assignmentDescription" placeholder="Describe the assignment... (supports Markdown)"></textarea>
-            <div class="hint" style="margin-top:4px;">Supports Markdown: **bold**, *italic*, [link](url)</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="assignmentCategory">Category</label>
-            <select class="form-select" id="assignmentCategory">
-              <option value="quiz">Quiz</option>
-              <option value="exam">Exam</option>
-              <option value="essay">Essay</option>
-              <option value="project">Project</option>
-              <option value="participation">Participation</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="assignmentPoints">Points</label>
-            <input type="number" class="form-input" id="assignmentPoints" value="100" min="1">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="assignmentDueDate">Due Date</label>
-            <input type="date" class="form-input" id="assignmentDueDate" style="margin-bottom:8px;">
-            <div style="display:flex; gap:8px; align-items:center;">
-              <select class="form-select" id="assignmentDueHour" style="width:auto;">
-                ${generateHourOptions()}
-              </select>
-              <span>:</span>
-              <select class="form-select" id="assignmentDueMinute" style="width:auto;">
-                ${generateMinuteOptions()}
-              </select>
-              <select class="form-select" id="assignmentDueAmPm" style="width:auto;">
-                <option value="AM">AM</option>
-                <option value="PM">PM</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="assignmentStatus">Status</label>
-            <select class="form-select" id="assignmentStatus">
-              <option value="draft">Draft (not visible to students)</option>
-              <option value="published">Published</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="assignmentAllowLate" checked>
-              <span>Allow late submissions</span>
-            </label>
-          </div>
-          <div class="form-group" id="lateDeductionGroup">
-            <label class="form-label" for="assignmentLateDeduction">Late Deduction (% per day)</label>
-            <input type="number" class="form-input" id="assignmentLateDeduction" value="10" min="0" max="100">
-          </div>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="assignmentAllowResubmit" checked>
-              <span>Allow resubmission</span>
-            </label>
-          </div>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="assignmentBlindGrading">
-              <span>Blind grading <span class="muted" style="font-size:0.85rem;">(hide student names while grading)</span></span>
-            </label>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('assignmentModal'); resetAssignmentModal();">Cancel</button>
-          <button class="btn btn-primary" id="assignmentSubmitBtn" onclick="saveAssignmentChanges()">Create</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Quiz Modal -->
-    <div class="modal-overlay" id="quizModal">
-      <div class="modal" style="max-width:900px;">
-        <div class="modal-header">
-          <h2 class="modal-title" id="quizModalTitle">New Quiz</h2>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('quizModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label" for="quizTitle">Quiz Title</label>
-            <input type="text" class="form-input" id="quizTitle" placeholder="e.g., Week 2 Quiz">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="quizDescription">Description (optional)</label>
-            <textarea class="form-textarea" id="quizDescription" placeholder="Add instructions..." rows="3"></textarea>
-          </div>
-          <div class="form-grid">
-            <div class="form-group">
-              <label class="form-label" for="quizDueDate">Due Date</label>
-              <input type="date" class="form-input" id="quizDueDate" style="margin-bottom:8px;">
-              <div style="display:flex; gap:8px; align-items:center;">
-                <select class="form-select" id="quizDueHour" style="width:auto;">
-                  ${generateHourOptions()}
-                </select>
-                <span>:</span>
-                <select class="form-select" id="quizDueMinute" style="width:auto;">
-                  ${generateMinuteOptions()}
-                </select>
-                <select class="form-select" id="quizDueAmPm" style="width:auto;">
-                  <option value="AM">AM</option>
-                  <option value="PM">PM</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="quizStatus">Status</label>
-              <select class="form-select" id="quizStatus">
-                <option value="draft">Draft</option>
-                <option value="published">Published</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="quizTimeLimit">Time Limit (minutes)</label>
-              <input type="number" class="form-input" id="quizTimeLimit" min="0" placeholder="e.g., 30">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="quizAttempts">Attempts Allowed</label>
-              <input type="number" class="form-input" id="quizAttempts" min="0" placeholder="Leave blank for unlimited">
-            </div>
-          </div>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="quizRandomize" checked>
-              <span>Randomize question order</span>
-            </label>
-          </div>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="quizPoolEnabled" onchange="toggleQuizPoolFields()">
-              <span>Use question pool (random subset)</span>
-            </label>
-          </div>
-          <div class="form-group" id="quizPoolCountGroup" style="display:none;">
-            <label class="form-label" for="quizPoolCount">Questions to show</label>
-            <input type="number" class="form-input" id="quizPoolCount" min="1" placeholder="e.g., 5">
-          </div>
-          <div class="card" style="padding:16px; margin-top:16px;">
-            <div class="card-title">Questions</div>
-            <div id="quizQuestionsList" class="quiz-questions-list"></div>
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
-              <button class="btn btn-secondary btn-sm" onclick="addQuizQuestion()">Add Question</button>
-              <div class="muted">Total Points: <span id="quizPointsTotal">0</span></div>
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('quizModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="saveQuiz()">Save Quiz</button>
         </div>
       </div>
     </div>
@@ -627,18 +408,13 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
               <label class="form-label" for="aiCreateType">Create</label>
               <select class="form-select" id="aiCreateType" onchange="updateAiCreateType()">
                 <option value="announcement">Announcement</option>
-                <option value="quiz">Quiz</option>
                 <option value="rubric">Rubric</option>
               </select>
             </div>
-            <div class="form-group" id="aiQuizGroup">
-              <label class="form-label" for="aiQuestionCount">Question count</label>
-              <input type="number" class="form-input" id="aiQuestionCount" min="1" value="5">
+            <div class="form-group" id="aiRubricGroup" style="display:none;">
+              <label class="form-label" for="aiRubricAssignment">Assignment</label>
+              <select class="form-select" id="aiRubricAssignment"></select>
             </div>
-          </div>
-          <div class="form-group" id="aiRubricGroup" style="display:none;">
-            <label class="form-label" for="aiRubricAssignment">Assignment</label>
-            <select class="form-select" id="aiRubricAssignment"></select>
           </div>
           <div class="form-group">
             <label class="form-label" for="aiCreatePrompt">Prompt</label>
@@ -936,7 +712,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <label class="form-label" for="addItemType">Item Type</label>
             <select class="form-select" id="addItemType" onchange="updateAddItemOptions()">
               <option value="assignment">Assignment</option>
-              <option value="quiz">Quiz</option>
               <option value="file">File</option>
             </select>
           </div>
@@ -991,52 +766,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('syllabusParserModal')">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Audio Input Modal -->
-    <div class="modal-overlay" id="audioInputModal">
-      <div class="modal" style="max-width:900px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Voice Command</h2>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('audioInputModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="hint" style="margin-bottom:16px;">
-            Record or upload audio to create announcements or quizzes. Say things like "send an announcement at midnight tomorrow about the exam" or "create a quiz with five questions, due at 2pm on Dec 18".
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="audioOutputType">Output Type</label>
-            <select class="form-select" id="audioOutputType">
-              <option value="announcement">Announcement</option>
-              <option value="quiz">Quiz</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="audioStartRecording">Record Audio</label>
-            <div style="display:flex; gap:8px; margin-bottom:12px;">
-              <button class="btn btn-primary" id="audioStartRecording" onclick="startAudioRecording()">🎤 Start Recording</button>
-              <button class="btn btn-secondary" id="audioStopRecording" onclick="stopAudioRecording()" style="display:none;">⏹️ Stop Recording</button>
-            </div>
-            <div id="audioPreview"></div>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="audioFile">Or Upload Audio File</label>
-            <input type="file" class="form-input" id="audioFile" accept="audio/*">
-          </div>
-          <button class="btn btn-primary" onclick="transcribeAudio()" style="margin-bottom:16px;">Transcribe with AI</button>
-          <div class="form-group">
-            <label class="form-label" for="audioTranscription">Transcription</label>
-            <textarea class="form-textarea" id="audioTranscription" rows="3" readonly placeholder="Transcription will appear here..."></textarea>
-          </div>
-          <div class="card" style="padding:16px;">
-            <div class="card-title">Preview</div>
-            <div id="audioParsedPreview"></div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('audioInputModal')">Cancel</button>
         </div>
       </div>
     </div>

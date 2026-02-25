@@ -188,10 +188,6 @@ function normalizeAiOperationAction(action) {
     delete_announcement: 'announcement_delete',
     publish_announcement: 'announcement_publish',
     pin_announcement: 'announcement_pin',
-    create_quiz: 'quiz',
-    create_quiz_inline: 'quiz',
-    update_quiz: 'quiz_update',
-    delete_quiz: 'quiz_delete',
     create_quiz_from_bank: 'quiz_from_bank',
     create_assignment: 'assignment',
     update_assignment: 'assignment_update',
@@ -320,15 +316,6 @@ function getMissingPublishRequirements(operation, publish = false) {
     return missing;
   }
 
-  if (action === 'quiz' || action === 'quiz_update') {
-    if (!operation.title && action === 'quiz') missing.push('title');
-    if (!operation.dueDate) missing.push('dueDate');
-    const questions = operation.questions;
-    if (Array.isArray(questions) && questions.length === 0) missing.push('at least one question');
-    if (action === 'quiz' && !Array.isArray(questions)) missing.push('questions');
-    return missing;
-  }
-
   if (action === 'assignment') {
     if (!operation.title) missing.push('title');
     if (!operation.description) missing.push('description');
@@ -421,6 +408,7 @@ MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT
 - Before delete_question_from_bank: call list_question_banks → then call get_question_bank(bank_id) → use the returned question id
 - Before ANY invite/person action (revoke_invite, remove_person): call list_people → use the returned inviteId/userId
 - Before creating a quiz/exam from a bank: call list_question_banks → use the returned id
+- Standalone quiz actions (create_quiz/create_quiz_inline) are deprecated. To create a quiz, ALWAYS use create_assignment with assignmentType:"quiz" (and questionBankId) or create_quiz_from_bank.
 - Before get_student_grades: call list_people → pass the returned userId as the user_id param
 - NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
 - NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
@@ -1265,42 +1253,13 @@ function handleAiAction(action) {
     });
   } else if (action.action === 'create_quiz' || action.action === 'create_quiz_inline') {
     aiThread.push({
-      role: 'action',
-      actionType: 'quiz',
-      data: {
-        title: action.title,
-        description: action.description || '',
-        dueDate: action.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-        status: action.status || 'draft',
-        timeLimit: action.timeLimit ?? 30,
-        attempts: action.attempts ?? 1,
-        randomizeQuestions: !!action.randomizeQuestions,
-        availableFrom: action.availableFrom || null,
-        availableUntil: action.availableUntil || null,
-        allowLateSubmissions: action.allowLateSubmissions !== undefined ? !!action.allowLateSubmissions : true,
-        latePenaltyType: action.latePenaltyType || 'per_day',
-        lateDeduction: action.lateDeduction !== undefined ? action.lateDeduction : 10,
-        questions: action.questions || [],
-        fileIds: action.fileIds || [],
-        fileNames: action.fileNames || []
-      },
-      confirmed: false,
-      rejected: false
+      role: 'assistant',
+      content: 'Standalone quiz creation is deprecated. I can create this as a Quiz/Exam assignment instead using create_assignment with assignmentType="quiz" and a question bank.'
     });
-  } else if (action.action === 'update_quiz') {
-    const d = { id: action.id };
-    ['title','description','dueDate','status','timeLimit','attempts','randomizeQuestions',
-     'availableFrom','availableUntil','questions','fileIds','fileNames'].forEach(k => { if (k in action) d[k] = action[k]; });
-    if (!('fileIds' in d)) d.fileIds = [];
-    if (!('fileNames' in d)) d.fileNames = [];
-    aiThread.push({ role: 'action', actionType: 'quiz_update', data: d, confirmed: false, rejected: false });
-  } else if (action.action === 'delete_quiz') {
+  } else if (action.action === 'update_quiz' || action.action === 'delete_quiz') {
     aiThread.push({
-      role: 'action',
-      actionType: 'quiz_delete',
-      data: { id: action.id },
-      confirmed: false,
-      rejected: false
+      role: 'assistant',
+      content: 'Standalone quiz updates/deletes are deprecated. Please manage quizzes through assignment-based quiz/exam items.'
     });
   } else if (action.action === 'create_assignment') {
     aiThread.push({
@@ -1863,76 +1822,12 @@ async function executeAiOperation(operation, publish = false) {
   }
 
   if (action === 'quiz') {
-    const quizDescription = appendFileLinksToContent(
-      appendAvailabilityToDescription(resolved.description || '', resolved.availableFrom, resolved.availableUntil),
-      resolved.fileIds
-    );
-
-    const newQuiz = {
-      id: generateId(),
-      courseId: activeCourseId,
-      title: resolved.title,
-      description: quizDescription,
-      status: publish ? 'published' : (resolved.status || 'draft'),
-      dueDate: resolved.dueDate || new Date(Date.now() + 86400000 * 7).toISOString(),
-      createdAt: new Date().toISOString(),
-      timeLimit: resolved.timeLimit ?? 30,
-      attempts: resolved.attempts ?? 1,
-      randomizeQuestions: !!resolved.randomizeQuestions,
-      questionPoolEnabled: false,
-      questionSelectCount: 0,
-      questions: resolved.questions || []
-    };
-    const result = await supabaseCreateQuiz(newQuiz);
-    if (!result) {
-      showToast('Failed to save quiz to database', 'error');
-      return false;
-    }
-    appData.quizzes.push(newQuiz);
-    if (renderAssignmentsCallback) renderAssignmentsCallback();
-    return true;
+    showToast('Standalone quiz creation is deprecated. Use a Quiz/Exam assignment with a question bank.', 'error');
+    return false;
   }
-
-  if (action === 'quiz_update') {
-    const quiz = appData.quizzes.find(q => q.id === resolved.id && q.courseId === activeCourseId);
-    if (!quiz) {
-      showToast('Quiz not found for update', 'error');
-      return false;
-    }
-    if (resolved.title !== undefined) quiz.title = resolved.title;
-    if (resolved.description !== undefined || resolved.availableFrom || resolved.availableUntil || (resolved.fileIds && resolved.fileIds.length)) {
-      const baseDescription = resolved.description !== undefined ? resolved.description : quiz.description;
-      quiz.description = appendFileLinksToContent(
-        appendAvailabilityToDescription(baseDescription, resolved.availableFrom, resolved.availableUntil),
-        resolved.fileIds
-      );
-    }
-    if (resolved.dueDate !== undefined) quiz.dueDate = resolved.dueDate;
-    if (resolved.status !== undefined) quiz.status = resolved.status;
-    if (publish) quiz.status = 'published';
-    if (resolved.timeLimit !== undefined) quiz.timeLimit = resolved.timeLimit;
-    if (resolved.attempts !== undefined) quiz.attempts = resolved.attempts;
-    if (resolved.randomizeQuestions !== undefined) quiz.randomizeQuestions = !!resolved.randomizeQuestions;
-    if (resolved.questions !== undefined) quiz.questions = resolved.questions;
-    const result = await supabaseUpdateQuiz(quiz);
-    if (!result) {
-      showToast('Failed to update quiz', 'error');
-      return false;
-    }
-    if (renderAssignmentsCallback) renderAssignmentsCallback();
-    return true;
-  }
-
-  if (action === 'quiz_delete') {
-    const success = await supabaseDeleteQuiz(resolved.id);
-    if (!success) {
-      showToast('Failed to delete quiz', 'error');
-      return false;
-    }
-    appData.quizzes = appData.quizzes.filter(q => q.id !== resolved.id);
-    appData.quizSubmissions = (appData.quizSubmissions || []).filter(s => s.quizId !== resolved.id);
-    if (renderAssignmentsCallback) renderAssignmentsCallback();
-    return true;
+  if (action === 'quiz_update' || action === 'quiz_delete') {
+    showToast('Standalone quiz updates/deletes are deprecated. Use assignment-based quiz/exam items.', 'error');
+    return false;
   }
 
   if (action === 'quiz_from_bank') {
@@ -2643,30 +2538,6 @@ function renderActionPreview(msg, idx) {
     return `<div class="muted" style="font-size:0.9rem;">${d.pinned === false ? 'Unpin' : 'Pin'} announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
   }
 
-  // ─── QUIZ (inline) ───────────────────────────────────────────────────────
-  if (msg.actionType === 'quiz') {
-    return `
-      ${field('Title', textInput('title', d.title))}
-      ${field('Description', textarea('description', d.description, 2))}
-      ${twoCol(
-        field('Due Date', datetimeInput('dueDate', d.dueDate), 0),
-        field('Points', numberInput('points', d.points ?? 100, 0, 9999), 0)
-      )}
-      ${twoCol(
-        field('Time Limit (minutes)', numberInput('timeLimit', d.timeLimit ?? 30, 0, 600), 0),
-        field('Attempts Allowed', numberInput('attempts', d.attempts ?? 1, 1, 99), 0)
-      )}
-      ${twoCol(
-        field('Status', selectInput('status', d.status || 'draft', [['draft','Draft'],['published','Published']]), 0),
-        field('Available From', datetimeInput('availableFrom', d.availableFrom), 0)
-      )}
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
-        <div>${checkboxInput('randomizeQuestions', d.randomizeQuestions, 'Randomize question order')}</div>
-      </div>
-      <div class="muted" style="font-size:0.85rem;">${d.questions?.length || 0} question${d.questions?.length !== 1 ? 's' : ''} included</div>
-    `;
-  }
-
   // ─── QUIZ (update) — only show fields the AI actually changed ────────────
   if (msg.actionType === 'quiz_update') {
     const quiz = (appData.quizzes || []).find(q => q.id === d.id);
@@ -3172,9 +3043,6 @@ export function openAiCreateModal(type = 'announcement', assignmentId = null) {
   const promptEl = document.getElementById('aiCreatePrompt');
   if (promptEl) promptEl.value = '';
 
-  const questionCountEl = document.getElementById('aiQuestionCount');
-  if (questionCountEl) questionCountEl.value = '5';
-
   updateAiCreateType();
   renderAiDraftPreview();
   openModal('aiCreateModal');
@@ -3188,10 +3056,8 @@ export function updateAiCreateType() {
   if (typeSelect) aiDraftType = typeSelect.value;
 
   const rubricGroup = document.getElementById('aiRubricGroup');
-  const quizGroup = document.getElementById('aiQuizGroup');
 
   if (rubricGroup) rubricGroup.style.display = aiDraftType === 'rubric' ? 'block' : 'none';
-  if (quizGroup) quizGroup.style.display = aiDraftType === 'quiz' ? 'block' : 'none';
 }
 
 /**
@@ -3211,10 +3077,6 @@ export async function generateAiDraft() {
 
   if (aiDraftType === 'announcement') {
     systemPrompt = AI_PROMPTS.createAnnouncement;
-  } else if (aiDraftType === 'quiz') {
-    const countEl = document.getElementById('aiQuestionCount');
-    const count = parseInt(countEl?.value, 10) || 5;
-    systemPrompt = AI_PROMPTS.createQuiz(count);
   } else {
     const assignmentSelect = document.getElementById('aiRubricAssignment');
     const assignmentId = assignmentSelect?.value;
@@ -3294,13 +3156,6 @@ function normalizeAiDraft(draft, type) {
     };
   }
 
-  if (type === 'quiz') {
-    return {
-      title: typeof draft.title === 'string' ? draft.title : '',
-      description: typeof draft.description === 'string' ? draft.description : '',
-      questions: Array.isArray(draft.questions) ? draft.questions : []
-    };
-  }
 
   if (type === 'rubric') {
     return {
@@ -3328,24 +3183,6 @@ export function renderAiDraftPreview() {
       <div class="card">
         <div class="card-title">${escapeHtml(aiDraft.title || 'Untitled announcement')}</div>
         <div class="markdown-content">${renderMarkdown(aiDraft.content || '')}</div>
-      </div>
-    `;
-    return;
-  }
-
-  if (aiDraftType === 'quiz') {
-    const questionsHtml = (aiDraft.questions || []).map((q, i) => `
-      <div style="padding:8px; background:var(--bg-color); border-radius:var(--radius); margin-bottom:8px;">
-        <div style="font-weight:500;">${i + 1}. ${escapeHtml(q.prompt)}</div>
-        <div class="muted" style="font-size:0.85rem;">${q.type} · ${q.points} pts</div>
-      </div>
-    `).join('');
-
-    preview.innerHTML = `
-      <div class="card">
-        <div class="card-title">${escapeHtml(aiDraft.title || 'Untitled quiz')}</div>
-        ${aiDraft.description ? `<p class="muted">${escapeHtml(aiDraft.description)}</p>` : ''}
-        <div style="margin-top:12px;">${questionsHtml}</div>
       </div>
     `;
     return;
@@ -3383,12 +3220,6 @@ export function applyAiDraft() {
     if (contentEl) contentEl.value = aiDraft.content || '';
     closeModal('aiCreateModal');
     openModal('announcementModal');
-  } else if (aiDraftType === 'quiz') {
-    // Store for quiz modal
-    window.aiQuizDraft = aiDraft;
-    closeModal('aiCreateModal');
-    // Open quiz modal with draft
-    if (window.openQuizModal) window.openQuizModal(null);
   } else if (aiDraftType === 'rubric') {
     // Store for rubric use
     window.aiRubricDraft = aiDraft;
