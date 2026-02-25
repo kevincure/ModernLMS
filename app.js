@@ -1933,7 +1933,11 @@ async function acceptInvite(inviteId) {
   appData.enrollments.push(enrollment);
 
   // Mark invite accepted
-  await supabaseUpdateInviteStatus(inviteId, 'accepted');
+  const inviteAccepted = await supabaseUpdateInviteStatus(inviteId, 'accepted');
+  if (!inviteAccepted) {
+    showToast('Failed to update invite status', 'error');
+    return;
+  }
   const inv = appData.invites.find(i => i.id === inviteId);
   if (inv) inv.status = 'accepted';
 
@@ -1954,7 +1958,11 @@ async function acceptInvite(inviteId) {
 window.acceptInvite = acceptInvite;
 
 async function rejectInvite(inviteId) {
-  await supabaseUpdateInviteStatus(inviteId, 'rejected');
+  const inviteRejected = await supabaseUpdateInviteStatus(inviteId, 'rejected');
+  if (!inviteRejected) {
+    showToast('Failed to update invite status', 'error');
+    return;
+  }
   const inv = (appData.invites || []).find(i => i.id === inviteId);
   if (inv) inv.status = 'rejected';
 
@@ -2379,6 +2387,11 @@ async function toggleAnnouncementVisibility(id) {
 }
 
 async function createAnnouncement() {
+  if (!activeCourseId) {
+    showToast('Please select an active course first', 'error');
+    return;
+  }
+
   const title = document.getElementById('announcementTitle').value.trim();
   const content = document.getElementById('announcementContent').value.trim();
   const pinned = document.getElementById('announcementPinned').checked;
@@ -2476,6 +2489,10 @@ async function saveAnnouncementChanges() {
 
 async function updateAnnouncement() {
   if (!currentEditAnnouncementId) return;
+  if (!activeCourseId) {
+    showToast('Please select an active course first', 'error');
+    return;
+  }
 
   const announcement = appData.announcements.find(a => a.id === currentEditAnnouncementId);
   if (!announcement) return;
@@ -2945,61 +2962,8 @@ function normalizeContentStatus(status) {
 }
 
 async function createAssignment() {
-  const title = document.getElementById('assignmentTitle').value.trim();
-  const description = document.getElementById('assignmentDescription').value.trim();
-  const category = document.getElementById('assignmentCategory').value;
-  const points = parseInt(document.getElementById('assignmentPoints').value);
-  const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
-  const allowLate = document.getElementById('assignmentAllowLate').checked;
-  const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
-  const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
-  const blindGrading = document.getElementById('assignmentBlindGrading')?.checked || false;
-
-  if (!title || !description || !points || !dueDate) {
-    showToast('Please fill in all required fields', 'error');
-    return;
-  }
-
-  const assignmentId = generateId();
-  const assignment = {
-    id: assignmentId,
-    courseId: activeCourseId,
-    title: title,
-    description: description,
-    category: category,
-    points: points,
-    status: status,
-    hidden: status !== 'published',
-    dueDate: new Date(dueDate).toISOString(),
-    createdAt: new Date().toISOString(),
-    allowLateSubmissions: allowLate,
-    lateDeduction: lateDeduction,
-    allowResubmission: allowResubmit,
-    blindGrading: blindGrading,
-    rubric: null
-  };
-
-  try {
-    // Save to Supabase
-    const result = await supabaseCreateAssignment(assignment);
-    if (!result) {
-      return; // Error already shown by supabase function
-    }
-
-    // Update local state
-    appData.assignments.push(assignment);
-  
-
-    closeModal('assignmentModal');
-    resetAssignmentModal();
-    renderAssignments();
-    renderHome();
-    showToast('Assignment created!', 'success');
-  } catch (err) {
-    console.error('[createAssignment] Error:', err);
-    showToast('Failed to create assignment: ' + err.message, 'error');
-  }
+  // Deprecated path — routed to the CC 1.4 assignment modal
+  openNewAssignmentModal();
 }
 
 function openCreateAssignmentTypeModal() {
@@ -3048,108 +3012,35 @@ function confirmCreateType() {
 
   if (type === 'quiz') {
     openQuizModal();
-  } else {
-    openAssignmentModal();
-    document.getElementById('assignmentCategory').value = type;
+    return;
+  }
+
+  // Route all assignment creation through the new CC 1.4 modal.
+  openNewAssignmentModal();
+  if (type === 'essay' || type === 'homework' || type === 'project') {
+    setAssignmentType('essay');
   }
 }
 
 let currentEditAssignmentId = null;
 
 function openAssignmentModal(assignmentId = null) {
-  ensureModalsRendered();
-  currentEditAssignmentId = assignmentId;
-  const assignment = assignmentId ? appData.assignments.find(a => a.id === assignmentId) : null;
-
-  document.getElementById('assignmentModalTitle').textContent = assignment ? 'Edit Assignment' : 'New Assignment';
-  document.getElementById('assignmentSubmitBtn').textContent = assignment ? 'Save Changes' : 'Create';
-  document.getElementById('assignmentTitle').value = assignment ? assignment.title : '';
-  document.getElementById('assignmentDescription').value = assignment ? assignment.description : '';
-  document.getElementById('assignmentCategory').value = assignment ? assignment.category : 'homework';
-  document.getElementById('assignmentPoints').value = assignment ? assignment.points : '100';
-  setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', assignment ? assignment.dueDate : null);
-  document.getElementById('assignmentStatus').value = assignment ? normalizeContentStatus(assignment.status) : 'draft';
-  document.getElementById('assignmentAllowLate').checked = assignment ? assignment.allowLateSubmissions !== false : true;
-  document.getElementById('assignmentLateDeduction').value = assignment ? assignment.lateDeduction || 0 : '10';
-  document.getElementById('assignmentAllowResubmit').checked = assignment ? assignment.allowResubmission !== false : true;
-
-  openModal('assignmentModal');
+  // Deprecated path — use the new CC 1.4 assignment modal
+  openNewAssignmentModal(assignmentId);
 }
 
 function resetAssignmentModal() {
-  currentEditAssignmentId = null;
-  document.getElementById('assignmentModalTitle').textContent = 'New Assignment';
-  document.getElementById('assignmentSubmitBtn').textContent = 'Create';
-  document.getElementById('assignmentTitle').value = '';
-  document.getElementById('assignmentDescription').value = '';
-  document.getElementById('assignmentCategory').value = 'homework';
-  document.getElementById('assignmentPoints').value = '100';
-  setDateTimeSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm', null);
-  document.getElementById('assignmentStatus').value = 'draft';
-  document.getElementById('assignmentAllowLate').checked = true;
-  document.getElementById('assignmentLateDeduction').value = '10';
-  document.getElementById('assignmentAllowResubmit').checked = true;
+  // Deprecated path — kept as a no-op for backward compatibility with stale onclick handlers
 }
 
 async function saveAssignmentChanges() {
-  if (currentEditAssignmentId) {
-    await updateAssignment();
-  } else {
-    await createAssignment();
-  }
+  // Deprecated path — delegate to the new assignment save flow
+  await saveNewAssignment();
 }
 
 async function updateAssignment() {
-  if (!currentEditAssignmentId) return;
-
-  const assignment = appData.assignments.find(a => a.id === currentEditAssignmentId);
-  if (!assignment) return;
-
-  const title = document.getElementById('assignmentTitle').value.trim();
-  const description = document.getElementById('assignmentDescription').value.trim();
-  const category = document.getElementById('assignmentCategory').value;
-  const points = parseInt(document.getElementById('assignmentPoints').value);
-  const dueDate = getDateTimeFromSelectors('assignmentDueDate', 'assignmentDueHour', 'assignmentDueMinute', 'assignmentDueAmPm');
-  const status = normalizeContentStatus(document.getElementById('assignmentStatus').value);
-  const allowLate = document.getElementById('assignmentAllowLate').checked;
-  const lateDeduction = parseInt(document.getElementById('assignmentLateDeduction').value) || 0;
-  const allowResubmit = document.getElementById('assignmentAllowResubmit').checked;
-
-  if (!title || !description || !points || !dueDate) {
-    showToast('Please fill in all required fields', 'error');
-    return;
-  }
-
-  const previousStatus = assignment.status;
-
-  // Store original values for rollback
-  const original = { ...assignment };
-
-  assignment.title = title;
-  assignment.description = description;
-  assignment.category = category;
-  assignment.points = points;
-  assignment.status = status;
-  assignment.hidden = status !== 'published';
-  assignment.dueDate = new Date(dueDate).toISOString();
-  assignment.allowLateSubmissions = allowLate;
-  assignment.lateDeduction = lateDeduction;
-  assignment.allowResubmission = allowResubmit;
-
-  // Save to Supabase
-  const result = await supabaseUpdateAssignment(assignment);
-  if (!result) {
-    // Rollback
-    Object.assign(assignment, original);
-    return;
-  }
-
-
-  closeModal('assignmentModal');
-  resetAssignmentModal();
-  renderAssignments();
-  renderHome();
-  showToast('Assignment updated!', 'success');
+  // Deprecated path — delegate to the new assignment save flow
+  await saveNewAssignment();
 }
 
 function editAssignment(assignmentId) {
@@ -4050,7 +3941,7 @@ function openNewAssignmentModal(assignmentId = null) {
       document.getElementById('newAssignmentMaxFileSize').value = assignment.maxFileSizeMb || 50;
       document.getElementById('essayGradingType').value = assignment.gradingType || 'points';
       handleGradingTypeChange('essay');
-      document.getElementById('newAssignmentPoints').value = assignment.points || 100;
+      document.getElementById('newAssignmentPoints').value = assignment.points ?? 100;
       const limitGroup = document.getElementById('resubmitLimitGroup');
       if (limitGroup) limitGroup.style.display = 'flex';
       document.getElementById('newAssignmentAttempts').value = assignment.submissionAttempts || '';
@@ -4078,7 +3969,7 @@ function openNewAssignmentModal(assignmentId = null) {
     } else if (atype === 'no_submission') {
       document.getElementById('noSubGradingType').value = assignment.gradingType || 'points';
       handleGradingTypeChange('nosub');
-      document.getElementById('newAssignmentNoSubPoints').value = assignment.points || 100;
+      document.getElementById('newAssignmentNoSubPoints').value = assignment.points ?? 100;
     }
 
     // Dates — load into date+time-select pairs
@@ -4367,6 +4258,11 @@ function syncAvailableUntilToDueDate() {
 window.syncAvailableUntilToDueDate = syncAvailableUntilToDueDate;
 
 async function saveNewAssignment() {
+  if (!activeCourseId) {
+    showToast('No active course selected', 'error');
+    return;
+  }
+
   // Determine which assignment type is selected
   const radio = document.querySelector('input[name="newAssignmentType"]:checked');
   const assignmentType = radio ? radio.value : 'essay';
@@ -4397,7 +4293,12 @@ async function saveNewAssignment() {
 
   if (assignmentType === 'essay') {
     gradingType = document.getElementById('essayGradingType').value;
-    points = gradingType === 'points' ? (parseFloat(document.getElementById('newAssignmentPoints').value) || 100) : 0;
+    if (gradingType === 'points') {
+      const rawPoints = parseFloat(document.getElementById('newAssignmentPoints').value);
+      points = Number.isFinite(rawPoints) ? rawPoints : 100;
+    } else {
+      points = 0;
+    }
     const textChecked = document.getElementById('newAssignmentModalityText').checked;
     const fileChecked = document.getElementById('newAssignmentModalityFile').checked;
     if (!textChecked && !fileChecked) {
@@ -4443,7 +4344,12 @@ async function saveNewAssignment() {
 
   } else if (assignmentType === 'no_submission') {
     gradingType = document.getElementById('noSubGradingType').value;
-    points = gradingType === 'points' ? (parseFloat(document.getElementById('newAssignmentNoSubPoints').value) || 0) : 0;
+    if (gradingType === 'points') {
+      const rawNoSubPoints = parseFloat(document.getElementById('newAssignmentNoSubPoints').value);
+      points = Number.isFinite(rawNoSubPoints) ? rawNoSubPoints : 0;
+    } else {
+      points = 0;
+    }
   }
 
   if (!title) {
@@ -4474,8 +4380,8 @@ async function saveNewAssignment() {
   const legacyCategory = assignmentType === 'quiz' ? 'quiz' :
                          assignmentType === 'no_submission' ? 'participation' : 'essay';
 
-  // No-submission assignments are always draft/hidden — no dates needed
-  const effectiveStatus = assignmentType === 'no_submission' ? 'draft' : status;
+  // Status/visibility follow the same logic for all assignment types
+  const effectiveStatus = status;
 
   const fields = {
     title, description, points,
@@ -7447,7 +7353,7 @@ function renderPeopleList() {
             <div class="muted" style="font-size:0.8rem;">${p.email}</div>
           </div>
           ${isStaffUser && p.id !== appData.currentUser.id ? `
-            <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
+            <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
           ` : ''}
         </div>
       `;
@@ -7586,7 +7492,7 @@ function renderPeople() {
             <div class="muted" style="font-size:0.8rem;">${p.email}</div>
           </div>
           ${isStaffUser && p.id !== appData.currentUser.id ? `
-            <button class="btn btn-secondary btn-sm" onclick="removePersonFromCourse('${p.id}', '${activeCourseId}')" style="padding:4px 12px;">Remove</button>
+            <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
           ` : ''}
         </div>
       `;
@@ -8606,25 +8512,8 @@ async function addPersonToCourse() {
 }
 
 function removePersonFromCourse(userId, courseId) {
-  const user = getUserById(userId);
-
-  // Ensure modals exist before calling confirm
-  if (!document.getElementById('confirmModal')) {
-    generateModals();
-  }
-
-  showConfirmDialog(`Remove ${user.name} from this course?`, async () => {
-    // Delete from Supabase
-    const result = await supabaseDeleteEnrollment(userId, courseId);
-    if (!result) {
-      return; // Error already shown
-    }
-
-    // Update local state
-    appData.enrollments = appData.enrollments.filter(e => !(e.userId === userId && e.courseId === courseId));
-    renderPeople();
-    showToast(`Removed ${user.name}`, 'success');
-  });
+  // Enrollment removals are now restricted to organization admin workflows.
+  showToast('Removing enrolled users is restricted to Admin. You can still revoke pending invites here.', 'warning');
 }
 
 function revokeInvite(inviteId) {
@@ -9174,7 +9063,7 @@ function openUnifiedContentModal() {
 function createFromUnified(type) {
   closeModal('unifiedContentModal');
   if (type === 'assignment') {
-    openAssignmentModal();
+    openNewAssignmentModal();
   } else if (type === 'quiz') {
     openQuizModal();
   } else if (type === 'announcement') {
