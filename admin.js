@@ -47,6 +47,7 @@ const admin = {
   user:        null,   // auth.users row (from Supabase Auth)
   org:         null,   // orgs row for this admin session
   orgMembers:  [],     // { id, user_id, role, profile: { id, email, name } }[]
+  orgInvites:  [],     // pending org invites { id, email, role, status, created_at }
   orgCourses:  [],     // courses rows with creator profile joined
   enrollments: [],     // enrollments for all org courses
   auditRows:   [],
@@ -57,6 +58,7 @@ const admin = {
   filters: {
     usersSearch: '',
     usersSort: 'name_asc',
+    usersTab: 'members',   // 'members' | 'pending'
     coursesSearch: '',
     coursesSort: 'name_asc',
     coursesTerm: 'ALL',
@@ -249,7 +251,8 @@ async function loadAdminData() {
   const loadErrors = [];
   const [membersRes, coursesRes] = await Promise.allSettled([
     loadOrgMembers(),
-    loadOrgCourses()
+    loadOrgCourses(),
+    loadOrgInvites()
   ]);
 
   if (membersRes.status === 'rejected') loadErrors.push(`members: ${membersRes.reason?.message || membersRes.reason}`);
@@ -266,6 +269,17 @@ async function loadAdminData() {
     console.error('[Admin] loadAdminData partial failure:', loadErrors.join(' | '));
     showToast('Some admin data failed to load. Open devtools for details.', true);
   }
+}
+
+async function loadOrgInvites() {
+  const { data, error } = await admin.sb
+    .from('org_invites')
+    .select('id, email, role, status, invited_by, created_at')
+    .eq('org_id', admin.org.id)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+  if (error) { console.warn('[Admin] loadOrgInvites:', error.message); admin.orgInvites = []; return; }
+  admin.orgInvites = data || [];
 }
 
 async function loadOrgMembers() {
@@ -305,7 +319,7 @@ async function loadOrgCourses() {
   const { data: courses, error } = await queryWithTimeout(
     admin.sb
       .from('courses')
-      .select('id, name, code, description, active, term, created_at, created_by')
+      .select('id, name, code, description, active, term, created_at, created_by, department_id')
       .eq('org_id', admin.org.id)
       .order('created_at', { ascending: false }),
     'load_org_courses'
@@ -444,8 +458,52 @@ function renderUsersSection() {
   const wrap = document.getElementById('usersTableWrap');
   if (!wrap) return;
 
+  const tab = admin.filters.usersTab || 'members';
+  const pendingCount = admin.orgInvites.length;
+
+  // Tab bar
+  const tabBar = `
+    <div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">
+      <button class="btn ${tab === 'members' ? 'btn-primary' : 'btn-secondary'}" style="padding:5px 14px; font-size:0.85rem;"
+        onclick="setUsersTab('members')">Members (${admin.orgMembers.length})</button>
+      <button class="btn ${tab === 'pending' ? 'btn-primary' : 'btn-secondary'}" style="padding:5px 14px; font-size:0.85rem;"
+        onclick="setUsersTab('pending')">Pending Invites${pendingCount > 0 ? ` <span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 6px;font-size:0.75rem;margin-left:4px;">${pendingCount}</span>` : ' (0)'}</button>
+    </div>`;
+
+  if (tab === 'pending') {
+    if (admin.orgInvites.length === 0) {
+      wrap.innerHTML = tabBar + `<div class="admin-empty">No pending invites.</div>`;
+      return;
+    }
+    const search = admin.filters.usersSearch.toLowerCase();
+    const invites = admin.orgInvites.filter(i => !search || i.email.toLowerCase().includes(search));
+    const rows = invites.map(i => `
+      <tr>
+        <td class="muted" style="font-size:0.85rem;">—</td>
+        <td>${escHtml(i.email)}</td>
+        <td><span class="role-badge">${escHtml(i.role || 'member')}</span></td>
+        <td><span style="color:var(--warning, #d97706); font-size:0.82rem; font-weight:500;">Pending</span></td>
+        <td>${formatDate(i.created_at)}</td>
+        <td style="text-align:right;">
+          <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);"
+            onclick="cancelOrgInvite(${escHtml(JSON.stringify(i.id))}, ${escHtml(JSON.stringify(i.email))})">
+            Cancel
+          </button>
+        </td>
+      </tr>`).join('');
+    wrap.innerHTML = tabBar + `
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Invited</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6" class="admin-empty">No matching invites.</td></tr>'}</tbody>
+        </table>
+      </div>`;
+    return;
+  }
+
+  // Members tab
   if (admin.orgMembers.length === 0) {
-    wrap.innerHTML = `<div class="admin-empty">No members yet. Click <strong>+ Add Member</strong> to add the first one.</div>`;
+    wrap.innerHTML = tabBar + `<div class="admin-empty">No members yet. Click <strong>+ Add Member</strong> to add the first one.</div>`;
     return;
   }
 
@@ -462,7 +520,7 @@ function renderUsersSection() {
   if (admin.filters.usersSort === 'newest') members.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   if (members.length === 0) {
-    wrap.innerHTML = `<div class="admin-empty">No matching members.</div>`;
+    wrap.innerHTML = tabBar + `<div class="admin-empty">No matching members.</div>`;
     return;
   }
 
@@ -489,7 +547,7 @@ function renderUsersSection() {
       </tr>`;
   }).join('');
 
-  wrap.innerHTML = `
+  wrap.innerHTML = tabBar + `
     <div class="admin-table-wrap">
       <table class="admin-table">
         <thead>
@@ -556,7 +614,10 @@ function renderCoursesSection() {
         <td>${instructors}</td>
         <td style="text-align:center;">${enrollCount}</td>
         <td>${formatDate(c.created_at)}</td>
-        <td style="text-align:right;"><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);" data-action="delete-course" data-course-id="${escHtml(c.id)}" data-course-name="${escHtml(c.name)}">Delete</button></td>
+        <td style="text-align:right; white-space:nowrap;">
+          <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" data-action="edit-course" data-course-id="${escHtml(c.id)}">Edit</button>
+          <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; margin-left:4px; color:var(--danger);" data-action="delete-course" data-course-id="${escHtml(c.id)}" data-course-name="${escHtml(c.name)}">Delete</button>
+        </td>
       </tr>`;
   }).join('');
 
@@ -576,8 +637,10 @@ function renderCoursesSection() {
   // Event delegation — avoids inline onclick with quoted strings (which Chrome
   // DevTools treats as breakpoint-able inline scripts).
   wrap.querySelector('table').addEventListener('click', e => {
-    const btn = e.target.closest('[data-action="delete-course"]');
-    if (btn) deleteCourse(btn.dataset.courseId, btn.dataset.courseName);
+    const delBtn = e.target.closest('[data-action="delete-course"]');
+    if (delBtn) { deleteCourse(delBtn.dataset.courseId, delBtn.dataset.courseName); return; }
+    const editBtn = e.target.closest('[data-action="edit-course"]');
+    if (editBtn) openEditCourseModal(editBtn.dataset.courseId);
   }, { once: true });
 }
 
@@ -972,6 +1035,70 @@ function deleteCourse(courseId, courseName) {
     },
     'Delete'
   );
+}
+
+// ─── CRUD: Edit Course ────────────────────────────────────────────────────────
+
+let editingCourseId = null;
+
+function openEditCourseModal(courseId) {
+  const course = admin.orgCourses.find(c => c.id === courseId);
+  if (!course) return;
+  editingCourseId = courseId;
+
+  document.getElementById('editCourseNameInput').value = course.name || '';
+  document.getElementById('editCourseCodeInput').value = course.code || '';
+  document.getElementById('editCourseTermInput').value = course.term || '';
+  document.getElementById('editCourseDescInput').value = course.description || '';
+  document.getElementById('editCourseActive').checked  = course.active !== false;
+  hideInlineError('editCourseError');
+
+  // Populate department dropdown
+  const deptSel = document.getElementById('editCourseDeptSelect');
+  deptSel.innerHTML = '<option value="">None (org-wide)</option>';
+  admin.departments.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = d.name;
+    if (d.id === course.department_id) opt.selected = true;
+    deptSel.appendChild(opt);
+  });
+
+  openModal('modal-editCourse');
+  setTimeout(() => document.getElementById('editCourseNameInput')?.focus(), 80);
+}
+
+async function saveEditCourse() {
+  const name         = document.getElementById('editCourseNameInput').value.trim();
+  const code         = document.getElementById('editCourseCodeInput').value.trim();
+  const term         = document.getElementById('editCourseTermInput').value.trim();
+  const description  = document.getElementById('editCourseDescInput').value.trim();
+  const active       = document.getElementById('editCourseActive').checked;
+  const departmentId = document.getElementById('editCourseDeptSelect').value || null;
+
+  hideInlineError('editCourseError');
+  if (!name) { showInlineError('editCourseError', 'Course name is required.'); return; }
+  if (!term) { showInlineError('editCourseError', 'Term is required.'); return; }
+
+  setSubmitLoading('editCourseSubmitBtn', true);
+
+  const { error } = await admin.sb
+    .from('courses')
+    .update({ name, code: code || null, description: description || null, term, active, department_id: departmentId })
+    .eq('id', editingCourseId);
+
+  setSubmitLoading('editCourseSubmitBtn', false);
+
+  if (error) { showInlineError('editCourseError', `Error saving: ${error.message}`); return; }
+
+  await auditLog('edit_course', 'course', editingCourseId, { name });
+  // Update local cache
+  const course = admin.orgCourses.find(c => c.id === editingCourseId);
+  if (course) Object.assign(course, { name, code: code || null, description: description || null, term, active, department_id: departmentId });
+
+  closeModal('modal-editCourse');
+  renderCoursesSection();
+  showToast(`Course "${name}" updated.`);
 }
 
 // ─── CRUD: Add Enrollment ─────────────────────────────────────────────────────
@@ -1613,6 +1740,22 @@ function hydrateCourseTermFilter() {
 
 function setUsersSearch(v) { admin.filters.usersSearch = v.trim(); renderUsersSection(); }
 function setUsersSort(v) { admin.filters.usersSort = v; renderUsersSection(); }
+function setUsersTab(tab) { admin.filters.usersTab = tab; renderUsersSection(); }
+
+async function cancelOrgInvite(inviteId, email) {
+  openConfirmModal(
+    'Cancel Invite',
+    `Cancel the pending invite for ${email}?`,
+    async () => {
+      const { error } = await admin.sb.from('org_invites').update({ status: 'expired' }).eq('id', inviteId);
+      if (error) { showToast('Failed to cancel invite: ' + error.message, true); return; }
+      admin.orgInvites = admin.orgInvites.filter(i => i.id !== inviteId);
+      renderUsersSection();
+      showToast(`Invite for ${email} cancelled.`);
+    },
+    'Cancel Invite'
+  );
+}
 function setCoursesSearch(v) { admin.filters.coursesSearch = v.trim(); renderCoursesSection(); }
 function setCoursesSort(v) { admin.filters.coursesSort = v; renderCoursesSection(); }
 function setCoursesTermFilter(v) { admin.filters.coursesTerm = v; renderCoursesSection(); }
@@ -1658,6 +1801,10 @@ window.addEnrollment          = addEnrollment;
 window.removeEnrollment       = removeEnrollment;
 window.setUsersSearch         = setUsersSearch;
 window.setUsersSort           = setUsersSort;
+window.setUsersTab            = setUsersTab;
+window.cancelOrgInvite        = cancelOrgInvite;
+window.openEditCourseModal    = openEditCourseModal;
+window.saveEditCourse         = saveEditCourse;
 window.setCoursesSearch       = setCoursesSearch;
 window.setCoursesSort         = setCoursesSort;
 window.setCoursesTermFilter   = setCoursesTermFilter;
