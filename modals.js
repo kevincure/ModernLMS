@@ -1040,6 +1040,17 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                   <div class="hint">Blank = all questions; number = random subset</div>
                 </div>
               </div>
+              <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-light);">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
+                  <input type="checkbox" id="newAssignmentMasteryMode" onchange="document.getElementById('masteryThresholdRow').style.display = this.checked ? 'flex' : 'none'">
+                  <span style="font-weight:600; font-size:0.9rem;">Mastery Mode</span>
+                </label>
+                <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Students must answer X questions correctly. Wrong answers are recycled until mastered. Graded as Complete/Incomplete.</div>
+                <div id="masteryThresholdRow" style="display:none; align-items:center; gap:8px;">
+                  <label class="form-label" style="margin-bottom:0; white-space:nowrap;">Correct answers needed:</label>
+                  <input type="number" class="form-input" id="newAssignmentMasteryThreshold" min="1" value="5" style="width:80px;">
+                </div>
+              </div>
             </div>
           </div>
 

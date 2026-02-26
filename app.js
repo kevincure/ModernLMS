@@ -3895,6 +3895,13 @@ function openNewAssignmentModal(assignmentId = null) {
       }
       document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions || false;
       if (assignment.numQuestions) document.getElementById('newAssignmentNumQuestions').value = assignment.numQuestions;
+      // Mastery mode
+      const masteryEl = document.getElementById('newAssignmentMasteryMode');
+      if (masteryEl) {
+        masteryEl.checked = !!assignment.masteryMode;
+        document.getElementById('masteryThresholdRow').style.display = assignment.masteryMode ? 'flex' : 'none';
+        if (assignment.masteryThreshold) document.getElementById('newAssignmentMasteryThreshold').value = assignment.masteryThreshold;
+      }
       const tl = assignment.timeLimit;
       if (!tl) {
         document.getElementById('newAssignmentUnlimitedTime').checked = true;
@@ -3952,6 +3959,8 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentUnlimitedTime').checked = false;
   document.getElementById('newAssignmentRandomizeQuestions').checked = false;
   document.getElementById('newAssignmentNumQuestions').value = '';
+  const masteryResetEl = document.getElementById('newAssignmentMasteryMode');
+  if (masteryResetEl) { masteryResetEl.checked = false; document.getElementById('masteryThresholdRow').style.display = 'none'; document.getElementById('newAssignmentMasteryThreshold').value = '5'; }
   document.getElementById('newAssignmentModalityText').checked = true;
   document.getElementById('newAssignmentModalityFile').checked = false;
   document.getElementById('newAssignmentFileTypes').value = '';
@@ -4284,7 +4293,14 @@ async function saveNewAssignment() {
         points = totalPts;
       }
     }
-    gradingType = 'points';
+    // Mastery mode
+    const masteryModeChecked = document.getElementById('newAssignmentMasteryMode')?.checked || false;
+    if (masteryModeChecked) {
+      gradingType = 'complete_incomplete';
+      points = 1; // Complete/Incomplete binary
+    } else {
+      gradingType = 'points';
+    }
 
   } else if (assignmentType === 'no_submission') {
     gradingType = document.getElementById('noSubGradingType').value;
@@ -4351,7 +4367,9 @@ async function saveNewAssignment() {
     lateDeduction: latePenalty,
     gradingNotes,
     visibleToStudents: document.getElementById('newAssignmentVisibleToStudents')?.checked !== false,
-    showStatsToStudents: document.getElementById('newAssignmentShowStats')?.checked === true
+    showStatsToStudents: document.getElementById('newAssignmentShowStats')?.checked === true,
+    masteryMode: document.getElementById('newAssignmentMasteryMode')?.checked || false,
+    masteryThreshold: parseInt(document.getElementById('newAssignmentMasteryThreshold')?.value) || 5
   };
 
   if (currentNewAssignmentEditId) {
@@ -4477,7 +4495,9 @@ function startAssignmentQuiz(assignmentId) {
     timeLimit: assignment.timeLimit,
     attempts: assignment.submissionAttempts,
     randomizeQuestions: false,  // already shuffled above if needed
-    questions
+    questions,
+    masteryMode: assignment.masteryMode || false,
+    masteryThreshold: assignment.masteryThreshold || 5
   };
 
   currentAssignmentQuizId = assignmentId;
@@ -4777,6 +4797,84 @@ function viewSubmissions(assignmentId) {
     </div>
   `;
 
+  // Per-question quiz analytics (only for quiz-type assignments)
+  let quizAnalyticsHtml = '';
+  const isQuiz = assignment.assignmentType === 'quiz' || assignment.category === 'quiz' || assignment.category === 'exam';
+  if (isQuiz) {
+    const quizId = `assign_${assignmentId}`;
+    const quizSubs = (appData.quizSubmissions || []).filter(qs => qs.quizId === quizId);
+    const bank = assignment.questionBankId ? (appData.questionBanks || []).find(b => b.id === assignment.questionBankId) : null;
+    if (bank && bank.questions && quizSubs.length > 0) {
+      const qStats = bank.questions.map((q, qi) => {
+        const type = q.type || 'multiple_choice';
+        const points = parseFloat(q.points) || 0;
+        let correctCount = 0;
+        const answerCounts = {};
+        let totalAnswered = 0;
+
+        quizSubs.forEach(sub => {
+          const answer = sub.answers ? sub.answers[q.id] : undefined;
+          if (answer === undefined || answer === null) return;
+          totalAnswered++;
+          const answerKey = String(answer);
+          answerCounts[answerKey] = (answerCounts[answerKey] || 0) + 1;
+          if (type === 'multiple_choice') {
+            if (parseInt(answer, 10) === parseInt(q.correctAnswer, 10)) correctCount++;
+          } else if (type === 'true_false') {
+            if (answer === q.correctAnswer) correctCount++;
+          }
+        });
+
+        const pctCorrect = totalAnswered > 0 ? ((correctCount / totalAnswered) * 100).toFixed(0) : '—';
+        const isAutoGraded = type === 'multiple_choice' || type === 'true_false';
+
+        // Find most common wrong answer
+        let topWrongLabel = '—';
+        if (isAutoGraded) {
+          const correctKey = String(q.correctAnswer);
+          const wrongEntries = Object.entries(answerCounts).filter(([k]) => k !== correctKey);
+          if (wrongEntries.length > 0) {
+            wrongEntries.sort((a, b) => b[1] - a[1]);
+            const topWrongKey = wrongEntries[0][0];
+            if (type === 'multiple_choice' && q.options) {
+              const idx = parseInt(topWrongKey, 10);
+              topWrongLabel = q.options[idx] ? escapeHtml(String(q.options[idx])) : topWrongKey;
+            } else {
+              topWrongLabel = escapeHtml(topWrongKey);
+            }
+            topWrongLabel += ` (${wrongEntries[0][1]})`;
+          }
+        }
+
+        // Bar color
+        const pctNum = parseInt(pctCorrect, 10) || 0;
+        const barColor = pctNum >= 80 ? 'var(--success, #22c55e)' : pctNum >= 50 ? 'var(--warning, #f59e0b)' : 'var(--danger, #ef4444)';
+
+        return `
+          <div style="padding:10px 0; ${qi < bank.questions.length - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <span style="font-weight:600; font-size:0.9rem;">Q${qi + 1}: ${escapeHtml((q.title || q.question || '').substring(0, 80))}${(q.title || q.question || '').length > 80 ? '...' : ''}</span>
+              <span style="font-size:0.85rem; font-weight:700; color:${barColor};">${isAutoGraded ? pctCorrect + '%' : 'Manual'}</span>
+            </div>
+            ${isAutoGraded ? `
+              <div style="height:8px; background:var(--border-light); border-radius:4px; overflow:hidden; margin-bottom:4px;">
+                <div style="height:100%; width:${pctNum}%; background:${barColor}; border-radius:4px;"></div>
+              </div>
+              <div class="muted" style="font-size:0.8rem;">${correctCount}/${totalAnswered} correct${topWrongLabel !== '—' ? ` · Most common wrong: ${topWrongLabel}` : ''}</div>
+            ` : `<div class="muted" style="font-size:0.8rem;">${totalAnswered} responses (requires manual grading)</div>`}
+          </div>
+        `;
+      });
+
+      quizAnalyticsHtml = `
+        <div class="card" style="margin-bottom:16px;">
+          <div style="font-weight:700; margin-bottom:12px; font-size:1rem;">Per-Question Analysis</div>
+          ${qStats.join('')}
+        </div>
+      `;
+    }
+  }
+
   const html = `
     <div class="modal-overlay visible" id="submissionsModal">
       <div class="modal" style="max-width:900px;">
@@ -4786,6 +4884,7 @@ function viewSubmissions(assignmentId) {
         </div>
         <div class="modal-body">
           ${metadataHtml}
+          ${quizAnalyticsHtml}
           <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
             <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">Grade</button>
             <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">Bulk Import Grades</button>

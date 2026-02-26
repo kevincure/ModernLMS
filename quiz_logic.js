@@ -732,6 +732,48 @@ export async function submitQuiz() {
     quizTimerInterval = null;
   }
 
+  // Mastery mode: recycle wrong answers until threshold met
+  if (quiz.masteryMode) {
+    const threshold = quiz.masteryThreshold || 5;
+    // Count correct answers (only auto-gradable types count)
+    let correctCount = 0;
+    const wrongQuestions = [];
+    questions.forEach(q => {
+      const type = q.type || 'multiple_choice';
+      const answer = answers[q.id];
+      let isCorrect = false;
+      if (type === 'multiple_choice') {
+        isCorrect = parseInt(answer, 10) === parseInt(q.correctAnswer, 10);
+      } else if (type === 'true_false') {
+        isCorrect = answer === q.correctAnswer;
+      }
+      if (isCorrect) correctCount++;
+      else wrongQuestions.push(q);
+    });
+
+    if (correctCount >= threshold) {
+      // Passed mastery!
+      submission.score = 1;  // Complete
+      submission.graded = true;
+      submission.released = true;
+      showToast(`Mastery achieved! ${correctCount}/${questions.length} correct (needed ${threshold})`, 'success');
+      closeModal('quizTakeModal');
+      if (renderAssignmentsCallback) renderAssignmentsCallback();
+    } else {
+      // Recycle wrong questions
+      showToast(`${correctCount} correct so far (need ${threshold}). Recycling ${wrongQuestions.length} wrong answers...`, 'info');
+      // Rebuild quiz with only wrong questions
+      const recycledQuiz = {
+        ...quiz,
+        questions: wrongQuestions.sort(() => Math.random() - 0.5)
+      };
+      setTimeout(() => {
+        renderQuizTakeModal(recycledQuiz);
+      }, 1500);
+    }
+    return;
+  }
+
   if (!needsManual) {
     showToast(`Quiz submitted! Score: ${autoScore}/${totalPoints}`, 'success');
   } else {
