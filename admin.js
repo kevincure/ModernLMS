@@ -881,7 +881,7 @@ async function createCourse() {
       code:        code || null,
       description: description || null,
       org_id:      admin.org.id,
-      created_by:  instructorId,
+      created_by:  admin.user.id,
       active:      true,
       term
     })
