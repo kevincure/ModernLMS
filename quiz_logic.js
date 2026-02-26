@@ -605,9 +605,11 @@ export function renderQuizTakeModal(quiz) {
 
   const points = getQuizPoints({ questions });
   setText('quizTakeTitle', quiz.title);
-  setText('quizTakeMeta', `${points} points · ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'No time limit'}`);
+  const proctorLabel = quiz.proctorMode ? ' · Proctored' : '';
+  setText('quizTakeMeta', `${points} points · ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'No time limit'}${proctorLabel}`);
 
   startQuizTimer(quiz.timeLimit);
+  initProctorMode(quiz);
 }
 
 /**
@@ -699,6 +701,10 @@ export async function submitQuiz() {
   const { autoScore, needsManual } = calculateQuizAutoScore(questions, answers);
   const totalPoints = getQuizPoints({ questions });
 
+  // Capture proctor report if active
+  const proctorReport = proctorActive ? getProctorReport() : null;
+  cleanupProctorMode();
+
   const submission = {
     id: generateId(),
     quizId: quiz.id,
@@ -713,7 +719,8 @@ export async function submitQuiz() {
     feedback: '',
     submittedAt: new Date().toISOString(),
     gradedAt: needsManual ? null : new Date().toISOString(),
-    gradedBy: needsManual ? null : 'auto'
+    gradedBy: needsManual ? null : 'auto',
+    proctorReport
   };
 
   const savedSubmission = await supabaseUpsertQuizSubmission(submission);
@@ -1011,6 +1018,120 @@ export async function toggleQuizVisibility(quizId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PROCTOR MODE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let proctorIrregularities = [];
+let proctorTabSwitchCount = 0;
+let proctorActive = false;
+let proctorQuiz = null;
+
+function initProctorMode(quiz) {
+  // Clean up previous listeners
+  cleanupProctorMode();
+
+  if (!quiz.proctorMode) return;
+
+  proctorActive = true;
+  proctorQuiz = quiz;
+  proctorIrregularities = [];
+  proctorTabSwitchCount = 0;
+
+  // Enter fullscreen if lockdown is enabled
+  if (quiz.proctorLockdown) {
+    const modal = document.getElementById('quizTakeModal');
+    if (modal && modal.requestFullscreen) {
+      modal.requestFullscreen().catch(() => {
+        proctorIrregularities.push({ time: new Date().toISOString(), type: 'fullscreen_denied', detail: 'Student declined fullscreen request' });
+      });
+    }
+  }
+
+  // Show proctor banner
+  const container = document.getElementById('quizTakeQuestions');
+  if (container) {
+    const banner = document.createElement('div');
+    banner.id = 'proctorBanner';
+    banner.style.cssText = 'padding:8px 16px; background:var(--danger-light, #fce4ec); color:var(--danger); border-radius:var(--radius); margin-bottom:12px; font-size:0.85rem; font-weight:600; text-align:center;';
+    banner.textContent = 'Proctored Exam — Tab switches and window changes are being recorded';
+    container.parentNode.insertBefore(banner, container);
+  }
+
+  // Tab visibility change listener
+  document.addEventListener('visibilitychange', handleProctorVisibility);
+
+  // Fullscreen change listener
+  document.addEventListener('fullscreenchange', handleProctorFullscreen);
+
+  // Window blur listener (catches some cases visibility API misses)
+  window.addEventListener('blur', handleProctorBlur);
+}
+
+function handleProctorVisibility() {
+  if (!proctorActive) return;
+  if (document.hidden) {
+    proctorTabSwitchCount++;
+    proctorIrregularities.push({
+      time: new Date().toISOString(),
+      type: 'tab_switch',
+      detail: `Tab hidden (switch #${proctorTabSwitchCount})`
+    });
+    showToast(`Tab switch detected (${proctorTabSwitchCount})`, 'error');
+
+    // Auto-submit after 3 switches if enabled
+    if (proctorQuiz?.proctorAutoSubmit && proctorTabSwitchCount >= 3) {
+      showToast('3 tab switches detected — auto-submitting quiz', 'error');
+      setTimeout(() => submitQuiz(), 500);
+    }
+  }
+}
+
+function handleProctorFullscreen() {
+  if (!proctorActive) return;
+  if (!document.fullscreenElement && proctorQuiz?.proctorLockdown) {
+    proctorIrregularities.push({
+      time: new Date().toISOString(),
+      type: 'fullscreen_exit',
+      detail: 'Student exited fullscreen'
+    });
+    showToast('Fullscreen exit detected', 'error');
+  }
+}
+
+function handleProctorBlur() {
+  if (!proctorActive) return;
+  // Only record if document is also hidden (avoid double-counting with visibilitychange)
+  if (!document.hidden) {
+    proctorIrregularities.push({
+      time: new Date().toISOString(),
+      type: 'window_blur',
+      detail: 'Browser window lost focus'
+    });
+  }
+}
+
+function cleanupProctorMode() {
+  proctorActive = false;
+  document.removeEventListener('visibilitychange', handleProctorVisibility);
+  document.removeEventListener('fullscreenchange', handleProctorFullscreen);
+  window.removeEventListener('blur', handleProctorBlur);
+  const banner = document.getElementById('proctorBanner');
+  if (banner) banner.remove();
+  // Exit fullscreen if active
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+export function getProctorReport() {
+  return {
+    active: proctorActive,
+    tabSwitches: proctorTabSwitchCount,
+    irregularities: [...proctorIrregularities]
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // EXPORT GLOBAL FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1030,4 +1151,6 @@ if (typeof window !== 'undefined') {
   window.saveQuizGrade = saveQuizGrade;
   window.viewQuizSubmission = viewQuizSubmission;
   window.toggleQuizVisibility = toggleQuizVisibility;
+  window.getProctorReport = getProctorReport;
+  window.cleanupProctorMode = cleanupProctorMode;
 }
