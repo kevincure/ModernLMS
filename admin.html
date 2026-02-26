@@ -496,6 +496,56 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════
+       MODAL: Edit Course
+  ════════════════════════════════════════════════════════ -->
+  <div id="modal-editCourse" class="modal-overlay"
+    role="dialog" aria-modal="true" aria-labelledby="editCourseModalTitle">
+    <div class="modal" style="max-width:540px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="editCourseModalTitle">Edit Course</h3>
+        <button class="modal-close" onclick="closeModal('modal-editCourse')" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="editCourseNameInput">Course Name <span style="color:var(--danger);">*</span></label>
+          <input type="text" id="editCourseNameInput" class="form-input" placeholder="e.g. Introduction to Biology" />
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="editCourseCodeInput">Course Code</label>
+            <input type="text" id="editCourseCodeInput" class="form-input" placeholder="e.g. BIO 101" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="editCourseTermInput">Term <span style="color:var(--danger);">*</span></label>
+            <input type="text" id="editCourseTermInput" class="form-input" placeholder="e.g. SPRING 2026" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editCourseDescInput">Description</label>
+          <textarea id="editCourseDescInput" class="form-textarea" rows="3" placeholder="Optional course description"></textarea>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="editCourseDeptSelect">Course Group</label>
+            <select id="editCourseDeptSelect" class="form-select">
+              <option value="">None (org-wide)</option>
+            </select>
+          </div>
+          <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:24px;">
+            <input type="checkbox" id="editCourseActive" style="width:16px; height:16px; cursor:pointer;">
+            <label for="editCourseActive" style="cursor:pointer; font-size:0.9rem;">Course is active</label>
+          </div>
+        </div>
+        <div id="editCourseError" class="admin-inline-error" style="display:none;" role="alert"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-editCourse')">Cancel</button>
+        <button class="btn btn-primary" id="editCourseSubmitBtn" onclick="saveEditCourse()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
        MODAL: Add Enrollment
   ════════════════════════════════════════════════════════ -->
   <div id="modal-addEnrollment" class="modal-overlay"

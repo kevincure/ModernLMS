@@ -2859,16 +2859,16 @@ function renderCalendar() {
     setHTML('calendarList', '<div class="empty-state-text">No active course</div>');
     return;
   }
-  
+
   const course = getCourseById(activeCourseId);
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
+  const effectiveStaff = isStaffUser && !studentViewMode;
+
   setText('calendarSubtitle', course.name);
   setHTML('calendarActions', `
     ${effectiveStaff ? '<button class="btn btn-primary" onclick="openCreateCalendarEventModal()">+ Add Event</button>' : ''}
     <button class="btn btn-secondary" onclick="exportCalendarICS()">Export .ics</button>
   `);
-
-  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId);
-  const effectiveStaff = isStaffUser && !studentViewMode;
   const now = new Date();
   const start = new Date();
   start.setDate(now.getDate() - 7);
