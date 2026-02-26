@@ -474,9 +474,17 @@
           </select>
           <p class="hint" style="margin-top:6px;">Must be an existing org member. They will be enrolled as instructor.</p>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="courseTermInput">Term <span style="color:var(--danger);">*</span></label>
-          <input type="text" id="courseTermInput" class="form-input" placeholder="e.g. SPRING 2026" />
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="courseTermInput">Term <span style="color:var(--danger);">*</span></label>
+            <input type="text" id="courseTermInput" class="form-input" placeholder="e.g. SPRING 2026" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="courseDeptSelect">Course Group</label>
+            <select id="courseDeptSelect" class="form-select">
+              <option value="">None (org-wide)</option>
+            </select>
+          </div>
         </div>
         <div id="createCourseError" class="admin-inline-error" style="display:none;" role="alert"></div>
       </div>
