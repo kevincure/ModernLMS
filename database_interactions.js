@@ -733,15 +733,12 @@ export async function supabaseCreateAssignment(assignment) {
     show_stats_to_students: assignment.showStatsToStudents === true,
     // Quiz-specific
     question_bank_id: assignment.questionBankId || null,
-    num_questions: assignment.numQuestions || null,
     time_limit: assignment.timeLimit || null,
     randomize_questions: assignment.randomizeQuestions === true,
     // Essay-specific
     submission_modalities: assignment.submissionModalities || null,
     allowed_file_types: assignment.allowedFileTypes || null,
     max_file_size_mb: assignment.maxFileSizeMb || null,
-    // Shared
-    grading_notes: assignment.gradingNotes || null,
     created_by: appData.currentUser?.id
   };
 
@@ -791,15 +788,12 @@ export async function supabaseUpdateAssignment(assignment) {
     show_stats_to_students: assignment.showStatsToStudents === true,
     // Quiz-specific
     question_bank_id: assignment.questionBankId || null,
-    num_questions: assignment.numQuestions || null,
     time_limit: assignment.timeLimit || null,
     randomize_questions: assignment.randomizeQuestions === true,
     // Essay-specific
     submission_modalities: assignment.submissionModalities || null,
     allowed_file_types: assignment.allowedFileTypes || null,
-    max_file_size_mb: assignment.maxFileSizeMb || null,
-    // Shared
-    grading_notes: assignment.gradingNotes || null
+    max_file_size_mb: assignment.maxFileSizeMb || null
   };
 
   const { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
