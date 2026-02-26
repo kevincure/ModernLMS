@@ -1059,6 +1059,15 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                   </div>
                 </div>
               </div>
+              <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+                <div class="form-group" style="margin-bottom:0;">
+                  <label class="form-label" for="quizGradingType">Grading Type</label>
+                  <select class="form-select" id="quizGradingType" onchange="handleQuizGradingTypeChange(this.value)">
+                    <option value="points">Points</option>
+                    <option value="complete_incomplete">Complete / Incomplete</option>
+                  </select>
+                </div>
+              </div>
               <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-light);">
                 <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
                   <input type="checkbox" id="newAssignmentMasteryMode" onchange="document.getElementById('masteryThresholdRow').style.display = this.checked ? 'flex' : 'none'">

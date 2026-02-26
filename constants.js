@@ -312,6 +312,8 @@ export const AI_TOOL_REGISTRY = {
     // Course
     { name: 'update_start_here',       description: 'Edit the Start Here / Welcome message shown on the course home page', fields: 'title, content (markdown supported)' },
     { name: 'set_course_visibility',   description: 'Show or hide the entire course from students',          fields: 'visible (boolean)' },
+    // Calendar
+    { name: 'create_calendar_event',   description: 'Add a non-assignment calendar entry (class, lecture, office hours, etc.)', fields: 'title, eventDate (ISO 8601), eventType (Class|Lecture|Office Hours|Exam|Event), description' },
     { name: 'pipeline',                description: 'Execute multiple actions in sequence',                  fields: 'steps (array of action objects)' }
   ]
 };

@@ -72,6 +72,9 @@ import {
   supabaseUpsertQuizTimeOverride,
   supabaseDeleteQuizTimeOverride,
   supabaseUpsertGradeSettings,
+  supabaseCreateCalendarEvent,
+  supabaseDeleteCalendarEvent,
+  supabaseLoadFeatureFlags,
   callGeminiAPI,
   callGeminiAPIWithRetry,
 } from './database_interactions.js';
@@ -1279,6 +1282,9 @@ function initApp() {
   // Check for pending course invitations after a short delay (modals must be ready)
   setTimeout(() => checkPendingInvites(), 500);
 
+  // Load feature flags (async, non-blocking — updates UI when done)
+  loadAndApplyFeatureFlags();
+
   console.log('[App] App initialized successfully');
 }
 
@@ -1312,6 +1318,35 @@ function renderTopBarActions() {
   // Hide all [data-page="people"] buttons (toolbar + mobile drawer)
   document.querySelectorAll('[data-page="people"]').forEach(btn => {
     btn.style.display = shouldHidePeople ? 'none' : '';
+  });
+  applyFeatureFlags();
+}
+
+async function loadAndApplyFeatureFlags() {
+  // Derive the org from the first course the current user is enrolled in
+  const enrolledCourseId = (appData.enrollments || []).find(e => e.userId === appData.currentUser?.id)?.courseId;
+  const orgId = enrolledCourseId
+    ? (appData.courses || []).find(c => c.id === enrolledCourseId)?.orgId
+    : null;
+  if (orgId) {
+    appData.featureFlags = await supabaseLoadFeatureFlags(orgId);
+  } else {
+    appData.featureFlags = {};
+  }
+  applyFeatureFlags();
+}
+
+function applyFeatureFlags() {
+  const flags = appData.featureFlags || {};
+  // ai_enabled and discussion_enabled default to true when not explicitly set
+  const aiEnabled = flags.ai_enabled !== false;
+  const discEnabled = flags.discussion_enabled !== false;
+
+  document.querySelectorAll('#aiOverlayBtn').forEach(btn => {
+    btn.style.display = aiEnabled ? '' : 'none';
+  });
+  document.querySelectorAll('[data-page="discussion"]').forEach(btn => {
+    btn.style.display = discEnabled ? '' : 'none';
   });
 }
 
@@ -2702,7 +2737,12 @@ function renderAssignments() {
       if (isHiddenAssignment) {
         visibilityBadge = `<span style="padding:4px 8px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.75rem; font-weight:600;">Hidden</span>`;
       } else if (notYetAvail) {
-        visibilityBadge = `<span style="padding:4px 8px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:0.75rem; font-weight:600;" title="Opens ${availFrom.toLocaleString()}">Not Yet Visible</span>`;
+        const msLeft = availFrom.getTime() - nowMs;
+        const minsLeft = Math.round(msLeft / 60000);
+        const hoursLeft = Math.round(msLeft / 3600000);
+        const daysLeft = Math.round(msLeft / 86400000);
+        const countdown = daysLeft >= 2 ? `${daysLeft} days` : hoursLeft >= 2 ? `${hoursLeft} hours` : minsLeft >= 1 ? `${minsLeft} min` : 'soon';
+        visibilityBadge = `<span style="padding:4px 8px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:0.75rem; font-weight:600;" title="Opens ${availFrom.toLocaleString()}">Visible in ${countdown}</span>`;
       } else if (availEnded && !a.allowLateSubmissions) {
         visibilityBadge = `<span style="padding:4px 8px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:0.75rem; font-weight:600;" title="Closed ${availUntil.toLocaleString()}">Availability Ended</span>`;
       } else if (availEnded && a.allowLateSubmissions) {
@@ -2823,6 +2863,7 @@ function renderCalendar() {
   const course = getCourseById(activeCourseId);
   setText('calendarSubtitle', course.name);
   setHTML('calendarActions', `
+    ${effectiveStaff ? '<button class="btn btn-primary" onclick="openCreateCalendarEventModal()">+ Add Event</button>' : ''}
     <button class="btn btn-secondary" onclick="exportCalendarICS()">Export .ics</button>
   `);
 
@@ -2837,8 +2878,15 @@ function renderCalendar() {
   const items = [
     ...appData.assignments
       .filter(a => a.courseId === activeCourseId)
-      .filter(a => effectiveStaff || (a.status === 'published' && !a.hidden))
-      .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status })),
+      .filter(a => effectiveStaff || (
+        a.status === 'published' && !a.hidden &&
+        (!a.availableFrom || new Date(a.availableFrom) <= now)
+      ))
+      .filter(a => a.dueDate)
+      .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status, id: a.id })),
+    ...(appData.calendarEvents || [])
+      .filter(ev => ev.courseId === activeCourseId)
+      .map(ev => ({ type: ev.eventType || 'Event', title: ev.title, dueDate: ev.eventDate, status: 'event', id: ev.id, isEvent: true })),
   ].filter(item => {
     const date = new Date(item.dueDate);
     return date >= start && date <= end;
@@ -2863,10 +2911,13 @@ function renderCalendar() {
       <div class="calendar-date">${new Date(dateKey).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</div>
       <div class="calendar-items">
         ${grouped[dateKey].map(item => `
-          <div class="calendar-item">
-            <div class="calendar-item-type">${item.type}</div>
-            <div class="calendar-item-title">${item.title}</div>
-            ${item.status === 'draft' ? '<span class="calendar-badge">Draft</span>' : ''}
+          <div class="calendar-item" style="display:flex; align-items:center; justify-content:space-between;">
+            <div>
+              <div class="calendar-item-type">${escapeHtml(item.type)}</div>
+              <div class="calendar-item-title">${escapeHtml(item.title)}</div>
+              ${item.status === 'draft' ? '<span class="calendar-badge">Draft</span>' : ''}
+            </div>
+            ${item.isEvent && effectiveStaff ? `<button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="deleteCalendarEvent('${item.id}')">×</button>` : ''}
           </div>
         `).join('')}
       </div>
@@ -2874,6 +2925,89 @@ function renderCalendar() {
   `).join('');
   
   setHTML('calendarList', html);
+}
+
+function openCreateCalendarEventModal() {
+  if (!activeCourseId) return;
+  document.getElementById('calEventModal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'calEventModal';
+  modal.className = 'modal-overlay';
+  modal.style.display = 'flex';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:440px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Add Calendar Event</h3>
+        <button class="modal-close" onclick="document.getElementById('calEventModal').remove()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Title <span style="color:var(--danger)">*</span></label>
+          <input type="text" id="calEvtTitle" class="form-input" placeholder="e.g. Class 12 – Guest Lecture">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date &amp; Time <span style="color:var(--danger)">*</span></label>
+          <input type="datetime-local" id="calEvtDate" class="form-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Event Type</label>
+          <select id="calEvtType" class="form-select">
+            <option value="Class">Class</option>
+            <option value="Lecture">Special Lecture</option>
+            <option value="Office Hours">Office Hours</option>
+            <option value="Exam">Exam</option>
+            <option value="Event">Other Event</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="calEvtDesc" class="form-textarea" rows="2" placeholder="Optional details"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('calEventModal').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveCalendarEvent()">Add Event</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(() => document.getElementById('calEvtTitle')?.focus(), 80);
+}
+
+async function saveCalendarEvent() {
+  const title = document.getElementById('calEvtTitle')?.value.trim();
+  const dateVal = document.getElementById('calEvtDate')?.value;
+  const eventType = document.getElementById('calEvtType')?.value || 'Event';
+  const description = document.getElementById('calEvtDesc')?.value.trim() || '';
+
+  if (!title) { showToast('Title is required', 'error'); return; }
+  if (!dateVal) { showToast('Date is required', 'error'); return; }
+
+  const ev = {
+    id: generateId(),
+    courseId: activeCourseId,
+    title,
+    eventDate: new Date(dateVal).toISOString(),
+    eventType,
+    description,
+    createdBy: appData.currentUser?.id,
+    createdAt: new Date().toISOString()
+  };
+
+  const saved = await supabaseCreateCalendarEvent(ev);
+  if (!saved) { showToast('Failed to save event', 'error'); return; }
+
+  if (!appData.calendarEvents) appData.calendarEvents = [];
+  appData.calendarEvents.push(ev);
+  document.getElementById('calEventModal')?.remove();
+  renderCalendar();
+  showToast(`Event "${title}" added.`, 'success');
+}
+
+async function deleteCalendarEvent(eventId) {
+  const ok = await supabaseDeleteCalendarEvent(eventId);
+  if (!ok) { showToast('Failed to delete event', 'error'); return; }
+  appData.calendarEvents = (appData.calendarEvents || []).filter(ev => ev.id !== eventId);
+  renderCalendar();
 }
 
 function exportCalendarICS() {
@@ -2888,7 +3022,10 @@ function exportCalendarICS() {
       .map(a => ({ id: a.id, title: `[Assignment] ${a.title}`, date: new Date(a.dueDate), description: a.description || '' })),
     ...(appData.quizzes || [])
       .filter(q => q.courseId === activeCourseId && (effectiveStaff || q.status === 'published') && q.dueDate)
-      .map(q => ({ id: q.id, title: `[Quiz] ${q.title}`, date: new Date(q.dueDate), description: q.description || '' }))
+      .map(q => ({ id: q.id, title: `[Quiz] ${q.title}`, date: new Date(q.dueDate), description: q.description || '' })),
+    ...(appData.calendarEvents || [])
+      .filter(ev => ev.courseId === activeCourseId)
+      .map(ev => ({ id: ev.id, title: `[${ev.eventType || 'Event'}] ${ev.title}`, date: new Date(ev.eventDate), description: ev.description || '' }))
   ];
 
   // Format date as UTC: 20230101T120000Z
@@ -3626,18 +3763,18 @@ function addQuestionOption() {
   const question = questionBankDraftQuestions[currentEditQuestionIndex];
   if (!question.options) question.options = [];
 
-  // Save current values first
+  // Save current option values before re-rendering
   const currentOptions = [];
   let i = 0;
-  while (document.getElementById(`questionOption${i}`)) {
-    currentOptions.push(document.getElementById(`questionOption${i}`).value);
+  while (document.getElementById(`qOpt${i}`)) {
+    currentOptions.push(document.getElementById(`qOpt${i}`).value);
     i++;
   }
   question.options = currentOptions;
   question.options.push('');
 
-  // Get selected correct answer
-  const selected = document.querySelector('input[name="correctAnswer"]:checked');
+  // Preserve selected correct answer
+  const selected = document.querySelector('input[name="qCorrect"]:checked');
   if (selected) question.correctAnswer = parseInt(selected.value);
 
   openQuestionEditor(currentEditQuestionIndex);
@@ -3646,11 +3783,11 @@ function addQuestionOption() {
 function removeQuestionOption(index) {
   const question = questionBankDraftQuestions[currentEditQuestionIndex];
 
-  // Save current values first
+  // Save current option values before re-rendering
   const currentOptions = [];
   let i = 0;
-  while (document.getElementById(`questionOption${i}`)) {
-    currentOptions.push(document.getElementById(`questionOption${i}`).value);
+  while (document.getElementById(`qOpt${i}`)) {
+    currentOptions.push(document.getElementById(`qOpt${i}`).value);
     i++;
   }
   question.options = currentOptions;
@@ -3832,6 +3969,7 @@ async function saveQuestionBank() {
   }
 
   closeModal('questionBankEditModal');
+  clearUnsaved();
   showToast(currentEditQuestionBankId ? 'Question bank updated' : 'Question bank created', 'success');
 
   currentEditQuestionBankId = null;
@@ -3914,6 +4052,9 @@ function openNewAssignmentModal(assignmentId = null) {
         document.getElementById('masteryThresholdRow').style.display = assignment.masteryMode ? 'flex' : 'none';
         if (assignment.masteryThreshold) document.getElementById('newAssignmentMasteryThreshold').value = assignment.masteryThreshold;
       }
+      // Quiz grading type
+      const quizGTEl = document.getElementById('quizGradingType');
+      if (quizGTEl) quizGTEl.value = assignment.gradingType === 'complete_incomplete' ? 'complete_incomplete' : 'points';
       const tl = assignment.timeLimit;
       if (!tl) {
         document.getElementById('newAssignmentUnlimitedTime').checked = true;
@@ -3974,6 +4115,8 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentNumQuestions').value = '';
   const masteryResetEl = document.getElementById('newAssignmentMasteryMode');
   if (masteryResetEl) { masteryResetEl.checked = false; document.getElementById('masteryThresholdRow').style.display = 'none'; document.getElementById('newAssignmentMasteryThreshold').value = '5'; }
+  const quizGTEl = document.getElementById('quizGradingType');
+  if (quizGTEl) quizGTEl.value = 'points';
   document.getElementById('newAssignmentModalityText').checked = true;
   document.getElementById('newAssignmentModalityFile').checked = false;
   document.getElementById('newAssignmentFileTypes').value = '';
@@ -4090,6 +4233,15 @@ function handleGradingTypeChange(context) {
   if (grp) grp.style.display = val === 'points' ? 'block' : 'none';
 }
 window.handleGradingTypeChange = handleGradingTypeChange;
+
+function handleQuizGradingTypeChange(value) {
+  // When Complete/Incomplete is chosen, uncheck mastery mode to avoid conflict
+  if (value === 'complete_incomplete') {
+    const masteryEl = document.getElementById('newAssignmentMasteryMode');
+    if (masteryEl) { masteryEl.checked = false; document.getElementById('masteryThresholdRow').style.display = 'none'; }
+  }
+}
+window.handleQuizGradingTypeChange = handleQuizGradingTypeChange;
 
 function toggleUnlimitedAttempts(inputId, checkbox) {
   const input = document.getElementById(inputId);
@@ -4307,11 +4459,15 @@ async function saveNewAssignment() {
         points = totalPts;
       }
     }
-    // Mastery mode
+    // Grading type — quiz section has its own dropdown; mastery mode overrides it
+    const quizGradingTypeSel = document.getElementById('quizGradingType')?.value || 'points';
     const masteryModeChecked = document.getElementById('newAssignmentMasteryMode')?.checked || false;
     if (masteryModeChecked) {
       gradingType = 'complete_incomplete';
       points = 1; // Complete/Incomplete binary
+    } else if (quizGradingTypeSel === 'complete_incomplete') {
+      gradingType = 'complete_incomplete';
+      points = 1;
     } else {
       gradingType = 'points';
     }
@@ -4417,6 +4573,7 @@ async function saveNewAssignment() {
       appData.assignments.push(newAssignment);
       await persistExtraCreditFlag(newAssignment.id, fields.isExtraCredit);
       closeModal('newAssignmentModal');
+      clearUnsaved();
       resetNewAssignmentModal();
       renderAssignments();
       renderHome();
@@ -4581,7 +4738,9 @@ function previewQuiz(assignmentId) {
       }).join('');
     } else if (type === 'true_false') {
       answersHtml = ['True', 'False'].map(opt => {
-        const isCorrect = q.correctAnswer === opt;
+        // correctAnswer may be boolean true/false or string "true"/"false"
+        const correctBool = q.correctAnswer === true || q.correctAnswer === 'true';
+        const isCorrect = (opt === 'True' && correctBool) || (opt === 'False' && !correctBool);
         return `<div style="padding:6px 12px; margin:2px 0; border-radius:4px; ${isCorrect ? 'background:var(--success-light, #d4edda); border:1px solid var(--success, #28a745);' : 'background:var(--bg-color);'}">
           ${isCorrect ? '<strong>' : ''}${opt}${isCorrect ? ' (correct)</strong>' : ''}
         </div>`;
@@ -10456,8 +10615,11 @@ window.openEditCourseModal = openEditCourseModal;
 // Clone course (stub — redirects to Import Content)
 window.openCloneCourseModal = openCloneCourseModal;
 
-// Calendar export
+// Calendar export and events
 window.exportCalendarICS = exportCalendarICS;
+window.openCreateCalendarEventModal = openCreateCalendarEventModal;
+window.saveCalendarEvent = saveCalendarEvent;
+window.deleteCalendarEvent = deleteCalendarEvent;
 
 // Editor toolbar and insert
 window.insertLink = insertLink;

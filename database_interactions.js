@@ -205,7 +205,9 @@ export async function loadDataFromSupabase() {
       createdBy: c.created_by,
       startHereTitle: c.start_here_title,
       startHereContent: c.start_here_content,
-      active: c.active
+      active: c.active,
+      orgId: c.org_id || null,
+      departmentId: c.department_id || null
     }));
 
     appData.enrollments = (enrollmentsRes.data || []).map(e => ({
@@ -495,6 +497,24 @@ export async function loadDataFromSupabase() {
         questions
       };
     });
+
+    // Calendar events (non-assignment)
+    const calEventsRes = await supabaseClient.from('calendar_events').select('*').order('event_date', { ascending: true });
+    if (calEventsRes.error) {
+      console.warn('[Supabase] Error loading calendar_events:', calEventsRes.error.message);
+    } else {
+      appData.calendarEvents = (calEventsRes.data || []).map(ev => ({
+        id: ev.id,
+        courseId: ev.course_id,
+        title: ev.title,
+        eventDate: ev.event_date,
+        eventType: ev.event_type || 'Event',
+        description: ev.description || '',
+        createdBy: ev.created_by,
+        createdAt: ev.created_at
+      }));
+      console.log(`[Supabase] Loaded ${appData.calendarEvents.length} calendar_events`);
+    }
 
     appData.settings = {};
 
@@ -2079,4 +2099,58 @@ export async function supabaseUpsertGradeSettings(settings) {
   const { data, error } = await supabaseClient.from('grade_settings').upsert(payload, { onConflict: 'course_id' }).select().single();
   if (error) { console.error('[Supabase] Upsert grade settings error:', error); showToast('Failed to save grade settings', 'error'); return null; }
   return data;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CALENDAR EVENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseCreateCalendarEvent(ev) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('calendar_events').insert({
+    id: ev.id,
+    course_id: ev.courseId,
+    title: ev.title,
+    event_date: ev.eventDate,
+    event_type: ev.eventType || 'Event',
+    description: ev.description || null,
+    created_by: ev.createdBy
+  }).select().single();
+  if (error) { console.error('[Supabase] Create calendar event error:', error); showToast('Failed to save event', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseDeleteCalendarEvent(eventId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('calendar_events').delete().eq('id', eventId);
+  if (error) { console.error('[Supabase] Delete calendar event error:', error); showToast('Failed to delete event', 'error'); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FEATURE FLAGS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Load the latest feature flag state for the user's org.
+ * Uses a SECURITY DEFINER RPC (get_org_feature_flags) so regular org members
+ * can read flags without direct admin_audit_log access.
+ * Returns an object like { ai_enabled: true, discussion_enabled: true }.
+ */
+export async function supabaseLoadFeatureFlags(orgId) {
+  if (!supabaseClient || !orgId) return {};
+  try {
+    const { data, error } = await supabaseClient.rpc('get_org_feature_flags', { p_org_id: orgId });
+    if (error) { console.warn('[Supabase] loadFeatureFlags RPC error:', error.message); return {}; }
+    if (!data || typeof data !== 'object') return {};
+    // Normalise: jsonb values may arrive as booleans or strings
+    const flags = {};
+    Object.entries(data).forEach(([k, v]) => {
+      flags[k] = v === true || v === 'true';
+    });
+    return flags;
+  } catch (err) {
+    console.warn('[Supabase] loadFeatureFlags error:', err);
+    return {};
+  }
 }

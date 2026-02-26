@@ -545,16 +545,18 @@ function renderCoursesSection() {
       .map(e => escHtml(e.profile.email))
       .join(', ') || '—';
 
+    const dept = admin.departments.find(d => d.id === c.department_id);
     return `
       <tr class="${c.active ? '' : 'course-inactive-row'}">
         <td style="font-weight:500;">${escHtml(c.name)}</td>
         <td class="muted">${escHtml(c.code || '—')}</td>
         <td>${escHtml(c.term || 'SPRING 2026')}</td>
+        <td class="muted" style="font-size:0.85rem;">${dept ? escHtml(dept.name) : '—'}</td>
         <td><span class="course-status-badge ${c.active ? 'course-status-active' : 'course-status-inactive'}">${c.active ? 'Active' : 'Inactive'}</span></td>
         <td>${instructors}</td>
         <td style="text-align:center;">${enrollCount}</td>
         <td>${formatDate(c.created_at)}</td>
-        <td style="text-align:right;"><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);" onclick="deleteCourse(${escHtml(JSON.stringify(c.id))},${escHtml(JSON.stringify(c.name))})">Delete</button></td>
+        <td style="text-align:right;"><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);" data-action="delete-course" data-course-id="${escHtml(c.id)}" data-course-name="${escHtml(c.name)}">Delete</button></td>
       </tr>`;
   }).join('');
 
@@ -563,13 +565,20 @@ function renderCoursesSection() {
       <table class="admin-table">
         <thead>
           <tr>
-            <th>Course Name</th><th>Code</th><th>Term</th><th>Status</th><th>Instructor(s)</th>
+            <th>Course Name</th><th>Code</th><th>Term</th><th>Group</th><th>Status</th><th>Instructor(s)</th>
             <th style="text-align:center;">Enrolled</th><th>Created</th><th></th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+
+  // Event delegation — avoids inline onclick with quoted strings (which Chrome
+  // DevTools treats as breakpoint-able inline scripts).
+  wrap.querySelector('table').addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="delete-course"]');
+    if (btn) deleteCourse(btn.dataset.courseId, btn.dataset.courseName);
+  }, { once: true });
 }
 
 // ─── Rendering: Enrollments ───────────────────────────────────────────────────
@@ -725,9 +734,21 @@ async function addUserToOrg() {
     .limit(1);
 
   if (profileErr || !profiles || profiles.length === 0) {
+    // No account yet — create a pending org invite so the user is added
+    // to the org automatically when they first sign in.
+    const { error: invErr } = await admin.sb
+      .from('org_invites')
+      .upsert({ org_id: admin.org.id, email, role, invited_by: admin.user.id }, { onConflict: 'org_id,email' });
+
     setSubmitLoading('addUserSubmitBtn', false);
-    showInlineError('addUserError',
-      `No account found for "${escHtml(email)}". Ask the user to sign in to AllDayLMS first.`);
+
+    if (invErr) {
+      showInlineError('addUserError',
+        `No account found for "${escHtml(email)}" and could not create invite: ${invErr.message}`);
+    } else {
+      closeModal('modal-addUser');
+      showToast(`Invite queued for ${email}. They'll be added to the org when they first sign in.`);
+    }
     return;
   }
 
@@ -1240,11 +1261,17 @@ function renderDepartmentsList() {
         <strong style="font-size:0.9rem;">${name}</strong>
         ${statusBadge}
       </div>
-      <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 10px;" onclick="removeDepartment('${id}', '${name}')">Remove</button>
+      <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 10px;" data-action="remove-dept" data-dept-id="${escHtml(d.id)}" data-dept-name="${name}">Remove</button>
     </div>`;
   }).join('');
 
   wrap.innerHTML = rows;
+
+  // Event delegation for Remove buttons
+  wrap.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="remove-dept"]');
+    if (btn) removeDepartment(btn.dataset.deptId, btn.dataset.deptName);
+  }, { once: true });
 }
 
 async function addDepartment() {

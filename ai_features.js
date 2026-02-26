@@ -18,6 +18,7 @@ import {
   supabaseUpdateCourse,
   supabaseUpdateFile,
   supabaseCreateQuestionBank, supabaseUpdateQuestionBank, supabaseDeleteQuestionBank,
+  supabaseCreateCalendarEvent,
   supabaseDownloadFileBlob
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
@@ -209,7 +210,8 @@ function normalizeAiOperationAction(action) {
     update_start_here: 'start_here_update',
     create_invite: 'invite_create',
     revoke_invite: 'invite_revoke',
-    set_course_visibility: 'course_visibility'
+    set_course_visibility: 'course_visibility',
+    create_calendar_event: 'calendar_event_create'
   };
   return map[action] || action;
 }
@@ -950,6 +952,16 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
       parsed = { ...parsed, type: 'action', action: parsed.type };
     }
 
+    // Normalize: {"type":"pipeline","actions":[...]} → {"type":"action","action":"pipeline","steps":[...]}
+    if (parsed.type === 'pipeline') {
+      parsed = { type: 'action', action: 'pipeline', steps: parsed.actions || parsed.steps || [] };
+    }
+
+    // Normalize: pipeline with "actions" array instead of "steps"
+    if (parsed.type === 'action' && parsed.action === 'pipeline' && !parsed.steps && Array.isArray(parsed.actions)) {
+      parsed = { ...parsed, steps: parsed.actions };
+    }
+
     // ── Direct text answer ────────────────────────────────────────────────────
     if (parsed.type === 'answer') {
       aiThread.push({ role: 'assistant', content: parsed.text });
@@ -1194,12 +1206,12 @@ export function sendAiFollowup(idx) {
 function handleAiAction(action) {
   if (action.action === 'edit_pending_action') {
     applyAiEditToPendingAction(action);
-  } else if (action.action === 'pipeline' && Array.isArray(action.steps)) {
+  } else if (action.action === 'pipeline' && (Array.isArray(action.steps) || Array.isArray(action.actions))) {
     aiThread.push({
       role: 'action',
       actionType: 'pipeline',
       data: {
-        steps: action.steps,
+        steps: action.steps || action.actions || [],
         notes: action.notes || ''
       },
       confirmed: false,
@@ -1227,6 +1239,18 @@ function handleAiAction(action) {
     aiThread.push({ role: 'action', actionType: 'announcement_pin', data: { id: action.id, pinned: action.pinned !== false }, confirmed: false, rejected: false });
   } else if (action.action === 'create_quiz_from_bank') {
     const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
+    // AI may send questionCount instead of numQuestions, or questionBankName instead of questionBankId
+    const numQuestions = action.numQuestions || action.questionCount || 0;
+    const bankName = action.questionBankName || action.bankName || '';
+    // Resolve bankId from name if not provided
+    let questionBankId = action.questionBankId || null;
+    if (!questionBankId && bankName) {
+      const found = (window.appData?.questionBanks || []).find(
+        b => b.name.toLowerCase() === bankName.toLowerCase() && b.courseId === (window.activeCourseId || '')
+      );
+      if (found) questionBankId = found.id;
+    }
+    const gradingType = action.gradingType || 'points';
     aiThread.push({
       role: 'action',
       actionType: 'quiz_from_bank',
@@ -1234,15 +1258,18 @@ function handleAiAction(action) {
         title: action.title,
         description: action.description || '',
         category: action.category || 'quiz',
-        questionBankId: action.questionBankId,
-        questionBankName: action.questionBankName || '',
-        numQuestions: action.numQuestions || 0,
+        questionBankId,
+        questionBankName: bankName,
+        numQuestions,
         randomizeQuestions: action.randomizeQuestions !== undefined ? action.randomizeQuestions : false,
         randomizeAnswers: action.randomizeAnswers !== undefined ? action.randomizeAnswers : true,
         dueDate: action.dueDate || defaultDueDate,
         availableFrom: action.availableFrom || null,
         availableUntil: action.availableUntil || action.dueDate || defaultDueDate,
-        points: action.points || 100,
+        points: gradingType === 'complete_incomplete' ? 1 : (action.points || 100),
+        gradingType,
+        requiredCorrectAnswers: action.requiredCorrectAnswers || null,
+        status: action.status || 'draft',
         allowLateSubmissions: action.allowLateSubmissions !== undefined ? action.allowLateSubmissions : true,
         latePenaltyType: action.latePenaltyType || 'per_day',
         lateDeduction: action.lateDeduction !== undefined ? action.lateDeduction : 10,
@@ -1572,6 +1599,20 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'create_calendar_event') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'calendar_event_create',
+      data: {
+        title: action.title || '',
+        eventDate: action.eventDate || action.date || '',
+        eventType: action.eventType || action.type || 'Event',
+        description: action.description || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else {
     aiThread.push({ role: 'assistant', content: JSON.stringify(action) });
   }
@@ -1722,6 +1763,10 @@ function generateActionConfirmation(msg, publish = false) {
     }
     case 'course_visibility':
       return `Done! The course is now <strong>${d.visible !== false ? 'visible to students' : 'hidden from students'}</strong>.`;
+    case 'calendar_event_create': {
+      const evDate = d.eventDate ? new Date(d.eventDate).toLocaleString() : '';
+      return `Done! Added ${b(d.title)} (${escapeHtml(d.eventType || 'Event')}) to the ${pageLink('calendar', 'Calendar')}${evDate ? ` on ${escapeHtml(evDate)}` : ''}.`;
+    }
     default:
       return `Done! The action was completed successfully.`;
   }
@@ -2235,6 +2280,29 @@ async function executeAiOperation(operation, publish = false) {
     return true;
   }
 
+  if (action === 'calendar_event_create') {
+    if (!activeCourseId) { showToast('No active course', 'error'); return false; }
+    if (!resolved.title) { showToast('Event title is required', 'error'); return false; }
+    if (!resolved.eventDate) { showToast('Event date is required', 'error'); return false; }
+    const ev = {
+      id: generateId(),
+      courseId: activeCourseId,
+      title: resolved.title,
+      eventDate: resolved.eventDate,
+      eventType: resolved.eventType || 'Event',
+      description: resolved.description || '',
+      createdBy: appData.currentUser?.id,
+      createdAt: new Date().toISOString()
+    };
+    const saved = await supabaseCreateCalendarEvent(ev);
+    if (!saved) return false;
+    if (!appData.calendarEvents) appData.calendarEvents = [];
+    appData.calendarEvents.push(ev);
+    if (window.renderCalendar) window.renderCalendar();
+    showToast('Calendar event added', 'success');
+    return true;
+  }
+
   showToast(`Unsupported AI action: ${action}`, 'error');
   return false;
 }
@@ -2402,6 +2470,7 @@ export function renderAiThread() {
         'invite_revoke': 'Invitation',
         'person_remove': 'Person',
         'course_visibility': 'Course Visibility',
+        'calendar_event_create': 'Calendar Event',
         'pipeline': 'Automation Pipeline'
       }[msg.actionType] || 'Content';
 
@@ -2437,6 +2506,7 @@ export function renderAiThread() {
         'invite_revoke': 'Revoke',
         'person_remove': 'Remove',
         'course_visibility': msg.data?.visible === false ? 'Hide' : 'Show',
+        'calendar_event_create': 'Add',
         'pipeline': 'Run'
       }[msg.actionType] || 'Run';
 
@@ -2873,6 +2943,16 @@ function renderActionPreview(msg, idx) {
     return `
       ${field('Title', textInput('title', d.title))}
       ${field('Welcome Message', textarea('content', d.content, 5))}
+    `;
+  }
+
+  // ─── CALENDAR EVENT CREATE ───────────────────────────────────────────────
+  if (msg.actionType === 'calendar_event_create') {
+    return `
+      ${field('Title', textInput('title', d.title))}
+      ${field('Date & Time', `<input type="datetime-local" class="form-input" data-ai-idx="${idx}" data-ai-field="eventDate" value="${escapeHtml(toDatetimeLocal(d.eventDate))}" onchange="window.updateAiActionField(${idx}, 'eventDate', new Date(this.value).toISOString())">`)}
+      ${field('Event Type', selectInput('eventType', d.eventType || 'Event', [['Class','Class'],['Lecture','Special Lecture'],['Office Hours','Office Hours'],['Exam','Exam'],['Event','Other']]))}
+      ${field('Description', textarea('description', d.description, 2))}
     `;
   }
 
