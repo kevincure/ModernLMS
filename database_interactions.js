@@ -742,7 +742,6 @@ export async function supabaseCreateAssignment(assignment) {
     max_file_size_mb: assignment.maxFileSizeMb || null,
     // Shared
     grading_notes: assignment.gradingNotes || null,
-    blind_grading: assignment.blindGrading === true,
     created_by: appData.currentUser?.id
   };
 
@@ -800,8 +799,7 @@ export async function supabaseUpdateAssignment(assignment) {
     allowed_file_types: assignment.allowedFileTypes || null,
     max_file_size_mb: assignment.maxFileSizeMb || null,
     // Shared
-    grading_notes: assignment.gradingNotes || null,
-    blind_grading: assignment.blindGrading === true
+    grading_notes: assignment.gradingNotes || null
   };
 
   const { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();

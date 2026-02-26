@@ -806,6 +806,12 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                   <span>Release grade to student</span>
                 </label>
               </div>
+              <div class="form-group">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="speedGraderExcused" onchange="document.getElementById('speedGraderScoreSection').style.opacity = this.checked ? '0.4' : '1'">
+                  <span>Excused</span>
+                </label>
+              </div>
               <div style="display:flex; gap:8px;">
                 <button class="btn btn-primary" id="speedGraderSaveBtn" onclick="saveSpeedGraderGrade()">Save & Next</button>
               </div>
