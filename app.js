@@ -1427,10 +1427,7 @@ function renderCourses() {
   const activeCourses = allCourses.filter(c => c.active !== false);
   const inactiveCourses = allCourses.filter(c => c.active === false);
 
-  const actionsHTML = `
-    <button class="btn btn-primary" onclick="openModal('createCourseModal')">Create Course</button>
-  `;
-  setHTML('coursesActions', actionsHTML);
+  setHTML('coursesActions', '');
 
   const courseCard = (c, dimmed) => {
     const roleLabels = { instructor: 'Instructor', ta: 'Teaching Assistant', student: 'Student' };
@@ -8672,21 +8669,9 @@ async function addPersonToCourse() {
       }
     }
   } else {
-    // User doesn't exist - create invite in Supabase
-    if (!appData.invites) appData.invites = [];
-
-    const invite = {
-      courseId: activeCourseId,
-      email: email,
-      role: role,
-      status: 'pending',
-      sentAt: new Date().toISOString()
-    };
-    const result = await supabaseCreateInvite(invite);
-    if (result) {
-      appData.invites.push({ ...invite, id: result.id });
-      showToast(`Invitation sent to ${email}`, 'success');
-    }
+    // User not found in loaded profiles — they must be added to the org first by an admin
+    showToast('User not found. This person must be added to the organization by an admin before they can be enrolled.', 'error');
+    return;
   }
 
   closeModal('addPersonModal');

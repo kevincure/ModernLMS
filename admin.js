@@ -873,6 +873,11 @@ async function createCourse() {
 
   setSubmitLoading('createCourseSubmitBtn', true);
 
+  // Generate a random invite code (8-char alphanumeric)
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let inviteCode = '';
+  for (let i = 0; i < 8; i++) inviteCode += chars[Math.floor(Math.random() * chars.length)];
+
   // Insert the course
   const { data: course, error: courseErr } = await admin.sb
     .from('courses')
@@ -880,6 +885,7 @@ async function createCourse() {
       name,
       code:        code || null,
       description: description || null,
+      invite_code: inviteCode,
       org_id:      admin.org.id,
       created_by:  instructorId,
       active:      true,
@@ -1251,32 +1257,27 @@ async function addDepartment() {
     return;
   }
 
-  try {
-    const { data, error } = await admin.sb
-      .from('orgs')
-      .insert({
-        name,
-        parent_id: admin.org.id,
-        type: 'department',
-        status: 'active'
-      })
-      .select('id, name, identifier, status, updated_at')
-      .single();
+  const { data, error } = await admin.sb
+    .from('orgs')
+    .insert({
+      name,
+      parent_id: admin.org.id,
+      type: 'department',
+      status: 'active'
+    })
+    .select('id, name, identifier, status, updated_at')
+    .single();
 
-    if (error) {
-      showToast('Failed to create department: ' + error.message, true);
-      return;
-    }
-
-    admin.departments.push(data);
-    await auditLog('create_department', 'org', data.id, { name });
-    showToast(`Department "${name}" created.`);
-    nameEl.value = '';
-    renderDepartmentsList();
-  } catch (err) {
-    showToast('Error creating department.', true);
-    console.error('[Admin] addDepartment:', err);
+  if (error) {
+    showToast('Failed to create department: ' + error.message, true);
+    return;
   }
+
+  admin.departments.push(data);
+  auditLog('create_department', 'org', data.id, { name });
+  showToast(`Department "${name}" created.`);
+  nameEl.value = '';
+  renderDepartmentsList();
 }
 
 function removeDepartment(deptId, deptName) {
@@ -1284,25 +1285,20 @@ function removeDepartment(deptId, deptName) {
     'Remove Department',
     `Are you sure you want to remove the department "${deptName}"? This does not delete any courses.`,
     async () => {
-      try {
-        const { error } = await admin.sb
-          .from('orgs')
-          .delete()
-          .eq('id', deptId);
+      const { error } = await admin.sb
+        .from('orgs')
+        .delete()
+        .eq('id', deptId);
 
-        if (error) {
-          showToast('Failed to remove department: ' + error.message, true);
-          return;
-        }
-
-        admin.departments = admin.departments.filter(d => d.id !== deptId);
-        await auditLog('delete_department', 'org', deptId, { name: deptName });
-        showToast(`Department "${deptName}" removed.`);
-        renderDepartmentsList();
-      } catch (err) {
-        showToast('Error removing department.', true);
-        console.error('[Admin] removeDepartment:', err);
+      if (error) {
+        showToast('Failed to remove department: ' + error.message, true);
+        return;
       }
+
+      admin.departments = admin.departments.filter(d => d.id !== deptId);
+      auditLog('delete_department', 'org', deptId, { name: deptName });
+      showToast(`Department "${deptName}" removed.`);
+      renderDepartmentsList();
     },
     'Remove'
   );
