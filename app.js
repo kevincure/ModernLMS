@@ -427,18 +427,24 @@ function toggleMenu(event, menuId) {
   menu.style.left = `${Math.max(8, left)}px`;
   menu.style.right = 'auto';
 
-  // Vertical: below button unless near bottom of viewport
-  const estimatedMenuHeight = (menu.children.length || 4) * 38 + 12;
+  // Make menu visible off-screen to measure its actual height
+  menu.style.top = '-9999px';
+  menu.style.bottom = 'auto';
+  menu.classList.add('menu-open');
+
+  // Vertical: prefer below button; only flip above if truly no room below
+  const menuHeight = menu.offsetHeight || 200;
   const spaceBelow = window.innerHeight - rect.bottom;
-  if (spaceBelow < estimatedMenuHeight + 8) {
-    menu.style.top = 'auto';
-    menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
-  } else {
+  const spaceAbove = rect.top;
+  if (spaceBelow >= menuHeight + 8 || spaceBelow >= spaceAbove) {
+    // Place below — scroll if needed, but keep it downward
     menu.style.bottom = 'auto';
     menu.style.top = `${rect.bottom + 4}px`;
+  } else {
+    menu.style.top = 'auto';
+    menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
   }
 
-  menu.classList.add('menu-open');
   _openMenuId = menuId;
 }
 
@@ -3147,7 +3153,6 @@ function renderQuestionBankQuestions() {
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <span style="font-size:0.75rem; background:var(--primary-light); color:var(--primary); padding:2px 8px; border-radius:999px;">${typeLabel}</span>
             <span style="font-weight:500; font-size:0.9rem;">${pts} pt${pts !== 1 ? 's' : ''}</span>
-            ${q.difficulty ? `<span style="font-size:0.7rem; padding:2px 8px; border-radius:999px; background:${q.difficulty === 'easy' ? 'var(--success-light, #e8f5e9)' : q.difficulty === 'hard' ? 'var(--danger-light, #fce4ec)' : 'var(--warning-light, #fff3e0)'}; color:${q.difficulty === 'easy' ? 'var(--success)' : q.difficulty === 'hard' ? 'var(--danger)' : 'var(--warning)'};">${q.difficulty}</span>` : ''}
             ${q.timDependent ? '<span style="font-size:0.75rem; color:var(--warning);">timed</span>' : ''}
           </div>
           <div style="display:flex; gap:4px;">
@@ -3372,7 +3377,7 @@ function openQuestionEditor(index) {
       <h4 style="margin-bottom:14px;">Edit Question</h4>
 
       <!-- ── Core ── -->
-      <div class="form-grid" style="grid-template-columns:2fr 1fr 1fr; gap:12px;">
+      <div class="form-grid" style="grid-template-columns:2fr 1fr; gap:12px;">
         <div class="form-group">
           <label class="form-label">Question Type *</label>
           <select class="form-select" id="questionType" onchange="changeQuestionType()">
@@ -3388,15 +3393,6 @@ function openQuestionEditor(index) {
         <div class="form-group">
           <label class="form-label">Points *</label>
           <input type="number" class="form-input" id="questionPoints" value="${parseFloat(q.points) || 1}" min="0" step="0.5">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Difficulty</label>
-          <select class="form-select" id="questionDifficulty">
-            <option value="" ${!q.difficulty ? 'selected' : ''}>—</option>
-            <option value="easy" ${q.difficulty === 'easy' ? 'selected' : ''}>Easy</option>
-            <option value="medium" ${q.difficulty === 'medium' ? 'selected' : ''}>Medium</option>
-            <option value="hard" ${q.difficulty === 'hard' ? 'selected' : ''}>Hard</option>
-          </select>
         </div>
       </div>
 
@@ -3693,7 +3689,6 @@ function saveQuestionEdit() {
   q.prompt = document.getElementById('questionPrompt').value.trim();
   q.title = document.getElementById('questionTitle').value.trim();
   q.points = parseFloat(document.getElementById('questionPoints').value) || 1;
-  q.difficulty = document.getElementById('questionDifficulty')?.value || '';
 
   // Universal feedback & accessibility
   q.feedbackGeneral = document.getElementById('qFeedbackGeneral')?.value.trim() || '';
@@ -3909,12 +3904,6 @@ function openNewAssignmentModal(assignmentId = null) {
       }
       document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions || false;
       if (assignment.numQuestions) document.getElementById('newAssignmentNumQuestions').value = assignment.numQuestions;
-      // Difficulty mix
-      if (assignment.difficultyMix) {
-        if (assignment.difficultyMix.easy) document.getElementById('newAssignmentDiffEasy').value = assignment.difficultyMix.easy;
-        if (assignment.difficultyMix.medium) document.getElementById('newAssignmentDiffMedium').value = assignment.difficultyMix.medium;
-        if (assignment.difficultyMix.hard) document.getElementById('newAssignmentDiffHard').value = assignment.difficultyMix.hard;
-      }
       // Proctor mode
       const proctorEl = document.getElementById('newAssignmentProctorMode');
       if (proctorEl) {
@@ -4149,18 +4138,6 @@ function updateQuizPointsFromBank() {
   } else {
     ptsEl.value = totalPoints;
   }
-  // Show difficulty distribution
-  const diffEl = document.getElementById('difficultyAvailCounts');
-  if (diffEl) {
-    const counts = { easy: 0, medium: 0, hard: 0, untagged: 0 };
-    questions.forEach(q => {
-      if (q.difficulty === 'easy') counts.easy++;
-      else if (q.difficulty === 'medium') counts.medium++;
-      else if (q.difficulty === 'hard') counts.hard++;
-      else counts.untagged++;
-    });
-    diffEl.textContent = `Bank has: ${counts.easy} easy, ${counts.medium} medium, ${counts.hard} hard${counts.untagged ? `, ${counts.untagged} untagged` : ''}`;
-  }
 }
 window.updateQuizPointsFromBank = updateQuizPointsFromBank;
 
@@ -4326,10 +4303,6 @@ async function saveNewAssignment() {
     const unlimitedAttempts = document.getElementById('newAssignmentUnlimitedQuizAttempts').checked;
     submissionAttempts = unlimitedAttempts ? null : (parseInt(document.getElementById('newAssignmentQuizAttempts').value) || 1);
     numQuestions = parseInt(document.getElementById('newAssignmentNumQuestions').value) || null;
-    // Difficulty mix
-    const diffEasy = parseInt(document.getElementById('newAssignmentDiffEasy')?.value) || 0;
-    const diffMedium = parseInt(document.getElementById('newAssignmentDiffMedium')?.value) || 0;
-    const diffHard = parseInt(document.getElementById('newAssignmentDiffHard')?.value) || 0;
     // Recalculate points using the subset size if specified
     const bank2 = (appData.questionBanks || []).find(b => b.id === questionBankId);
     if (bank2) {
@@ -4419,7 +4392,6 @@ async function saveNewAssignment() {
     masteryMode: document.getElementById('newAssignmentMasteryMode')?.checked || false,
     masteryThreshold: parseInt(document.getElementById('newAssignmentMasteryThreshold')?.value) || 5,
     isExtraCredit: document.getElementById('newAssignmentExtraCredit')?.checked || false,
-    difficultyMix: (diffEasy || diffMedium || diffHard) ? { easy: diffEasy, medium: diffMedium, hard: diffHard } : null,
     proctorMode: document.getElementById('newAssignmentProctorMode')?.checked || false,
     proctorLockdown: document.getElementById('newAssignmentProctorLockdown')?.checked ?? true,
     proctorAutoSubmit: document.getElementById('newAssignmentProctorAutoSubmit')?.checked || false
@@ -4554,30 +4526,11 @@ function startAssignmentQuiz(assignmentId) {
   let questions = bank.questions.map(q => ({ ...q }));
   const randomize = assignment.randomizeQuestions || bank.randomize || false;
 
-  // Difficulty-based selection if configured
-  const mix = assignment.difficultyMix;
-  if (mix && (mix.easy || mix.medium || mix.hard)) {
-    const selected = [];
-    const byDiff = { easy: [], medium: [], hard: [], none: [] };
-    questions.forEach(q => {
-      const d = q.difficulty || '';
-      if (byDiff[d]) byDiff[d].push(q);
-      else byDiff.none.push(q);
-    });
-    // Shuffle each pool then pick N
-    ['easy', 'medium', 'hard'].forEach(level => {
-      const count = mix[level] || 0;
-      const pool = byDiff[level].sort(() => Math.random() - 0.5);
-      selected.push(...pool.slice(0, count));
-    });
-    questions = randomize ? selected.sort(() => Math.random() - 0.5) : selected;
-  } else {
-    if (randomize) questions = questions.sort(() => Math.random() - 0.5);
-    const numQ = assignment.numQuestions && assignment.numQuestions > 0
-      ? Math.min(assignment.numQuestions, questions.length)
-      : questions.length;
-    questions = questions.slice(0, numQ);
-  }
+  if (randomize) questions = questions.sort(() => Math.random() - 0.5);
+  const numQ = assignment.numQuestions && assignment.numQuestions > 0
+    ? Math.min(assignment.numQuestions, questions.length)
+    : questions.length;
+  questions = questions.slice(0, numQ);
 
   const virtualQuiz = {
     id: `assign_${assignmentId}`,
