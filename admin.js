@@ -854,6 +854,16 @@ function openCreateCourseModal() {
     select.appendChild(opt);
   });
 
+  // Populate course group (department) dropdown
+  const deptSelect = document.getElementById('courseDeptSelect');
+  deptSelect.innerHTML = '<option value="">None (org-wide)</option>';
+  admin.departments.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value       = d.id;
+    opt.textContent = d.name;
+    deptSelect.appendChild(opt);
+  });
+
   openModal('modal-createCourse');
   setTimeout(() => document.getElementById('courseNameInput')?.focus(), 80);
 }
@@ -864,6 +874,7 @@ async function createCourse() {
   const description  = document.getElementById('courseDescInput').value.trim();
   const instructorId = document.getElementById('courseInstructorSelect').value;
   const term         = document.getElementById('courseTermInput').value.trim();
+  const departmentId = document.getElementById('courseDeptSelect').value || null;
 
   hideInlineError('createCourseError');
 
@@ -883,7 +894,8 @@ async function createCourse() {
       org_id:      admin.org.id,
       created_by:  admin.user.id,
       active:      true,
-      term
+      term,
+      department_id: departmentId
     })
     .select()
     .single();
