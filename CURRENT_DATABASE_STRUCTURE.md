@@ -351,6 +351,7 @@ Source: `remote_schema.sql` exported from Supabase/Postgres.
 |is_placeholder|"boolean"|YES|false| |
 |is_youtube|"boolean"|YES|false| |
 |type|file_type|NO|'storage'::file_type| |
+|folder|"text"|YES|| Display-only folder path for UI grouping |
 
 **Foreign keys (outgoing):**
 
@@ -434,6 +435,7 @@ Source: `remote_schema.sql` exported from Supabase/Postgres.
 |graded_by|"uuid"|YES|| |
 |graded_at|"timestamp with time zone"|YES|now()| |
 |updated_at|"timestamp with time zone"|NO|now()| |
+|excused|"boolean"|YES|false| When true, excluded from grade calculation |
 
 **Foreign keys (outgoing):**
 

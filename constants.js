@@ -257,7 +257,7 @@ export const AI_TOOL_REGISTRY = {
   context_tools: [
     { name: 'list_assignments',         description: 'All assignments (id, title, assignmentType, gradingType, status, points, dueDate)' },
     { name: 'list_quizzes',             description: 'All standalone quizzes (id, title, status, dueDate, questionCount)' },
-    { name: 'list_files',               description: 'All uploaded files (id, name, type, size, hidden)' },
+    { name: 'list_files',               description: 'All uploaded files (id, name, type, size, hidden, folder)' },
     { name: 'list_modules',             description: 'Module structure with item IDs, titles, and hidden status' },
     { name: 'list_people',              description: 'Enrolled users AND pending invites. Enrolled rows: {userId, name, email, role, status:"enrolled"}. Pending invite rows: {inviteId, email, role, status:"pending_invite"}. ALWAYS call this before any invite or person action.' },
     { name: 'list_question_banks',      description: 'All question banks (id, name, questionCount, totalPoints)' },
@@ -303,6 +303,7 @@ export const AI_TOOL_REGISTRY = {
     { name: 'move_to_module',          description: 'Move item between modules',                             fields: 'itemId*, fromModuleId*, toModuleId*' },
     // Files
     { name: 'rename_file',             description: 'Rename a file',                                         fields: 'fileId* (from list_files), oldName, newName' },
+    { name: 'set_file_folder',         description: 'Move a file into a folder (or remove from folder)',      fields: 'fileId* (from list_files), fileName, folder (string or null to remove)' },
     { name: 'set_file_visibility',     description: 'Show or hide a file from students',                     fields: 'fileId* (from list_files), fileName, hidden (boolean — true=hidden, false=visible)' },
     // People
     { name: 'create_invite',           description: 'Invite people to the course by email',                  fields: 'emails (array), role (student|ta|instructor)' },
