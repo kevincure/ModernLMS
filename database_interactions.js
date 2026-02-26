@@ -264,15 +264,20 @@ export async function loadDataFromSupabase() {
       submittedAt: s.submitted_at
     }));
 
-    appData.grades = (gradesRes.data || []).map(g => ({
-      submissionId: g.submission_id,
-      score: g.score,
-      feedback: g.feedback,
-      released: g.released,
-      gradedBy: g.graded_by,
-      gradedAt: g.graded_at,
-      excused: g.excused || false
-    }));
+    appData.grades = (gradesRes.data || []).map(g => {
+      const rawFeedback = g.feedback || '';
+      const isIncomplete = rawFeedback.startsWith('[INCOMPLETE]');
+      return {
+        submissionId: g.submission_id,
+        score: g.score,
+        feedback: isIncomplete ? rawFeedback.replace('[INCOMPLETE] ', '').replace('[INCOMPLETE]', '') : rawFeedback,
+        released: g.released,
+        gradedBy: g.graded_by,
+        gradedAt: g.graded_at,
+        excused: g.excused || false,
+        incomplete: isIncomplete
+      };
+    });
 
     appData.announcements = (announcementsRes.data || []).map(a => ({
       id: a.id,
@@ -733,15 +738,12 @@ export async function supabaseCreateAssignment(assignment) {
     show_stats_to_students: assignment.showStatsToStudents === true,
     // Quiz-specific
     question_bank_id: assignment.questionBankId || null,
-    num_questions: assignment.numQuestions || null,
     time_limit: assignment.timeLimit || null,
     randomize_questions: assignment.randomizeQuestions === true,
     // Essay-specific
     submission_modalities: assignment.submissionModalities || null,
     allowed_file_types: assignment.allowedFileTypes || null,
     max_file_size_mb: assignment.maxFileSizeMb || null,
-    // Shared
-    grading_notes: assignment.gradingNotes || null,
     created_by: appData.currentUser?.id
   };
 
@@ -791,15 +793,12 @@ export async function supabaseUpdateAssignment(assignment) {
     show_stats_to_students: assignment.showStatsToStudents === true,
     // Quiz-specific
     question_bank_id: assignment.questionBankId || null,
-    num_questions: assignment.numQuestions || null,
     time_limit: assignment.timeLimit || null,
     randomize_questions: assignment.randomizeQuestions === true,
     // Essay-specific
     submission_modalities: assignment.submissionModalities || null,
     allowed_file_types: assignment.allowedFileTypes || null,
-    max_file_size_mb: assignment.maxFileSizeMb || null,
-    // Shared
-    grading_notes: assignment.gradingNotes || null
+    max_file_size_mb: assignment.maxFileSizeMb || null
   };
 
   const { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();

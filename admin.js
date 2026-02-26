@@ -50,6 +50,9 @@ const admin = {
   orgCourses:  [],     // courses rows with creator profile joined
   enrollments: [],     // enrollments for all org courses
   auditRows:   [],
+  announcements: [],   // org announcements from audit log
+  departments:   [],   // child orgs (departments)
+  featureFlags:  {},   // { flag_name: boolean }
   activeSec:   'users',
   filters: {
     usersSearch: '',
@@ -410,7 +413,8 @@ function adminNav(section) {
     users:       'Members',
     courses:     'Courses',
     enrollments: 'Enrollments',
-    audit:       'Audit Log'
+    audit:       'Audit Log',
+    settings:    'Settings'
   };
   const sub = document.getElementById('adminSectionSubtitle');
   if (sub) sub.textContent = subtitleMap[section] || section;
@@ -430,6 +434,7 @@ function renderCurrentSection() {
     case 'courses':     renderCoursesSection();     break;
     case 'enrollments': renderEnrollmentsSection(); break;
     case 'audit':       renderAuditSection();       break;
+    case 'settings':    renderSettingsSection();    break;
   }
 }
 
@@ -1030,6 +1035,274 @@ function removeEnrollment(enrollmentId, email, courseName) {
       admin.enrollments = admin.enrollments.filter(e => e.id !== enrollmentId);
       renderEnrollmentsSection();
       showToast(`${email} removed from "${courseName}".`);
+    },
+    'Remove'
+  );
+}
+
+// ─── Settings Section ─────────────────────────────────────────────────────────
+
+async function renderSettingsSection() {
+  // Load all settings data in parallel
+  await Promise.allSettled([
+    loadOrgAnnouncements(),
+    loadFeatureFlags(),
+    loadDepartments()
+  ]);
+
+  // Render announcements list
+  renderAnnouncementsList();
+
+  // Render feature flag states
+  const flags = admin.featureFlags;
+  const aiEl = document.getElementById('flagAiEnabled');
+  const proctorEl = document.getElementById('flagProctorEnabled');
+  const discEl = document.getElementById('flagDiscussionEnabled');
+  if (aiEl)      aiEl.checked = flags.ai_enabled !== false;
+  if (proctorEl) proctorEl.checked = flags.proctor_enabled !== false;
+  if (discEl)    discEl.checked = flags.discussion_enabled !== false;
+
+  // Render departments list
+  renderDepartmentsList();
+}
+
+// ── Org Announcements ─────────────────────────────────────────────────────────
+
+async function loadOrgAnnouncements() {
+  try {
+    const { data, error } = await admin.sb
+      .from('admin_audit_log')
+      .select('id, actor_user_id, action, details, created_at')
+      .eq('org_id', admin.org.id)
+      .eq('action', 'org_announcement')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) { console.warn('[Admin] loadOrgAnnouncements:', error.message); return; }
+    admin.announcements = data || [];
+  } catch (err) {
+    console.warn('[Admin] loadOrgAnnouncements error:', err);
+  }
+}
+
+function renderAnnouncementsList() {
+  const wrap = document.getElementById('orgAnnouncementsList');
+  if (!wrap) return;
+
+  if (admin.announcements.length === 0) {
+    wrap.innerHTML = '<div class="muted" style="padding:12px; font-size:0.85rem;">No announcements yet.</div>';
+    return;
+  }
+
+  // Build a map of user_id → name for display
+  const memberMap = {};
+  admin.orgMembers.forEach(m => {
+    memberMap[m.user_id] = m.profile?.name || m.profile?.email || 'Unknown';
+  });
+
+  const rows = admin.announcements.map(a => {
+    const details = a.details || {};
+    const text = escHtml(details.text || '(no content)');
+    const audience = escHtml(details.audience || 'all');
+    const author = escHtml(memberMap[a.actor_user_id] || 'Admin');
+    const date = new Date(a.created_at).toLocaleString();
+    const audienceLabel = audience === 'staff' ? 'Faculty/TAs' : audience === 'students' ? 'Students' : 'Everyone';
+    const audienceColor = audience === 'staff' ? 'var(--warning)' : audience === 'students' ? 'var(--primary)' : 'var(--success, #2e7d32)';
+
+    return `<div style="padding:12px; background:var(--bg-color); border-radius:var(--radius); margin-bottom:8px; border-left:3px solid ${audienceColor};">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+        <div style="flex:1; white-space:pre-wrap; line-height:1.5; font-size:0.9rem;">${text}</div>
+        <span style="font-size:0.72rem; padding:2px 8px; border-radius:10px; background:${audienceColor}15; color:${audienceColor}; white-space:nowrap; font-weight:600;">${audienceLabel}</span>
+      </div>
+      <div class="muted" style="font-size:0.78rem; margin-top:6px;">Posted by ${author} — ${escHtml(date)}</div>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = rows;
+}
+
+async function postOrgAnnouncement() {
+  const textEl = document.getElementById('adminAnnouncementText');
+  const audienceEl = document.getElementById('adminAnnouncementAudience');
+  if (!textEl || !audienceEl) return;
+
+  const text = textEl.value.trim();
+  if (!text) {
+    showToast('Please enter announcement text.', true);
+    return;
+  }
+
+  const audience = audienceEl.value || 'all';
+
+  await auditLog('org_announcement', 'org', admin.org.id, { text, audience });
+  showToast('Announcement posted.');
+
+  // Clear input
+  textEl.value = '';
+  audienceEl.value = 'all';
+
+  // Reload and re-render
+  await loadOrgAnnouncements();
+  renderAnnouncementsList();
+}
+
+// ── Feature Flags ─────────────────────────────────────────────────────────────
+
+async function loadFeatureFlags() {
+  try {
+    // Get the most recent feature_flag_change entries to derive current state
+    const { data, error } = await admin.sb
+      .from('admin_audit_log')
+      .select('details, created_at')
+      .eq('org_id', admin.org.id)
+      .eq('action', 'feature_flag_change')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) { console.warn('[Admin] loadFeatureFlags:', error.message); return; }
+
+    // Build current flag state from most recent entry per flag
+    const flags = { ai_enabled: true, proctor_enabled: true, discussion_enabled: true };
+    const seen = new Set();
+    (data || []).forEach(row => {
+      const d = row.details || {};
+      if (d.flag && !seen.has(d.flag)) {
+        seen.add(d.flag);
+        flags[d.flag] = d.value;
+      }
+    });
+
+    admin.featureFlags = flags;
+  } catch (err) {
+    console.warn('[Admin] loadFeatureFlags error:', err);
+  }
+}
+
+async function saveFeatureFlag(flag, value) {
+  admin.featureFlags[flag] = value;
+
+  await auditLog('feature_flag_change', 'org', admin.org.id, { flag, value });
+
+  const label = flag.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  showToast(`${label}: ${value ? 'enabled' : 'disabled'}`);
+}
+
+// ── Departments / Course Groups ───────────────────────────────────────────────
+
+async function loadDepartments() {
+  try {
+    const { data, error } = await admin.sb
+      .from('orgs')
+      .select('id, name, identifier, status, updated_at')
+      .eq('parent_id', admin.org.id)
+      .order('name', { ascending: true });
+
+    if (error) { console.warn('[Admin] loadDepartments:', error.message); return; }
+    admin.departments = data || [];
+  } catch (err) {
+    console.warn('[Admin] loadDepartments error:', err);
+  }
+}
+
+function renderDepartmentsList() {
+  const wrap = document.getElementById('deptListWrap');
+  if (!wrap) return;
+
+  if (admin.departments.length === 0) {
+    wrap.innerHTML = '<div class="muted" style="padding:12px; font-size:0.85rem;">No departments defined. Courses default to org-wide.</div>';
+    return;
+  }
+
+  // Count courses per department (courses.org_id matches department.id would be the ideal,
+  // but since courses are org-level, we show dept as an organizational grouping)
+  const rows = admin.departments.map(d => {
+    const name = escHtml(d.name);
+    const id = escHtml(d.id);
+    const status = d.status || 'active';
+    const statusBadge = status === 'active'
+      ? '<span style="color:var(--success, #2e7d32); font-size:0.78rem;">Active</span>'
+      : '<span style="color:var(--muted); font-size:0.78rem;">Inactive</span>';
+
+    return `<div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:var(--bg-color); border-radius:var(--radius); margin-bottom:6px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <strong style="font-size:0.9rem;">${name}</strong>
+        ${statusBadge}
+      </div>
+      <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 10px;" onclick="removeDepartment('${id}', '${name}')">Remove</button>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = rows;
+}
+
+async function addDepartment() {
+  const nameEl = document.getElementById('newDeptName');
+  if (!nameEl) return;
+
+  const name = nameEl.value.trim();
+  if (!name) {
+    showToast('Please enter a department name.', true);
+    return;
+  }
+
+  // Check for duplicate
+  if (admin.departments.some(d => d.name.toLowerCase() === name.toLowerCase())) {
+    showToast('A department with that name already exists.', true);
+    return;
+  }
+
+  try {
+    const { data, error } = await admin.sb
+      .from('orgs')
+      .insert({
+        name,
+        parent_id: admin.org.id,
+        type: 'department',
+        status: 'active'
+      })
+      .select('id, name, identifier, status, updated_at')
+      .single();
+
+    if (error) {
+      showToast('Failed to create department: ' + error.message, true);
+      return;
+    }
+
+    admin.departments.push(data);
+    await auditLog('create_department', 'org', data.id, { name });
+    showToast(`Department "${name}" created.`);
+    nameEl.value = '';
+    renderDepartmentsList();
+  } catch (err) {
+    showToast('Error creating department.', true);
+    console.error('[Admin] addDepartment:', err);
+  }
+}
+
+function removeDepartment(deptId, deptName) {
+  openConfirmModal(
+    'Remove Department',
+    `Are you sure you want to remove the department "${deptName}"? This does not delete any courses.`,
+    async () => {
+      try {
+        const { error } = await admin.sb
+          .from('orgs')
+          .delete()
+          .eq('id', deptId);
+
+        if (error) {
+          showToast('Failed to remove department: ' + error.message, true);
+          return;
+        }
+
+        admin.departments = admin.departments.filter(d => d.id !== deptId);
+        await auditLog('delete_department', 'org', deptId, { name: deptName });
+        showToast(`Department "${deptName}" removed.`);
+        renderDepartmentsList();
+      } catch (err) {
+        showToast('Error removing department.', true);
+        console.error('[Admin] removeDepartment:', err);
+      }
     },
     'Remove'
   );

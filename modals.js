@@ -639,7 +639,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
         </div>
         <div class="modal-body">
           <div class="hint" style="margin-bottom:16px;">
-            Set the weight for each assignment. Weights must add up to 100%.
+            Set weights by category (with drop-lowest) or by individual assignment. Weights must add up to 100%.
           </div>
           <div id="categoryWeightsList"></div>
           <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius);">
@@ -1040,6 +1040,55 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                   <div class="hint">Blank = all questions; number = random subset</div>
                 </div>
               </div>
+              <div id="quizDifficultyMixSection" style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-light);">
+                <div style="font-weight:600; font-size:0.9rem; margin-bottom:8px;">Difficulty Mix (optional)</div>
+                <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">When using a random subset, specify how many of each difficulty level to include. Leave blank to ignore difficulty.</div>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                  <div style="display:flex; align-items:center; gap:4px;">
+                    <span style="font-size:0.8rem; color:var(--success); font-weight:600;">Easy:</span>
+                    <input type="number" class="form-input" id="newAssignmentDiffEasy" min="0" placeholder="—" style="width:60px;">
+                  </div>
+                  <div style="display:flex; align-items:center; gap:4px;">
+                    <span style="font-size:0.8rem; color:var(--warning); font-weight:600;">Medium:</span>
+                    <input type="number" class="form-input" id="newAssignmentDiffMedium" min="0" placeholder="—" style="width:60px;">
+                  </div>
+                  <div style="display:flex; align-items:center; gap:4px;">
+                    <span style="font-size:0.8rem; color:var(--danger); font-weight:600;">Hard:</span>
+                    <input type="number" class="form-input" id="newAssignmentDiffHard" min="0" placeholder="—" style="width:60px;">
+                  </div>
+                </div>
+                <div id="difficultyAvailCounts" class="hint" style="margin-top:4px;"></div>
+              </div>
+              <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-light);">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
+                  <input type="checkbox" id="newAssignmentProctorMode" onchange="document.getElementById('proctorOptionsRow').style.display = this.checked ? 'block' : 'none'">
+                  <span style="font-weight:600; font-size:0.9rem;">Proctor Mode</span>
+                </label>
+                <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Monitors for tab switches and fullscreen exits. Generates an irregularity report for the instructor.</div>
+                <div id="proctorOptionsRow" style="display:none;">
+                  <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; cursor:pointer;">
+                      <input type="checkbox" id="newAssignmentProctorLockdown" checked>
+                      Require fullscreen
+                    </label>
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; cursor:pointer;">
+                      <input type="checkbox" id="newAssignmentProctorAutoSubmit">
+                      Auto-submit after 3 tab switches
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-light);">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
+                  <input type="checkbox" id="newAssignmentMasteryMode" onchange="document.getElementById('masteryThresholdRow').style.display = this.checked ? 'flex' : 'none'">
+                  <span style="font-weight:600; font-size:0.9rem;">Mastery Mode</span>
+                </label>
+                <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Students must answer X questions correctly. Wrong answers are recycled until mastered. Graded as Complete/Incomplete.</div>
+                <div id="masteryThresholdRow" style="display:none; align-items:center; gap:8px;">
+                  <label class="form-label" style="margin-bottom:0; white-space:nowrap;">Correct answers needed:</label>
+                  <input type="number" class="form-input" id="newAssignmentMasteryThreshold" min="1" value="5" style="width:80px;">
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1155,11 +1204,18 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                 Show this column to students in their gradebook
               </label>
             </div>
-            <div class="form-group" style="margin-bottom:0;">
+            <div class="form-group" style="margin-bottom:8px;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
                 <input type="checkbox" id="newAssignmentShowStats">
                 Show class aggregate stats to students (avg, min, max)
               </label>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="newAssignmentExtraCredit">
+                Extra credit (points add to numerator but not denominator)
+              </label>
+              <div class="hint">Extra credit assignments can push a student's grade above 100%.</div>
             </div>
           </div>
 

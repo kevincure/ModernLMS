@@ -1266,6 +1266,9 @@ function initApp() {
     updateModuleActiveCourse(activeCourseId);
   }
 
+  // Sync extra credit flags from persisted __xc: grade_categories entries
+  syncExtraCreditFromCategories();
+
   renderAll();
   navigateTo('courses');
 
@@ -3144,6 +3147,7 @@ function renderQuestionBankQuestions() {
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <span style="font-size:0.75rem; background:var(--primary-light); color:var(--primary); padding:2px 8px; border-radius:999px;">${typeLabel}</span>
             <span style="font-weight:500; font-size:0.9rem;">${pts} pt${pts !== 1 ? 's' : ''}</span>
+            ${q.difficulty ? `<span style="font-size:0.7rem; padding:2px 8px; border-radius:999px; background:${q.difficulty === 'easy' ? 'var(--success-light, #e8f5e9)' : q.difficulty === 'hard' ? 'var(--danger-light, #fce4ec)' : 'var(--warning-light, #fff3e0)'}; color:${q.difficulty === 'easy' ? 'var(--success)' : q.difficulty === 'hard' ? 'var(--danger)' : 'var(--warning)'};">${q.difficulty}</span>` : ''}
             ${q.timDependent ? '<span style="font-size:0.75rem; color:var(--warning);">timed</span>' : ''}
           </div>
           <div style="display:flex; gap:4px;">
@@ -3368,7 +3372,7 @@ function openQuestionEditor(index) {
       <h4 style="margin-bottom:14px;">Edit Question</h4>
 
       <!-- ── Core ── -->
-      <div class="form-grid" style="grid-template-columns:2fr 1fr; gap:12px;">
+      <div class="form-grid" style="grid-template-columns:2fr 1fr 1fr; gap:12px;">
         <div class="form-group">
           <label class="form-label">Question Type *</label>
           <select class="form-select" id="questionType" onchange="changeQuestionType()">
@@ -3382,8 +3386,17 @@ function openQuestionEditor(index) {
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Points Possible *</label>
+          <label class="form-label">Points *</label>
           <input type="number" class="form-input" id="questionPoints" value="${parseFloat(q.points) || 1}" min="0" step="0.5">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Difficulty</label>
+          <select class="form-select" id="questionDifficulty">
+            <option value="" ${!q.difficulty ? 'selected' : ''}>—</option>
+            <option value="easy" ${q.difficulty === 'easy' ? 'selected' : ''}>Easy</option>
+            <option value="medium" ${q.difficulty === 'medium' ? 'selected' : ''}>Medium</option>
+            <option value="hard" ${q.difficulty === 'hard' ? 'selected' : ''}>Hard</option>
+          </select>
         </div>
       </div>
 
@@ -3680,6 +3693,7 @@ function saveQuestionEdit() {
   q.prompt = document.getElementById('questionPrompt').value.trim();
   q.title = document.getElementById('questionTitle').value.trim();
   q.points = parseFloat(document.getElementById('questionPoints').value) || 1;
+  q.difficulty = document.getElementById('questionDifficulty')?.value || '';
 
   // Universal feedback & accessibility
   q.feedbackGeneral = document.getElementById('qFeedbackGeneral')?.value.trim() || '';
@@ -3895,6 +3909,29 @@ function openNewAssignmentModal(assignmentId = null) {
       }
       document.getElementById('newAssignmentRandomizeQuestions').checked = assignment.randomizeQuestions || false;
       if (assignment.numQuestions) document.getElementById('newAssignmentNumQuestions').value = assignment.numQuestions;
+      // Difficulty mix
+      if (assignment.difficultyMix) {
+        if (assignment.difficultyMix.easy) document.getElementById('newAssignmentDiffEasy').value = assignment.difficultyMix.easy;
+        if (assignment.difficultyMix.medium) document.getElementById('newAssignmentDiffMedium').value = assignment.difficultyMix.medium;
+        if (assignment.difficultyMix.hard) document.getElementById('newAssignmentDiffHard').value = assignment.difficultyMix.hard;
+      }
+      // Proctor mode
+      const proctorEl = document.getElementById('newAssignmentProctorMode');
+      if (proctorEl) {
+        proctorEl.checked = !!assignment.proctorMode;
+        document.getElementById('proctorOptionsRow').style.display = assignment.proctorMode ? 'block' : 'none';
+        if (assignment.proctorMode) {
+          document.getElementById('newAssignmentProctorLockdown').checked = assignment.proctorLockdown !== false;
+          document.getElementById('newAssignmentProctorAutoSubmit').checked = !!assignment.proctorAutoSubmit;
+        }
+      }
+      // Mastery mode
+      const masteryEl = document.getElementById('newAssignmentMasteryMode');
+      if (masteryEl) {
+        masteryEl.checked = !!assignment.masteryMode;
+        document.getElementById('masteryThresholdRow').style.display = assignment.masteryMode ? 'flex' : 'none';
+        if (assignment.masteryThreshold) document.getElementById('newAssignmentMasteryThreshold').value = assignment.masteryThreshold;
+      }
       const tl = assignment.timeLimit;
       if (!tl) {
         document.getElementById('newAssignmentUnlimitedTime').checked = true;
@@ -3922,6 +3959,7 @@ function openNewAssignmentModal(assignmentId = null) {
 
     document.getElementById('newAssignmentVisibleToStudents').checked = assignment.visibleToStudents !== false;
     document.getElementById('newAssignmentShowStats').checked = assignment.showStatsToStudents === true;
+    document.getElementById('newAssignmentExtraCredit').checked = !!assignment.isExtraCredit;
   } else {
     resetNewAssignmentModal();
   }
@@ -3952,6 +3990,8 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentUnlimitedTime').checked = false;
   document.getElementById('newAssignmentRandomizeQuestions').checked = false;
   document.getElementById('newAssignmentNumQuestions').value = '';
+  const masteryResetEl = document.getElementById('newAssignmentMasteryMode');
+  if (masteryResetEl) { masteryResetEl.checked = false; document.getElementById('masteryThresholdRow').style.display = 'none'; document.getElementById('newAssignmentMasteryThreshold').value = '5'; }
   document.getElementById('newAssignmentModalityText').checked = true;
   document.getElementById('newAssignmentModalityFile').checked = false;
   document.getElementById('newAssignmentFileTypes').value = '';
@@ -3963,6 +4003,7 @@ function resetNewAssignmentModal() {
   handleModalityChange();
   document.getElementById('newAssignmentVisibleToStudents').checked = true;
   document.getElementById('newAssignmentShowStats').checked = false;
+  document.getElementById('newAssignmentExtraCredit').checked = false;
 
   // Default dates: availableFrom = today, due = 1 week from now at 23:59
   const pad = n => String(n).padStart(2, '0');
@@ -4107,6 +4148,18 @@ function updateQuizPointsFromBank() {
     ptsEl.value = Math.round(avgPts * numQ * 10) / 10;
   } else {
     ptsEl.value = totalPoints;
+  }
+  // Show difficulty distribution
+  const diffEl = document.getElementById('difficultyAvailCounts');
+  if (diffEl) {
+    const counts = { easy: 0, medium: 0, hard: 0, untagged: 0 };
+    questions.forEach(q => {
+      if (q.difficulty === 'easy') counts.easy++;
+      else if (q.difficulty === 'medium') counts.medium++;
+      else if (q.difficulty === 'hard') counts.hard++;
+      else counts.untagged++;
+    });
+    diffEl.textContent = `Bank has: ${counts.easy} easy, ${counts.medium} medium, ${counts.hard} hard${counts.untagged ? `, ${counts.untagged} untagged` : ''}`;
   }
 }
 window.updateQuizPointsFromBank = updateQuizPointsFromBank;
@@ -4273,6 +4326,10 @@ async function saveNewAssignment() {
     const unlimitedAttempts = document.getElementById('newAssignmentUnlimitedQuizAttempts').checked;
     submissionAttempts = unlimitedAttempts ? null : (parseInt(document.getElementById('newAssignmentQuizAttempts').value) || 1);
     numQuestions = parseInt(document.getElementById('newAssignmentNumQuestions').value) || null;
+    // Difficulty mix
+    const diffEasy = parseInt(document.getElementById('newAssignmentDiffEasy')?.value) || 0;
+    const diffMedium = parseInt(document.getElementById('newAssignmentDiffMedium')?.value) || 0;
+    const diffHard = parseInt(document.getElementById('newAssignmentDiffHard')?.value) || 0;
     // Recalculate points using the subset size if specified
     const bank2 = (appData.questionBanks || []).find(b => b.id === questionBankId);
     if (bank2) {
@@ -4284,7 +4341,14 @@ async function saveNewAssignment() {
         points = totalPts;
       }
     }
-    gradingType = 'points';
+    // Mastery mode
+    const masteryModeChecked = document.getElementById('newAssignmentMasteryMode')?.checked || false;
+    if (masteryModeChecked) {
+      gradingType = 'complete_incomplete';
+      points = 1; // Complete/Incomplete binary
+    } else {
+      gradingType = 'points';
+    }
 
   } else if (assignmentType === 'no_submission') {
     gradingType = document.getElementById('noSubGradingType').value;
@@ -4351,7 +4415,14 @@ async function saveNewAssignment() {
     lateDeduction: latePenalty,
     gradingNotes,
     visibleToStudents: document.getElementById('newAssignmentVisibleToStudents')?.checked !== false,
-    showStatsToStudents: document.getElementById('newAssignmentShowStats')?.checked === true
+    showStatsToStudents: document.getElementById('newAssignmentShowStats')?.checked === true,
+    masteryMode: document.getElementById('newAssignmentMasteryMode')?.checked || false,
+    masteryThreshold: parseInt(document.getElementById('newAssignmentMasteryThreshold')?.value) || 5,
+    isExtraCredit: document.getElementById('newAssignmentExtraCredit')?.checked || false,
+    difficultyMix: (diffEasy || diffMedium || diffHard) ? { easy: diffEasy, medium: diffMedium, hard: diffHard } : null,
+    proctorMode: document.getElementById('newAssignmentProctorMode')?.checked || false,
+    proctorLockdown: document.getElementById('newAssignmentProctorLockdown')?.checked ?? true,
+    proctorAutoSubmit: document.getElementById('newAssignmentProctorAutoSubmit')?.checked || false
   };
 
   if (currentNewAssignmentEditId) {
@@ -4361,6 +4432,7 @@ async function saveNewAssignment() {
     Object.assign(assignment, fields);
     const result = await supabaseUpdateAssignment(assignment);
     if (!result) { Object.assign(assignment, original); return; }
+    await persistExtraCreditFlag(currentNewAssignmentEditId, fields.isExtraCredit);
     closeModal('newAssignmentModal');
     clearUnsaved();
     resetNewAssignmentModal();
@@ -4378,12 +4450,29 @@ async function saveNewAssignment() {
     const result = await supabaseCreateAssignment(newAssignment);
     if (result) {
       appData.assignments.push(newAssignment);
+      await persistExtraCreditFlag(newAssignment.id, fields.isExtraCredit);
       closeModal('newAssignmentModal');
       resetNewAssignmentModal();
       renderAssignments();
       renderHome();
       showToast('Assignment created!', 'success');
     }
+  }
+}
+
+// Persist extra credit flag as a __xc: grade_categories entry
+async function persistExtraCreditFlag(assignmentId, isExtraCredit) {
+  if (!appData.gradeCategories) appData.gradeCategories = [];
+  const xcName = '__xc:' + assignmentId;
+  const existing = appData.gradeCategories.find(c => c.courseId === activeCourseId && c.name === xcName);
+
+  if (isExtraCredit && !existing) {
+    const entry = { id: generateId(), courseId: activeCourseId, name: xcName, weight: 0.0001 };
+    const created = await supabaseCreateGradeCategory(entry);
+    if (created) appData.gradeCategories.push({ ...entry, id: created.id || entry.id });
+  } else if (!isExtraCredit && existing) {
+    await supabaseDeleteGradeCategory(existing.id);
+    appData.gradeCategories = appData.gradeCategories.filter(c => c !== existing);
   }
 }
 
@@ -4464,11 +4553,31 @@ function startAssignmentQuiz(assignmentId) {
   // Build a virtual quiz object from the assignment + bank
   let questions = bank.questions.map(q => ({ ...q }));
   const randomize = assignment.randomizeQuestions || bank.randomize || false;
-  if (randomize) questions = questions.sort(() => Math.random() - 0.5);
-  const numQ = assignment.numQuestions && assignment.numQuestions > 0
-    ? Math.min(assignment.numQuestions, questions.length)
-    : questions.length;
-  questions = questions.slice(0, numQ);
+
+  // Difficulty-based selection if configured
+  const mix = assignment.difficultyMix;
+  if (mix && (mix.easy || mix.medium || mix.hard)) {
+    const selected = [];
+    const byDiff = { easy: [], medium: [], hard: [], none: [] };
+    questions.forEach(q => {
+      const d = q.difficulty || '';
+      if (byDiff[d]) byDiff[d].push(q);
+      else byDiff.none.push(q);
+    });
+    // Shuffle each pool then pick N
+    ['easy', 'medium', 'hard'].forEach(level => {
+      const count = mix[level] || 0;
+      const pool = byDiff[level].sort(() => Math.random() - 0.5);
+      selected.push(...pool.slice(0, count));
+    });
+    questions = randomize ? selected.sort(() => Math.random() - 0.5) : selected;
+  } else {
+    if (randomize) questions = questions.sort(() => Math.random() - 0.5);
+    const numQ = assignment.numQuestions && assignment.numQuestions > 0
+      ? Math.min(assignment.numQuestions, questions.length)
+      : questions.length;
+    questions = questions.slice(0, numQ);
+  }
 
   const virtualQuiz = {
     id: `assign_${assignmentId}`,
@@ -4477,7 +4586,12 @@ function startAssignmentQuiz(assignmentId) {
     timeLimit: assignment.timeLimit,
     attempts: assignment.submissionAttempts,
     randomizeQuestions: false,  // already shuffled above if needed
-    questions
+    questions,
+    masteryMode: assignment.masteryMode || false,
+    masteryThreshold: assignment.masteryThreshold || 5,
+    proctorMode: assignment.proctorMode || false,
+    proctorLockdown: assignment.proctorLockdown !== false,
+    proctorAutoSubmit: assignment.proctorAutoSubmit || false
   };
 
   currentAssignmentQuizId = assignmentId;
@@ -4777,6 +4891,108 @@ function viewSubmissions(assignmentId) {
     </div>
   `;
 
+  // Per-question quiz analytics (only for quiz-type assignments)
+  let quizAnalyticsHtml = '';
+  const isQuiz = assignment.assignmentType === 'quiz' || assignment.category === 'quiz' || assignment.category === 'exam';
+  if (isQuiz) {
+    const quizId = `assign_${assignmentId}`;
+    const quizSubs = (appData.quizSubmissions || []).filter(qs => qs.quizId === quizId);
+    const bank = assignment.questionBankId ? (appData.questionBanks || []).find(b => b.id === assignment.questionBankId) : null;
+    if (bank && bank.questions && quizSubs.length > 0) {
+      const qStats = bank.questions.map((q, qi) => {
+        const type = q.type || 'multiple_choice';
+        const points = parseFloat(q.points) || 0;
+        let correctCount = 0;
+        const answerCounts = {};
+        let totalAnswered = 0;
+
+        quizSubs.forEach(sub => {
+          const answer = sub.answers ? sub.answers[q.id] : undefined;
+          if (answer === undefined || answer === null) return;
+          totalAnswered++;
+          const answerKey = String(answer);
+          answerCounts[answerKey] = (answerCounts[answerKey] || 0) + 1;
+          if (type === 'multiple_choice') {
+            if (parseInt(answer, 10) === parseInt(q.correctAnswer, 10)) correctCount++;
+          } else if (type === 'true_false') {
+            if (answer === q.correctAnswer) correctCount++;
+          }
+        });
+
+        const pctCorrect = totalAnswered > 0 ? ((correctCount / totalAnswered) * 100).toFixed(0) : '—';
+        const isAutoGraded = type === 'multiple_choice' || type === 'true_false';
+
+        // Find most common wrong answer
+        let topWrongLabel = '—';
+        if (isAutoGraded) {
+          const correctKey = String(q.correctAnswer);
+          const wrongEntries = Object.entries(answerCounts).filter(([k]) => k !== correctKey);
+          if (wrongEntries.length > 0) {
+            wrongEntries.sort((a, b) => b[1] - a[1]);
+            const topWrongKey = wrongEntries[0][0];
+            if (type === 'multiple_choice' && q.options) {
+              const idx = parseInt(topWrongKey, 10);
+              topWrongLabel = q.options[idx] ? escapeHtml(String(q.options[idx])) : topWrongKey;
+            } else {
+              topWrongLabel = escapeHtml(topWrongKey);
+            }
+            topWrongLabel += ` (${wrongEntries[0][1]})`;
+          }
+        }
+
+        // Bar color
+        const pctNum = parseInt(pctCorrect, 10) || 0;
+        const barColor = pctNum >= 80 ? 'var(--success, #22c55e)' : pctNum >= 50 ? 'var(--warning, #f59e0b)' : 'var(--danger, #ef4444)';
+
+        return `
+          <div style="padding:10px 0; ${qi < bank.questions.length - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <span style="font-weight:600; font-size:0.9rem;">Q${qi + 1}: ${escapeHtml((q.title || q.question || '').substring(0, 80))}${(q.title || q.question || '').length > 80 ? '...' : ''}</span>
+              <span style="font-size:0.85rem; font-weight:700; color:${barColor};">${isAutoGraded ? pctCorrect + '%' : 'Manual'}</span>
+            </div>
+            ${isAutoGraded ? `
+              <div style="height:8px; background:var(--border-light); border-radius:4px; overflow:hidden; margin-bottom:4px;">
+                <div style="height:100%; width:${pctNum}%; background:${barColor}; border-radius:4px;"></div>
+              </div>
+              <div class="muted" style="font-size:0.8rem;">${correctCount}/${totalAnswered} correct${topWrongLabel !== '—' ? ` · Most common wrong: ${topWrongLabel}` : ''}</div>
+            ` : `<div class="muted" style="font-size:0.8rem;">${totalAnswered} responses (requires manual grading)</div>`}
+          </div>
+        `;
+      });
+
+      // Proctor irregularity report
+      const proctorSubs = quizSubs.filter(s => s.proctorReport && s.proctorReport.irregularities && s.proctorReport.irregularities.length > 0);
+      let proctorHtml = '';
+      if (proctorSubs.length > 0) {
+        proctorHtml = `
+          <div class="card" style="margin-bottom:16px; border-left:3px solid var(--danger);">
+            <div style="font-weight:700; margin-bottom:8px; font-size:1rem; color:var(--danger);">Proctor Irregularity Report</div>
+            ${proctorSubs.map(sub => {
+              const student = getUserById(sub.userId);
+              const report = sub.proctorReport;
+              return `
+                <div style="padding:8px 0; border-bottom:1px solid var(--border-light);">
+                  <div style="font-weight:600; font-size:0.9rem;">${student ? escapeHtml(student.name) : 'Unknown'} — ${report.tabSwitches} tab switch${report.tabSwitches !== 1 ? 'es' : ''}</div>
+                  <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:2px;">
+                    ${report.irregularities.map(i => `<div>${escapeHtml(i.type)}: ${escapeHtml(i.detail)} (${new Date(i.time).toLocaleTimeString()})</div>`).join('')}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      quizAnalyticsHtml = `
+        ${proctorHtml}
+        <div class="card" style="margin-bottom:16px;">
+          <div style="font-weight:700; margin-bottom:12px; font-size:1rem;">Per-Question Analysis</div>
+          ${qStats.join('')}
+        </div>
+      `;
+    }
+  }
+
   const html = `
     <div class="modal-overlay visible" id="submissionsModal">
       <div class="modal" style="max-width:900px;">
@@ -4786,6 +5002,7 @@ function viewSubmissions(assignmentId) {
         </div>
         <div class="modal-body">
           ${metadataHtml}
+          ${quizAnalyticsHtml}
           <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
             <button class="btn btn-primary btn-sm" onclick="closeModal('submissionsModal'); openSpeedGrader('${assignmentId}')">Grade</button>
             <button class="btn btn-secondary btn-sm" onclick="openBulkGradeModal('${assignmentId}')">Bulk Import Grades</button>
@@ -6426,18 +6643,20 @@ function renderStudentGradebook({ previewMode = false } = {}) {
     let score = '—';
     let feedback = '';
 
+    const isXC = !!a.isExtraCredit;
+
     if (previewMode) {
       const gt = a.gradingType || 'points';
       if (gt === 'complete_incomplete') {
         score = 'Complete';
         totalScore += a.points;
-        totalPoints += a.points;
+        if (!isXC) totalPoints += a.points;
       } else if (gt === 'letter_grade') {
         score = 'A';
       } else {
         score = `${a.points}/${a.points}`;
         totalScore += a.points;
-        totalPoints += a.points;
+        if (!isXC) totalPoints += a.points;
       }
     } else if (submission) {
       const gt = a.gradingType || 'points';
@@ -6446,14 +6665,14 @@ function renderStudentGradebook({ previewMode = false } = {}) {
         if (gt === 'complete_incomplete') {
           score = grade.score > 0 ? 'Complete' : 'Incomplete';
           totalScore += grade.score > 0 ? a.points : 0;
-          totalPoints += a.points;
+          if (!isXC) totalPoints += a.points;
         } else if (gt === 'letter_grade') {
           score = String(grade.score);
           // letter grades don't contribute to numeric total
         } else {
           score = `${grade.score}/${a.points}`;
           totalScore += grade.score;
-          totalPoints += a.points;
+          if (!isXC) totalPoints += a.points;
         }
         feedback = grade.feedback;
       } else if (grade && !grade.released) {
@@ -6621,14 +6840,61 @@ function renderStaffGradebook() {
     return;
   }
   
-  // (stats box removed — analytics available per column header)
+  // ── Build category grouping for header ────────────────────────────────────
+  const catColors = ['#6366f1', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'];
+  const allCatEntries = (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId && !c.name.startsWith('__'));
+  const categoryMap = {};
+  allCatEntries.forEach(c => { categoryMap[c.name] = c; });
+
+  // Build ordered category spans for the header row
+  const assignmentsByCategory = [];
+  let currentCat = null;
+  assignments.forEach(a => {
+    const cat = a.category || 'Uncategorized';
+    if (cat !== currentCat) {
+      assignmentsByCategory.push({ category: cat, assignments: [a] });
+      currentCat = cat;
+    } else {
+      assignmentsByCategory[assignmentsByCategory.length - 1].assignments.push(a);
+    }
+  });
+  const showCatRow = assignmentsByCategory.length > 1 || (assignmentsByCategory.length === 1 && assignmentsByCategory[0].category !== 'Uncategorized');
+
+  // ── Class average per assignment ────────────────────────────────────────
+  const realStudents = enrolledStudents.filter(s => !s.isPendingInvite);
+  const avgByAssignment = {};
+  assignments.forEach(a => {
+    const scores = [];
+    realStudents.forEach(stu => {
+      const sub = appData.submissions.find(s => s.assignmentId === a.id && s.userId === stu.id);
+      const grade = sub ? appData.grades.find(g => g.submissionId === sub.id) : null;
+      if (grade && !grade.excused && !grade.incomplete && grade.score !== null && grade.score !== undefined) {
+        scores.push(Number(grade.score));
+      }
+    });
+    if (scores.length > 0) {
+      const sum = scores.reduce((a, b) => a + b, 0);
+      avgByAssignment[a.id] = { avg: (sum / scores.length).toFixed(1), count: scores.length };
+    }
+  });
 
   const table = `
     <div id="gradebookScrollWrap" style="overflow-x:auto; overflow-y:auto; max-height:420px; border:1px solid var(--border-light); border-radius:var(--radius);">
       <table style="width:100%; border-collapse:collapse;">
         <thead>
+          ${showCatRow ? `<tr style="background:var(--bg-color); border-bottom:1px solid var(--border-light);">
+            <th style="padding:0; position:sticky; left:0; top:0; background:var(--bg-color); z-index:10;"></th>
+            ${assignmentsByCategory.map((group, gi) => {
+              const color = catColors[gi % catColors.length];
+              const catEntry = categoryMap[group.category];
+              const weightLabel = catEntry && catEntry.weight ? ' (' + (catEntry.weight * 100).toFixed(0) + '%)' : '';
+              return '<th colspan="' + group.assignments.length + '" style="padding:4px 8px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5; border-bottom:3px solid ' + color + ';"><span style="font-size:0.72rem; font-weight:600; color:' + color + '; text-transform:uppercase; letter-spacing:0.04em;">' + escapeHtml(group.category) + weightLabel + '</span></th>';
+            }).join('')}
+            <th style="padding:0; position:sticky; top:0; background:var(--bg-color); z-index:5;"></th>
+            ${gradeSettings ? '<th style="padding:0; position:sticky; top:0; background:var(--bg-color); z-index:5;"></th>' : ''}
+          </tr>` : ''}
           <tr style="background:var(--bg-color); border-bottom:2px solid var(--border-color);">
-            <th style="padding:12px; text-align:left; position:sticky; left:0; top:0; background:var(--bg-color); z-index:10;">
+            <th style="padding:12px; text-align:left; position:sticky; left:0; top:${showCatRow ? '28px' : '0'}; background:var(--bg-color); z-index:10;">
               Student
               <div style="display:flex; gap:4px; margin-top:6px;">
                 <button class="btn btn-secondary btn-sm" onclick="gbSortStudents('az')" style="font-size:0.7rem; padding:2px 7px;${!gbColSort && gbStudentSort === 'az' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">A→Z</button>
@@ -6637,6 +6903,7 @@ function renderStaffGradebook() {
             </th>
             ${assignments.map(a => {
               const hiddenBadge = a.visibleToStudents === false ? '<span style="padding:2px 6px; background:var(--danger-light); color:var(--danger); border-radius:4px; font-size:0.7rem; font-weight:600; display:inline-block; margin:1px 0;">Hidden</span>' : '';
+              const xcBadge = a.isExtraCredit ? '<span style="padding:2px 6px; background:var(--warning); color:#fff; border-radius:4px; font-size:0.65rem; font-weight:600; display:inline-block; margin:1px 0;">XC</span>' : '';
               const colMenuId = `menu-gb-col-${a.id}`;
               const allGrades = appData.submissions.filter(s => s.assignmentId === a.id)
                 .map(s => appData.grades.find(g => g.submissionId === s.id))
@@ -6650,10 +6917,11 @@ function renderStaffGradebook() {
               const sortIndicator = isActiveSortCol ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : '';
               const isActiveFilter = gbColFilter && gbColFilter.id === a.id;
               const filterBadge = isActiveFilter ? ` <span style="font-size:0.65rem; background:var(--warning); color:#fff; padding:1px 5px; border-radius:4px;">${gbColFilter.mode}</span>` : '';
-              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}${filterBadge}${hiddenBadge ? '<br>' + hiddenBadge : ''}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkSetZero('${a.id}')">Set Missing to 0</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkExcuseAll('${a.id}')">Excuse All Missing</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'missing')">Filter: Missing</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'late')">Filter: Late</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'ungraded')">Filter: Ungraded</button></div></th>`;
+              const avgInfo = avgByAssignment[a.id] ? `<div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">Avg: ${avgByAssignment[a.id].avg}/${a.points}</div>` : '';
+              return `<th style="padding:10px 8px; text-align:center; min-width:130px; position:sticky; top:${showCatRow ? '28px' : '0'}; background:var(--bg-color); z-index:5;"><div style="font-size:0.82rem; font-weight:600; line-height:1.3;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}</div>${filterBadge}${hiddenBadge || xcBadge ? '<div style="margin-top:2px;">' + hiddenBadge + xcBadge + '</div>' : ''}${avgInfo}<button class="btn btn-secondary" style="font-size:0.72rem; padding:2px 8px; margin-top:3px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkSetZero('${a.id}')">Set Missing to 0</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkExcuseAll('${a.id}')">Excuse All Missing</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'missing')">Filter: Missing</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'late')">Filter: Late</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'ungraded')">Filter: Ungraded</button></div></th>`;
             }).join('')}
-            <th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">%${gbColSort && gbColSort.id === '__grade__' ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : ''}<div style="display:flex; gap:4px; margin-top:4px; justify-content:center;"><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'az')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'az' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">Low→High</button><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'za')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'za' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">High→Low</button></div></th>
-            ${gradeSettings ? '<th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">Grade</th>' : ''}
+            <th style="padding:12px; text-align:center; position:sticky; top:${showCatRow ? '28px' : '0'}; background:var(--bg-color); z-index:5;">%${gbColSort && gbColSort.id === '__grade__' ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : ''}<div style="display:flex; gap:4px; margin-top:4px; justify-content:center;"><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'az')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'az' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">Low→High</button><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'za')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'za' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">High→Low</button></div></th>
+            ${gradeSettings ? '<th style="padding:12px; text-align:center; position:sticky; top:' + (showCatRow ? '28px' : '0') + '; background:var(--bg-color); z-index:5;">Grade</th>' : ''}
           </tr>
         </thead>
         <tbody>
@@ -6667,12 +6935,13 @@ function renderStaffGradebook() {
             let totalScore = 0;
             let totalPoints = 0;
 
+            const zebraBg = studentIdx % 2 === 1 ? 'color-mix(in srgb, var(--bg-color) 50%, var(--bg-card))' : 'var(--bg-card)';
             const rowStyle = student.isPendingInvite
-              ? 'border-bottom:1px solid var(--border-light); opacity:0.45;'
-              : 'border-bottom:1px solid var(--border-light);';
+              ? `border-bottom:1px solid var(--border-light); opacity:0.45; background:${zebraBg};`
+              : `border-bottom:1px solid var(--border-light); background:${zebraBg};`;
             const nameStyle = student.isPendingInvite
-              ? 'padding:5px 12px; position:sticky; left:0; background:var(--bg-card); color:var(--text-muted); font-style:italic;'
-              : 'padding:5px 12px; position:sticky; left:0; background:var(--bg-card);';
+              ? `padding:5px 12px; position:sticky; left:0; background:${zebraBg}; color:var(--text-muted); font-style:italic;`
+              : `padding:5px 12px; position:sticky; left:0; background:${zebraBg};`;
             const row = `
               <tr style="${rowStyle}">
                 <td style="${nameStyle}">${student.isPendingInvite ? `${student.email} <span style="font-size:0.75rem;">(invited)</span>` : escapeHtml(student.name)}</td>
@@ -6690,24 +6959,38 @@ function renderStaffGradebook() {
                     if (grade.excused) {
                       return `<td style="padding:8px 12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Excused — click to edit"><span style="font-weight:700; color:var(--primary);">EX</span></td>`;
                     }
+                    if (grade.incomplete) {
+                      return `<td style="padding:8px 12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Incomplete — click to edit"><span style="font-weight:700; color:var(--warning);">I</span></td>`;
+                    }
                     const gt = a.gradingType || 'points';
+                    const isXC = !!a.isExtraCredit;
                     let cellContent = '';
                     if (gt === 'complete_incomplete') {
                       cellContent = grade.score > 0 ? '<span style="color:var(--success);">Complete</span>' : '<span style="color:var(--danger);">Incomplete</span>';
                       totalScore += grade.score > 0 ? a.points : 0;
-                      totalPoints += a.points;
+                      if (!isXC) totalPoints += a.points;
                     } else if (gt === 'letter_grade') {
                       cellContent = `<span style="font-weight:700; color:${getGradeColor(grade.score)}">${grade.score}</span>`;
                       // Score stored as letter — don't add to numeric total
                     } else {
+                      // Explicit zero: distinguish visually
+                      if (grade.score === 0) {
+                        cellContent = '<span style="font-weight:700; color:var(--danger);">0</span>';
+                      } else {
+                        cellContent = `${grade.score}`;
+                      }
                       totalScore += grade.score;
-                      totalPoints += a.points;
-                      cellContent = `${grade.score}`;
+                      if (!isXC) totalPoints += a.points;
                     }
                     const visibilityBadge = grade.released
                       ? '<div style="font-size:0.6rem; color:var(--success); margin-top:1px;">Visible</div>'
                       : '<div style="font-size:0.6rem; color:var(--danger); margin-top:1px;">Hidden</div>';
                     return `<td style="padding:8px 12px; text-align:center; cursor:pointer;" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to edit grade for ${escapeHtml(displayName)}">${cellContent}${visibilityBadge}</td>`;
+                  }
+                  // No grade: distinguish Missing (past due, no submission) from unsubmitted
+                  const isPastDue = a.dueDate && new Date(a.dueDate) < new Date();
+                  if (!submission && isPastDue) {
+                    return `<td style="padding:5px 12px; text-align:center; cursor:pointer; background:color-mix(in srgb, var(--danger) 8%, transparent);" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Missing — click to grade ${escapeHtml(displayName)}"><span style="font-size:0.75rem; font-weight:600; color:var(--danger);">MISS</span></td>`;
                   }
                   return `<td style="padding:5px 12px; text-align:center; cursor:pointer;" class="muted" onclick="openManualGradeModal('${student.id}', '${a.id}')" title="Click to add grade for ${escapeHtml(displayName)}">—</td>`;
                 }).join('')}
@@ -6715,15 +6998,18 @@ function renderStaffGradebook() {
                   ? `<td style="padding:5px 12px; text-align:center;">—</td>${gradeSettings ? '<td style="padding:5px 12px; text-align:center;">—</td>' : ''}`
                   : `${(() => {
                   const weightedGrade = calculateWeightedGrade(student.id, activeCourseId);
+                  const allowXC = gradeSettings?.extraCreditEnabled;
                   if (weightedGrade !== null) {
-                    const pct = Math.min(weightedGrade + (gradeSettings?.curve || 0), 100);
+                    const rawPct = weightedGrade + (gradeSettings?.curve || 0);
+                    const pct = allowXC ? rawPct : Math.min(rawPct, 100);
                     const pctStr = pct.toFixed(1) + '%' + (gradeSettings?.curve ? ` (+${gradeSettings.curve}% curve)` : '');
                     const letterGrade = gradeSettings ? getLetterGrade(pct, gradeSettings) : null;
                     return '<td style="padding:5px 12px; text-align:center; font-weight:600;">' + pctStr + '</td>' +
                       (gradeSettings ? '<td style="padding:5px 12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
                   }
                   if (totalPoints === 0) return '<td style="padding:5px 12px; text-align:center;">—</td>' + (gradeSettings ? '<td style="padding:5px 12px; text-align:center;">—</td>' : '');
-                  const curvedScore = Math.min(totalScore + (gradeSettings ? (gradeSettings.curve || 0) * totalPoints / 100 : 0), totalPoints);
+                  const rawCurvedScore = totalScore + (gradeSettings ? (gradeSettings.curve || 0) * totalPoints / 100 : 0);
+                  const curvedScore = allowXC ? rawCurvedScore : Math.min(rawCurvedScore, totalPoints);
                   const pct = (curvedScore / totalPoints) * 100;
                   const pctStr = pct.toFixed(1) + '%' + (gradeSettings?.curve ? ` (+${gradeSettings.curve}% curve)` : '');
                   const letterGrade = gradeSettings ? getLetterGrade(pct, gradeSettings) : null;
@@ -6735,6 +7021,25 @@ function renderStaffGradebook() {
             return row;
           }).join('')}
         </tbody>
+        ${realStudents.length > 0 ? `<tfoot>
+          <tr style="background:var(--bg-color); border-top:2px solid var(--border-color);">
+            <td style="padding:8px 12px; font-weight:700; font-size:0.82rem; position:sticky; left:0; background:var(--bg-color);">Class Average (${realStudents.length})</td>
+            ${assignments.map(a => {
+              const info = avgByAssignment[a.id];
+              if (!info) return '<td style="padding:8px 12px; text-align:center; color:var(--text-muted); font-size:0.82rem;">—</td>';
+              const pct = a.points > 0 ? ((info.avg / a.points) * 100).toFixed(0) : '—';
+              return '<td style="padding:8px 12px; text-align:center; font-weight:600; font-size:0.82rem;">' + info.avg + '<div style="font-size:0.68rem; color:var(--text-muted); font-weight:400;">' + pct + '%</div></td>';
+            }).join('')}
+            ${(() => {
+              const allPcts = realStudents.map(s => calculateWeightedGrade(s.id, activeCourseId)).filter(p => p !== null);
+              if (allPcts.length === 0) return '<td style="padding:8px 12px; text-align:center;">—</td>' + (gradeSettings ? '<td style="padding:8px 12px; text-align:center;">—</td>' : '');
+              const classAvg = (allPcts.reduce((a, b) => a + b, 0) / allPcts.length).toFixed(1);
+              const letterGrade = gradeSettings ? getLetterGrade(Number(classAvg), gradeSettings) : null;
+              return '<td style="padding:8px 12px; text-align:center; font-weight:700; font-size:0.85rem;">' + classAvg + '%</td>' +
+                (gradeSettings ? '<td style="padding:8px 12px; text-align:center; font-weight:700; color:' + getGradeColor(letterGrade) + ';">' + letterGrade + '</td>' : '');
+            })()}
+          </tr>
+        </tfoot>` : ''}
       </table>
     </div>
   `;
@@ -6984,12 +7289,21 @@ function openManualGradeModal(studentId, assignmentId) {
                 <span>Release grade to student</span>
               </label>
             </div>
-            <div class="form-group">
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="manualGradeExcused" onchange="document.getElementById('manualGradeScoreSection').style.opacity = this.checked ? '0.4' : '1'">
-                <span>Excused (exclude from grade calculation)</span>
-              </label>
+            <div style="display:flex; gap:16px; flex-wrap:wrap;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="manualGradeExcused" onchange="handleGradeStatusChange('excused')">
+                  <span>Excused</span>
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom:0;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="manualGradeIncomplete" onchange="handleGradeStatusChange('incomplete')">
+                  <span>Incomplete</span>
+                </label>
+              </div>
             </div>
+            <div class="hint" style="margin-top:4px;">Excused = excluded from grade calc. Incomplete = in-progress, counts as 0.</div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" onclick="closeModal('manualGradeModal')">Cancel</button>
@@ -7040,21 +7354,35 @@ function openManualGradeModal(studentId, assignmentId) {
   document.getElementById('manualGradeFeedback').value = grade ? (grade.feedback || '') : '';
   document.getElementById('manualGradeReleased').checked = grade ? grade.released : true;
   document.getElementById('manualGradeExcused').checked = grade ? !!grade.excused : false;
-  document.getElementById('manualGradeScoreSection').style.opacity = grade?.excused ? '0.4' : '1';
+  document.getElementById('manualGradeIncomplete').checked = grade ? !!grade.incomplete : false;
+  const scoreDisabled = grade?.excused || grade?.incomplete;
+  document.getElementById('manualGradeScoreSection').style.opacity = scoreDisabled ? '0.4' : '1';
 
   openModal('manualGradeModal');
 }
+
+function handleGradeStatusChange(which) {
+  const excusedEl = document.getElementById('manualGradeExcused');
+  const incompleteEl = document.getElementById('manualGradeIncomplete');
+  // Mutually exclusive: excused and incomplete
+  if (which === 'excused' && excusedEl.checked) incompleteEl.checked = false;
+  if (which === 'incomplete' && incompleteEl.checked) excusedEl.checked = false;
+  const disabled = excusedEl.checked || incompleteEl.checked;
+  document.getElementById('manualGradeScoreSection').style.opacity = disabled ? '0.4' : '1';
+}
+window.handleGradeStatusChange = handleGradeStatusChange;
 
 async function saveManualGrade() {
   const feedback = document.getElementById('manualGradeFeedback').value.trim();
   const released = document.getElementById('manualGradeReleased').checked;
   const excusedChecked = document.getElementById('manualGradeExcused')?.checked || false;
+  const incompleteChecked = document.getElementById('manualGradeIncomplete')?.checked || false;
   const assignment = appData.assignments.find(a => a.id === manualGradeAssignmentId);
   const gt = assignment.gradingType || 'points';
 
   let score;
-  if (excusedChecked) {
-    // Excused — no score validation needed
+  if (excusedChecked || incompleteChecked) {
+    // Excused or Incomplete — no score validation needed
     score = 0;
   } else if (gt === 'complete_incomplete') {
     score = parseInt(document.getElementById('manualGradeScore').value);
@@ -7092,12 +7420,19 @@ async function saveManualGrade() {
     appData.submissions.push(submission);
   }
 
+  // Encode incomplete status in feedback for DB persistence (no DB column yet)
+  let persistedFeedback = feedback;
+  if (incompleteChecked && !feedback.startsWith('[INCOMPLETE]')) {
+    persistedFeedback = '[INCOMPLETE] ' + feedback;
+  }
+
   const gradePayload = {
     submissionId: submission.id,
     score: score,
-    feedback: feedback,
+    feedback: persistedFeedback,
     released: released,
     excused: excusedChecked,
+    incomplete: incompleteChecked,
     gradedBy: appData.currentUser.id,
     gradedAt: new Date().toISOString()
   };
@@ -8603,51 +8938,143 @@ function openCategoryWeightsModal() {
 
   // Detect if existing weights are per-assignment (name matches an assignment ID)
   const assignmentIds = new Set(assignments.map(a => a.id));
-  const isPerAssignment = courseCategories.some(e => assignmentIds.has(e.name));
+  const realEntries = courseCategories.filter(e => !e.name.startsWith('__'));
+  const isPerAssignment = realEntries.length > 0 && realEntries.some(e => assignmentIds.has(e.name));
 
-  // Default weights: proportional to points
-  const totalPoints = assignments.reduce((s, a) => s + (a.points || 0), 0);
-
-  let html = '';
-  let currentCategory = null;
-
-  assignments.forEach(assignment => {
-    if ((assignment.category || '') !== currentCategory) {
-      if (currentCategory !== null) html += '</div>';
-      currentCategory = assignment.category || '';
-      const label = currentCategory
-        ? currentCategory.charAt(0).toUpperCase() + currentCategory.slice(1)
-        : 'Uncategorized';
-      html += `<div style="margin-bottom:12px;"><div style="font-size:11px;text-transform:uppercase;color:var(--text-secondary);font-weight:600;margin-bottom:6px;">${escapeHtml(label)}</div>`;
-    }
-
-    const existing = isPerAssignment ? courseCategories.find(c => c.name === assignment.id) : null;
-    const defaultWeight = totalPoints > 0
-      ? ((assignment.points || 0) / totalPoints * 100)
-      : (100 / assignments.length);
-    const weight = existing ? (existing.weight * 100) : defaultWeight;
-
-    html += `
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-        <span style="flex:1; font-size:13px;">${escapeHtml(assignment.title)}</span>
-        <span style="font-size:12px; color:var(--text-secondary);">(${assignment.points ?? 0} pts)</span>
-        <input type="number" class="form-input category-weight" data-assignment-id="${assignment.id}"
-               value="${weight.toFixed(1)}" min="0" max="100" step="0.1" style="width:80px;">
-        <span style="font-size:12px; color:var(--text-secondary);">%</span>
-      </div>
-    `;
-  });
-
-  if (currentCategory !== null) html += '</div>';
-
+  // Build mode toggle + content
+  const mode = isPerAssignment ? 'assignment' : 'category';
+  let html = `
+    <div style="display:flex; gap:8px; margin-bottom:16px;">
+      <button class="btn ${mode === 'category' ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="renderWeightMode('category')">By Category</button>
+      <button class="btn ${mode === 'assignment' ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="renderWeightMode('assignment')">By Assignment</button>
+    </div>
+    <div id="weightModeContent"></div>
+  `;
   setHTML('categoryWeightsList', html);
+
+  // Store mode for save function
+  window._weightMode = mode;
+  renderWeightModeContent(mode, assignments, courseCategories, assignmentIds);
+
+  updateTotalWeight();
+  openModal('categoryWeightsModal');
+}
+
+function renderWeightMode(mode) {
+  window._weightMode = mode;
+  // Update toggle button styles
+  const btns = document.querySelectorAll('#categoryWeightsList > div:first-child button');
+  btns.forEach(btn => {
+    btn.className = btn.textContent.includes(mode === 'category' ? 'Category' : 'Assignment')
+      ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+  });
+  const courseCategories = (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId);
+  const assignments = appData.assignments
+    .filter(a => a.courseId === activeCourseId)
+    .sort((a, b) => {
+      const ca = a.category || '', cb = b.category || '';
+      if (ca < cb) return -1;
+      if (ca > cb) return 1;
+      return (a.title || '').localeCompare(b.title || '');
+    });
+  const assignmentIds = new Set(assignments.map(a => a.id));
+  renderWeightModeContent(mode, assignments, courseCategories, assignmentIds);
+  updateTotalWeight();
+}
+window.renderWeightMode = renderWeightMode;
+
+function renderWeightModeContent(mode, assignments, courseCategories, assignmentIds) {
+  const container = document.getElementById('weightModeContent');
+  if (!container) return;
+
+  const realEntries = courseCategories.filter(e => !e.name.startsWith('__'));
+  const dropEntries = courseCategories.filter(e => e.name.startsWith('__drop:'));
+
+  if (mode === 'category') {
+    // Group assignments by category
+    const catMap = {};
+    assignments.forEach(a => {
+      const cat = a.category || 'uncategorized';
+      if (!catMap[cat]) catMap[cat] = { assignments: [], totalPoints: 0 };
+      catMap[cat].assignments.push(a);
+      catMap[cat].totalPoints += (a.points || 0);
+    });
+
+    const catNames = Object.keys(catMap);
+    const isExistingPerCategory = realEntries.length > 0 && !realEntries.some(e => assignmentIds.has(e.name));
+    const defaultWeight = 100 / catNames.length;
+
+    let html = '';
+    catNames.forEach(cat => {
+      const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+      const existing = isExistingPerCategory ? realEntries.find(c => c.name === cat) : null;
+      const weight = existing ? (existing.weight * 100) : defaultWeight;
+      const dropEntry = dropEntries.find(d => d.name === '__drop:' + cat);
+      const dropCount = dropEntry ? Math.round(dropEntry.weight * 10000) : 0;
+      const assignCount = catMap[cat].assignments.length;
+      const extraCreditCount = catMap[cat].assignments.filter(a => a.isExtraCredit).length;
+
+      html += `
+        <div style="padding:12px; background:var(--bg-color); border-radius:var(--radius); margin-bottom:8px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <span style="flex:1; font-weight:600; font-size:14px;">${escapeHtml(label)}</span>
+            <span style="font-size:12px; color:var(--text-secondary);">${assignCount} assignment${assignCount !== 1 ? 's' : ''}${extraCreditCount ? ` (${extraCreditCount} extra credit)` : ''}</span>
+            <input type="number" class="form-input category-weight" data-category="${escapeHtml(cat)}"
+                   value="${weight.toFixed(1)}" min="0" max="100" step="0.1" style="width:80px;">
+            <span style="font-size:12px; color:var(--text-secondary);">%</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; color:var(--text-secondary);">Drop lowest</span>
+            <input type="number" class="form-input drop-lowest" data-category="${escapeHtml(cat)}"
+                   value="${dropCount}" min="0" max="${Math.max(assignCount - 1, 0)}" step="1" style="width:60px;">
+            <span style="font-size:11px; color:var(--text-muted);">of ${assignCount}</span>
+          </div>
+        </div>
+      `;
+    });
+    container.innerHTML = html;
+
+  } else {
+    // Per-assignment mode (original)
+    const totalPoints = assignments.reduce((s, a) => s + (a.points || 0), 0);
+    const isExistingPerAssignment = realEntries.some(e => assignmentIds.has(e.name));
+    let html = '';
+    let currentCategory = null;
+
+    assignments.forEach(assignment => {
+      if ((assignment.category || '') !== currentCategory) {
+        if (currentCategory !== null) html += '</div>';
+        currentCategory = assignment.category || '';
+        const label = currentCategory
+          ? currentCategory.charAt(0).toUpperCase() + currentCategory.slice(1)
+          : 'Uncategorized';
+        html += `<div style="margin-bottom:12px;"><div style="font-size:11px;text-transform:uppercase;color:var(--text-secondary);font-weight:600;margin-bottom:6px;">${escapeHtml(label)}</div>`;
+      }
+
+      const existing = isExistingPerAssignment ? realEntries.find(c => c.name === assignment.id) : null;
+      const defaultWeight = totalPoints > 0
+        ? ((assignment.points || 0) / totalPoints * 100)
+        : (100 / assignments.length);
+      const weight = existing ? (existing.weight * 100) : defaultWeight;
+
+      html += `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="flex:1; font-size:13px;">${escapeHtml(assignment.title)}${assignment.isExtraCredit ? ' <span style="font-size:0.7rem; background:var(--warning); color:#fff; padding:1px 6px; border-radius:4px;">Extra Credit</span>' : ''}</span>
+          <span style="font-size:12px; color:var(--text-secondary);">(${assignment.points ?? 0} pts)</span>
+          <input type="number" class="form-input category-weight" data-assignment-id="${assignment.id}"
+                 value="${weight.toFixed(1)}" min="0" max="100" step="0.1" style="width:80px;">
+          <span style="font-size:12px; color:var(--text-secondary);">%</span>
+        </div>
+      `;
+    });
+
+    if (currentCategory !== null) html += '</div>';
+    container.innerHTML = html;
+  }
 
   document.querySelectorAll('.category-weight').forEach(input => {
     input.addEventListener('input', updateTotalWeight);
   });
-
-  updateTotalWeight();
-  openModal('categoryWeightsModal');
 }
 
 function updateTotalWeight() {
@@ -8670,18 +9097,57 @@ function updateTotalWeight() {
 async function saveCategoryWeights() {
   const inputs = document.querySelectorAll('.category-weight');
   let total = 0;
+  const mode = window._weightMode || 'assignment';
 
   const weights = [];
-  inputs.forEach(input => {
-    const weight = parseFloat(input.value) || 0;
-    total += weight;
-    weights.push({
-      id: generateId(),
-      courseId: activeCourseId,
-      name: input.dataset.assignmentId,
-      weight: weight / 100
+
+  if (mode === 'category') {
+    inputs.forEach(input => {
+      const weight = parseFloat(input.value) || 0;
+      total += weight;
+      weights.push({
+        id: generateId(),
+        courseId: activeCourseId,
+        name: input.dataset.category,
+        weight: weight / 100
+      });
     });
-  });
+
+    // Also save drop-lowest entries
+    const dropInputs = document.querySelectorAll('.drop-lowest');
+    dropInputs.forEach(input => {
+      const dropCount = parseInt(input.value) || 0;
+      if (dropCount > 0) {
+        weights.push({
+          id: generateId(),
+          courseId: activeCourseId,
+          name: '__drop:' + input.dataset.category,
+          weight: dropCount / 10000 // Encode count in weight field
+        });
+      }
+    });
+
+    // Also preserve __xc: entries (extra credit flags)
+    const existingXc = (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId && c.name.startsWith('__xc:'));
+    existingXc.forEach(xc => weights.push({ ...xc }));
+
+  } else {
+    // Per-assignment mode
+    inputs.forEach(input => {
+      const weight = parseFloat(input.value) || 0;
+      total += weight;
+      weights.push({
+        id: generateId(),
+        courseId: activeCourseId,
+        name: input.dataset.assignmentId,
+        weight: weight / 100
+      });
+    });
+
+    // Preserve __xc: and __drop: entries
+    const existingMeta = (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId && c.name.startsWith('__'));
+    existingMeta.forEach(m => weights.push({ ...m }));
+  }
 
   if (Math.abs(total - 100) > 0.1) {
     showToast('Weights must add up to 100%', 'error');
@@ -8719,6 +9185,9 @@ async function saveCategoryWeights() {
   appData.gradeCategories = appData.gradeCategories.filter(c => c.courseId !== activeCourseId);
   appData.gradeCategories.push(...persistedWeights);
 
+  // 4) Sync extra credit flags from __xc: entries to local assignment state
+  syncExtraCreditFromCategories();
+
   closeModal('categoryWeightsModal');
   renderGradebook();
   showToast('Assignment weights saved', 'success');
@@ -8727,8 +9196,21 @@ async function saveCategoryWeights() {
 function calculateWeightedGrade(userId, courseId) {
   if (!appData.gradeCategories) return null;
 
-  const weightEntries = appData.gradeCategories.filter(c => c.courseId === courseId);
+  const allEntries = appData.gradeCategories.filter(c => c.courseId === courseId);
+  const weightEntries = allEntries.filter(e => !e.name.startsWith('__'));
   if (weightEntries.length === 0) return null;
+
+  // Parse __drop: entries for drop-lowest counts
+  const dropMap = {};
+  allEntries.filter(e => e.name.startsWith('__drop:')).forEach(e => {
+    dropMap[e.name.slice(7)] = Math.round(e.weight * 10000);
+  });
+
+  // Parse __xc: entries for extra credit assignment IDs
+  const xcSet = new Set();
+  allEntries.filter(e => e.name.startsWith('__xc:')).forEach(e => {
+    xcSet.add(e.name.slice(5));
+  });
 
   const assignments = appData.assignments.filter(a => a.courseId === courseId);
 
@@ -8743,41 +9225,68 @@ function calculateWeightedGrade(userId, courseId) {
     weightEntries.forEach(we => {
       const assignment = assignments.find(a => a.id === we.name);
       if (!assignment) return;
+      const isXC = assignment.isExtraCredit || xcSet.has(assignment.id);
       const submission = appData.submissions.find(s => s.assignmentId === assignment.id && s.userId === userId);
       const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
       if (grade && grade.released && !grade.excused) {
         const gt = assignment.gradingType || 'points';
         if (gt === 'complete_incomplete') {
-          // complete/incomplete: 100% or 0% regardless of points value (may be 0)
           weightedSum += (grade.score > 0 ? 100 : 0) * we.weight;
-          totalWeight += we.weight;
+          if (!isXC) totalWeight += we.weight;
         } else if (assignment.points > 0) {
           weightedSum += (grade.score / assignment.points) * 100 * we.weight;
-          totalWeight += we.weight;
+          if (!isXC) totalWeight += we.weight;
         }
+      } else if (!isXC) {
+        // Non-extra-credit assignments without grades still count toward total weight
+        // (only if graded — skip ungraded so partial grade works)
       }
     });
   } else {
-    // Legacy per-category weights
+    // Per-category weights with drop-lowest support
     const categoryScores = {};
     weightEntries.forEach(cw => {
       const catAssignments = assignments.filter(a => a.category === cw.name);
-      let totalScore = 0, totalPoints = 0;
+      const dropCount = dropMap[cw.name] || 0;
+
+      // Collect individual scores for drop-lowest
+      const gradeEntries = [];
+      let extraCreditScore = 0, extraCreditPoints = 0;
+
       catAssignments.forEach(a => {
+        const isXC = a.isExtraCredit || xcSet.has(a.id);
         const sub = appData.submissions.find(s => s.assignmentId === a.id && s.userId === userId);
         const grade = sub ? appData.grades.find(g => g.submissionId === sub.id) : null;
         if (grade && grade.released && !grade.excused) {
           const gt = a.gradingType || 'points';
+          let score = 0, maxPts = 0;
           if (gt === 'complete_incomplete') {
-            // Treat as 1-point binary so it contributes to the category average
-            totalScore += grade.score > 0 ? 1 : 0;
-            totalPoints += 1;
+            score = grade.score > 0 ? 1 : 0;
+            maxPts = 1;
           } else if (a.points > 0) {
-            totalScore += grade.score;
-            totalPoints += a.points;
+            score = grade.score;
+            maxPts = a.points;
+          }
+          if (isXC) {
+            // Extra credit: add to numerator only, never dropped
+            extraCreditScore += score;
+            extraCreditPoints += maxPts; // only used for percentage calc
+          } else {
+            gradeEntries.push({ score, maxPts, pct: maxPts > 0 ? score / maxPts : 0 });
           }
         }
       });
+
+      // Drop N lowest (by percentage) from non-extra-credit entries
+      if (dropCount > 0 && gradeEntries.length > dropCount) {
+        gradeEntries.sort((a, b) => a.pct - b.pct);
+        gradeEntries.splice(0, dropCount);
+      }
+
+      let totalScore = gradeEntries.reduce((s, e) => s + e.score, 0) + extraCreditScore;
+      let totalPoints = gradeEntries.reduce((s, e) => s + e.maxPts, 0);
+      // Extra credit adds to score but NOT to denominator
+
       if (totalPoints > 0) categoryScores[cw.name] = { percentage: (totalScore / totalPoints) * 100, weight: cw.weight };
     });
     Object.values(categoryScores).forEach(cs => { weightedSum += cs.percentage * cs.weight; totalWeight += cs.weight; });
@@ -8785,6 +9294,16 @@ function calculateWeightedGrade(userId, courseId) {
 
   return totalWeight > 0 ? weightedSum / totalWeight : null;
 }
+
+// Sync extra credit flags from __xc: grade_categories entries to local assignment state
+function syncExtraCreditFromCategories() {
+  const xcEntries = (appData.gradeCategories || []).filter(e => e.name.startsWith('__xc:'));
+  const xcIds = new Set(xcEntries.map(e => e.name.slice(5)));
+  (appData.assignments || []).forEach(a => {
+    if (xcIds.has(a.id)) a.isExtraCredit = true;
+  });
+}
+window.syncExtraCreditFromCategories = syncExtraCreditFromCategories;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BULK OPERATIONS & ADVANCED FEATURES
