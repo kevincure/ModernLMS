@@ -873,11 +873,6 @@ async function createCourse() {
 
   setSubmitLoading('createCourseSubmitBtn', true);
 
-  // Generate a random invite code (8-char alphanumeric)
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let inviteCode = '';
-  for (let i = 0; i < 8; i++) inviteCode += chars[Math.floor(Math.random() * chars.length)];
-
   // Insert the course
   const { data: course, error: courseErr } = await admin.sb
     .from('courses')
@@ -885,7 +880,6 @@ async function createCourse() {
       name,
       code:        code || null,
       description: description || null,
-      invite_code: inviteCode,
       org_id:      admin.org.id,
       created_by:  instructorId,
       active:      true,

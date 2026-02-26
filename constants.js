@@ -354,8 +354,8 @@ export const SAMPLE_DATA = {
     { id: 'u5', name: 'Aisha Patel', email: 'apatel@student.edu', role: ROLES.STUDENT, avatar: 'AP' }
   ],
   courses: [
-    { id: 'c1', name: 'ECON 101 - Introduction to Economics', code: 'ECON101', inviteCode: 'ECON2025', createdBy: 'u1', description: 'An introduction to microeconomic and macroeconomic principles', startHereTitle: 'Start Here', startHereContent: 'Welcome to **ECON 101**! Begin by reviewing the syllabus and completing Quiz 1 before next week.' },
-    { id: 'c2', name: 'ECON 301 - Advanced Microeconomics', code: 'ECON301', inviteCode: 'MICRO25', createdBy: 'u1', description: 'Advanced topics in microeconomic theory and applications', startHereTitle: 'Start Here', startHereContent: 'Read the course overview, then jump into the first problem set.' }
+    { id: 'c1', name: 'ECON 101 - Introduction to Economics', code: 'ECON101', createdBy: 'u1', description: 'An introduction to microeconomic and macroeconomic principles', startHereTitle: 'Start Here', startHereContent: 'Welcome to **ECON 101**! Begin by reviewing the syllabus and completing Quiz 1 before next week.' },
+    { id: 'c2', name: 'ECON 301 - Advanced Microeconomics', code: 'ECON301', createdBy: 'u1', description: 'Advanced topics in microeconomic theory and applications', startHereTitle: 'Start Here', startHereContent: 'Read the course overview, then jump into the first problem set.' }
   ],
   enrollments: [
     { userId: 'u1', courseId: 'c1', role: ROLES.INSTRUCTOR },
