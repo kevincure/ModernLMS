@@ -1040,25 +1040,6 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                   <div class="hint">Blank = all questions; number = random subset</div>
                 </div>
               </div>
-              <div id="quizDifficultyMixSection" style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-light);">
-                <div style="font-weight:600; font-size:0.9rem; margin-bottom:8px;">Difficulty Mix (optional)</div>
-                <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">When using a random subset, specify how many of each difficulty level to include. Leave blank to ignore difficulty.</div>
-                <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                  <div style="display:flex; align-items:center; gap:4px;">
-                    <span style="font-size:0.8rem; color:var(--success); font-weight:600;">Easy:</span>
-                    <input type="number" class="form-input" id="newAssignmentDiffEasy" min="0" placeholder="—" style="width:60px;">
-                  </div>
-                  <div style="display:flex; align-items:center; gap:4px;">
-                    <span style="font-size:0.8rem; color:var(--warning); font-weight:600;">Medium:</span>
-                    <input type="number" class="form-input" id="newAssignmentDiffMedium" min="0" placeholder="—" style="width:60px;">
-                  </div>
-                  <div style="display:flex; align-items:center; gap:4px;">
-                    <span style="font-size:0.8rem; color:var(--danger); font-weight:600;">Hard:</span>
-                    <input type="number" class="form-input" id="newAssignmentDiffHard" min="0" placeholder="—" style="width:60px;">
-                  </div>
-                </div>
-                <div id="difficultyAvailCounts" class="hint" style="margin-top:4px;"></div>
-              </div>
               <div style="margin-top:12px; padding:12px; background:var(--bg-color); border-radius:var(--radius); border:1px solid var(--border-light);">
                 <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
                   <input type="checkbox" id="newAssignmentProctorMode" onchange="document.getElementById('proctorOptionsRow').style.display = this.checked ? 'block' : 'none'">
