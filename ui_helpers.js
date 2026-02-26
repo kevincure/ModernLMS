@@ -327,8 +327,9 @@ export function renderMarkdown(text) {
         return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
       } catch { return match; }
     });
-    // Inline math: $ ... $ (but not $$ and not currency like $5)
-    html = html.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, tex) => {
+    // Inline math: $ ... $ (but not $$ and not currency like $27)
+    // Requires: opening $ not followed by digit or space; closing $ not preceded by space
+    html = html.replace(/(?<!\$)\$(?!\$)(?!\d)(?! )([^\$\n]+?)(?<! )\$(?!\$)/g, (match, tex) => {
       try {
         return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
       } catch { return match; }

@@ -1365,8 +1365,11 @@ function openLinkedFile(fileId) {
 
 function navigateTo(page) {
   if (unsavedChanges) {
-    if (!window.confirm('You have unsaved changes. Leave this page?')) return;
-    clearUnsaved();
+    showConfirmDialog('You have unsaved changes. Leave this page?', () => {
+      clearUnsaved();
+      navigateTo(page);
+    });
+    return;
   }
   document.querySelectorAll('.tool-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.page === page);
@@ -6064,6 +6067,8 @@ function renderSpeedGrader() {
   }
   document.getElementById('speedGraderFeedback').value = grade ? (grade.feedback || '') : '';
   document.getElementById('speedGraderRelease').checked = grade ? !!grade.released : false;
+  document.getElementById('speedGraderExcused').checked = grade ? !!grade.excused : false;
+  document.getElementById('speedGraderScoreSection').style.opacity = grade?.excused ? '0.4' : '1';
   document.getElementById('speedGraderSaveBtn').disabled = !submission;
 }
 
@@ -6138,11 +6143,14 @@ async function saveSpeedGraderGrade() {
 
   const feedback = document.getElementById('speedGraderFeedback').value.trim();
   const release = document.getElementById('speedGraderRelease').checked;
+  const excused = document.getElementById('speedGraderExcused')?.checked || false;
   const assignment = appData.assignments.find(a => a.id === currentSpeedGraderAssignmentId);
   const gt = assignment.gradingType || 'points';
   const rawScore = document.getElementById('speedGraderScore').value;
   let score;
-  if (gt === 'letter_grade') {
+  if (excused) {
+    score = 0;
+  } else if (gt === 'letter_grade') {
     score = rawScore;
     if (!score) { showToast('Please select a letter grade', 'error'); return; }
   } else if (gt === 'complete_incomplete') {
@@ -6155,8 +6163,9 @@ async function saveSpeedGraderGrade() {
 
   // Apply late deduction if applicable (points-based only)
   let finalScore = score;
-  if (gt === 'points') {
-    const lateDeduction = calculateLateDeduction(assignment, current.submission.submittedAt);
+  let lateDeduction = 0;
+  if (gt === 'points' && !excused) {
+    lateDeduction = calculateLateDeduction(assignment, current.submission.submittedAt);
     if (lateDeduction > 0) {
       finalScore = Math.round(score * (1 - lateDeduction / 100) * 10) / 10;
     }
@@ -6178,6 +6187,7 @@ async function saveSpeedGraderGrade() {
     score: finalScore,
     feedback: feedback,
     released: release,
+    excused: excused,
     gradedBy: appData.currentUser.id,
     gradedAt: new Date().toISOString()
   };
@@ -6283,15 +6293,20 @@ function updateFileUploadPreview() {
 let gradebookSearch = '';
 let gbStudentSort = 'az';   // 'az' | 'za'
 let gbColSort = null;       // { id: assignmentId, dir: 'az'|'za' } | null
-let gbFilter = 'all';       // 'all' | 'missing' | 'late' | 'ungraded'
+let gbColFilter = null;      // { id: assignmentId, mode: 'missing'|'late'|'ungraded' } | null
 
 function updateGradebookSearch(value) {
   gradebookSearch = value.toLowerCase();
   renderGradebook();
 }
 
-function updateGradebookFilter(value) {
-  gbFilter = value;
+function gbFilterColumn(id, mode) {
+  // Toggle off if already active
+  if (gbColFilter && gbColFilter.id === id && gbColFilter.mode === mode) {
+    gbColFilter = null;
+  } else {
+    gbColFilter = { id, mode };
+  }
   renderGradebook();
 }
 
@@ -6506,16 +6521,11 @@ function renderStaffGradebook() {
 
   const gradeSettings = (appData.gradeSettings || []).find(gs => gs.courseId === activeCourseId);
 
-  // Actions with search and filter
+  // Actions with search
   setHTML('gradebookActions', `
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <input type="text" class="form-input" id="gradebookSearchInput" placeholder="Search students..." value="${escapeHtml(gradebookSearch)}" oninput="updateGradebookSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      <select class="form-select" onchange="updateGradebookFilter(this.value)" style="width:150px;">
-        <option value="all" ${gbFilter === 'all' ? 'selected' : ''}>All students</option>
-        <option value="missing" ${gbFilter === 'missing' ? 'selected' : ''}>Missing work</option>
-        <option value="late" ${gbFilter === 'late' ? 'selected' : ''}>Late submissions</option>
-        <option value="ungraded" ${gbFilter === 'ungraded' ? 'selected' : ''}>Ungraded</option>
-      </select>
+      ${gbColFilter ? `<button class="btn btn-secondary btn-sm" onclick="gbFilterColumn(null)" style="font-size:0.8rem;">Clear filter: ${gbColFilter.mode} ✕</button>` : ''}
       <button class="btn btn-secondary" onclick="openCategoryWeightsModal()">Category Weights ${hasWeights ? '✓' : ''}</button>
       <button class="btn btn-secondary" onclick="openGradeSettingsModal()">Grade Settings ${gradeSettings ? '✓' : ''}</button>
       <button class="btn btn-secondary" onclick="exportGradebook()">Export CSV</button>
@@ -6585,19 +6595,20 @@ function renderStaffGradebook() {
     );
   }
 
-  // Filter by missing/late/ungraded
-  if (gbFilter !== 'all') {
-    students = students.filter(s => {
-      if (s.isPendingInvite) return false;
-      return assignments.some(a => {
-        const submission = appData.submissions.find(sub => sub.assignmentId === a.id && sub.userId === s.id);
+  // Column-level filter: only show students matching the filter for a specific assignment
+  if (gbColFilter) {
+    const filterAssignment = assignments.find(a => a.id === gbColFilter.id);
+    if (filterAssignment) {
+      students = students.filter(s => {
+        if (s.isPendingInvite) return false;
+        const submission = appData.submissions.find(sub => sub.assignmentId === gbColFilter.id && sub.userId === s.id);
         const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-        if (gbFilter === 'missing') return !submission && a.dueDate && new Date(a.dueDate) < new Date();
-        if (gbFilter === 'late') return submission && a.dueDate && new Date(submission.submittedAt) > new Date(a.dueDate);
-        if (gbFilter === 'ungraded') return submission && !grade;
+        if (gbColFilter.mode === 'missing') return !submission && filterAssignment.dueDate && new Date(filterAssignment.dueDate) < new Date();
+        if (gbColFilter.mode === 'late') return submission && filterAssignment.dueDate && new Date(submission.submittedAt) > new Date(filterAssignment.dueDate);
+        if (gbColFilter.mode === 'ungraded') return submission && !grade;
         return true;
       });
-    });
+    }
   }
 
   if (assignments.length === 0) {
@@ -6637,7 +6648,9 @@ function renderStaffGradebook() {
                 : (anyReleased ? `<button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkHideGrades('${a.id}')">Hide Grades</button>` : '');
               const isActiveSortCol = gbColSort && gbColSort.id === a.id;
               const sortIndicator = isActiveSortCol ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : '';
-              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}${hiddenBadge ? '<br>' + hiddenBadge : ''}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkSetZero('${a.id}')">Set Missing to 0</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkExcuseAll('${a.id}')">Excuse All Missing</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button></div></th>`;
+              const isActiveFilter = gbColFilter && gbColFilter.id === a.id;
+              const filterBadge = isActiveFilter ? ` <span style="font-size:0.65rem; background:var(--warning); color:#fff; padding:1px 5px; border-radius:4px;">${gbColFilter.mode}</span>` : '';
+              return `<th style="padding:12px; text-align:center; min-width:140px; position:sticky; top:0; background:var(--bg-color); z-index:5;">${escapeHtml(a.title)}${a.blindGrading ? ' [blind]' : ''}${sortIndicator}${filterBadge}${hiddenBadge ? '<br>' + hiddenBadge : ''}<button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 10px; margin-top:4px; letter-spacing:0.05em;" data-menu-btn onclick="toggleMenu(event, '${colMenuId}')">⋯</button><div id="${colMenuId}" class="floating-menu"><button class="btn btn-secondary btn-sm" onclick="closeMenu(); openSpeedGrader('${a.id}')">Grade</button>${releaseHideBtn}<button class="btn btn-secondary btn-sm" onclick="closeMenu(); viewSubmissions('${a.id}')">Analytics</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkSetZero('${a.id}')">Set Missing to 0</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); bulkExcuseAll('${a.id}')">Excuse All Missing</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'az')">Sort A→Z ↑</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbSortColumn('${a.id}', 'za')">Sort Z→A ↓</button><div style="height:1px; background:var(--border-light); margin:4px 0;"></div><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'missing')">Filter: Missing</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'late')">Filter: Late</button><button class="btn btn-secondary btn-sm" onclick="closeMenu(); gbFilterColumn('${a.id}', 'ungraded')">Filter: Ungraded</button></div></th>`;
             }).join('')}
             <th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">%${gbColSort && gbColSort.id === '__grade__' ? (gbColSort.dir === 'az' ? ' ↑' : ' ↓') : ''}<div style="display:flex; gap:4px; margin-top:4px; justify-content:center;"><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'az')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'az' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">Low→High</button><button class="btn btn-secondary btn-sm" onclick="gbSortColumn('__grade__', 'za')" style="font-size:0.7rem; padding:2px 7px;${gbColSort && gbColSort.id === '__grade__' && gbColSort.dir === 'za' ? ' background:var(--primary); color:white; border-color:var(--primary);' : ''}">High→Low</button></div></th>
             ${gradeSettings ? '<th style="padding:12px; text-align:center; position:sticky; top:0; background:var(--bg-color); z-index:5;">Grade</th>' : ''}
@@ -7035,11 +7048,15 @@ function openManualGradeModal(studentId, assignmentId) {
 async function saveManualGrade() {
   const feedback = document.getElementById('manualGradeFeedback').value.trim();
   const released = document.getElementById('manualGradeReleased').checked;
+  const excusedChecked = document.getElementById('manualGradeExcused')?.checked || false;
   const assignment = appData.assignments.find(a => a.id === manualGradeAssignmentId);
   const gt = assignment.gradingType || 'points';
 
   let score;
-  if (gt === 'complete_incomplete') {
+  if (excusedChecked) {
+    // Excused — no score validation needed
+    score = 0;
+  } else if (gt === 'complete_incomplete') {
     score = parseInt(document.getElementById('manualGradeScore').value);
   } else if (gt === 'letter_grade') {
     score = document.getElementById('manualGradeScore').value;
@@ -7075,14 +7092,12 @@ async function saveManualGrade() {
     appData.submissions.push(submission);
   }
 
-  const excused = document.getElementById('manualGradeExcused')?.checked || false;
-
   const gradePayload = {
     submissionId: submission.id,
-    score: excused ? 0 : score,
+    score: score,
     feedback: feedback,
     released: released,
-    excused: excused,
+    excused: excusedChecked,
     gradedBy: appData.currentUser.id,
     gradedAt: new Date().toISOString()
   };
@@ -7218,7 +7233,7 @@ function renderPeopleList() {
   };
 
   // Helper function to render a single person row
-  const renderPersonRow = (p, idx, total, isInvite = false) => {
+  const renderPersonRow = (p, idx, total, isInvite = false, role = 'student') => {
     if (isInvite) {
       return `
         <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; background:var(--warning-light); ${idx < total - 1 ? 'border-bottom:1px solid var(--warning);' : ''}">
@@ -7230,8 +7245,10 @@ function renderPeopleList() {
         </div>
       `;
     } else {
+      const isStudent = role === 'student';
+      const clickable = isStudent ? ` cursor:pointer;" onclick="openPersonDetailModal('${p.id}')` : `"`;
       return `
-        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''} cursor:pointer;" onclick="openPersonDetailModal('${p.id}')">
+        <div style="display:flex; align-items:center; padding:12px 16px; gap:12px; ${idx < total - 1 ? 'border-bottom:1px solid var(--border-light);' : ''}${clickable}>
           <div style="flex:1; min-width:0;">
             <div style="font-weight:500; font-size:0.95rem;">${escapeHtml(p.name)}</div>
             <div class="muted" style="font-size:0.8rem;">${escapeHtml(p.email)}</div>
@@ -7270,7 +7287,7 @@ function renderPeopleList() {
           ${sortBtn}
         </h3>
         <div style="background:white; border:1px solid var(--border-light); border-radius:var(--radius); overflow:hidden;">
-          ${allItems.map((item, idx) => renderPersonRow(item, idx, allItems.length, item.isInvite)).join('')}
+          ${allItems.map((item, idx) => renderPersonRow(item, idx, allItems.length, item.isInvite, role)).join('')}
         </div>
       </div>
     `;
@@ -9231,12 +9248,20 @@ function updateDiscussionSearch(value) {
 
 function renderDiscussionList(isStaffUser, course) {
   setText('discussionSubtitle', course.name);
-  setHTML('discussionActions', `
-    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <input type="text" class="form-input" id="discussionSearchInput" placeholder="Search discussions..." value="${escapeHtml(discussionSearch)}" oninput="updateDiscussionSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      ${isStaffUser ? `<button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">New Thread</button>` : `<button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">Start Discussion</button>`}
-    </div>
-  `);
+
+  const searchInput = document.getElementById('discussionSearchInput');
+  const discussionActions = document.getElementById('discussionActions');
+  const discussionActionsSignature = `${isStaffUser}`;
+  if (!searchInput || discussionActions?.dataset.signature !== discussionActionsSignature) {
+    setHTML('discussionActions', `
+      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <input type="text" class="form-input" id="discussionSearchInput" placeholder="Search discussions..." value="${escapeHtml(discussionSearch)}" oninput="updateDiscussionSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        ${isStaffUser ? `<button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">New Thread</button>` : `<button class="btn btn-primary" onclick="openCreateDiscussionThreadModal()">Start Discussion</button>`}
+      </div>
+    `);
+    const refreshedActions = document.getElementById('discussionActions');
+    if (refreshedActions) refreshedActions.dataset.signature = discussionActionsSignature;
+  }
 
   let threads = (appData.discussionThreads || [])
     .filter(t => t.courseId === activeCourseId && (!t.hidden || isStaffUser))
@@ -10016,7 +10041,7 @@ window.toggleStudentView = toggleStudentView;
 // Search and sort
 window.updateModulesSearch = updateModulesSearch;
 window.updateGradebookSearch = updateGradebookSearch;
-window.updateGradebookFilter = updateGradebookFilter;
+window.gbFilterColumn = gbFilterColumn;
 window.updatePeopleSearch = updatePeopleSearch;
 window.updateAssignmentsSearch = updateAssignmentsSearch;
 window.updateAnnouncementsSearch = updateAnnouncementsSearch;
