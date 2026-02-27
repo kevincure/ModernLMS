@@ -709,19 +709,23 @@ function renderEnrollmentsSection() {
   if (admin.filters.enrollmentsSort === 'course_desc') grouped.sort((a, b) => (b.course?.name || '').localeCompare(a.course?.name || ''));
   if (admin.filters.enrollmentsSort === 'newest') grouped.sort((a, b) => new Date(b.entries[0]?.enrolled_at || 0) - new Date(a.entries[0]?.enrolled_at || 0));
 
-  const blocks = grouped.map(({ course, entries }) => {
-    const rows = entries.map(e => {
+  // Flatten sorted groups back into a single row list (preserving course/entry sort order)
+  const allRows = grouped.flatMap(({ course, entries }) =>
+    entries.map(e => {
+      const courseName = course?.name || 'Unknown Course';
+      const courseCode = course?.code ? ` <span class="muted" style="font-size:0.8rem;">(${escHtml(course.code)})</span>` : '';
       if (e._pending) {
         return `
       <tr style="opacity:0.75;">
-        <td style="font-weight:500;">—</td>
+        <td class="muted" style="font-size:0.85rem;">—</td>
         <td>${escHtml(e.profile.email)}</td>
+        <td>${escHtml(courseName)}${courseCode}</td>
         <td><span class="role-badge role-enroll-${escHtml(e.role)}">${escHtml(e.role)}</span></td>
         <td><span class="muted" style="font-style:italic;">Pending invite</span></td>
         <td style="text-align:right;">
           <button class="btn btn-secondary"
             style="padding:4px 10px; font-size:0.8rem; color:var(--danger);"
-            onclick="cancelCourseInvite(${escHtml(JSON.stringify(e.id))}, ${escHtml(JSON.stringify(e.profile.email))}, ${escHtml(JSON.stringify(course?.name || ''))})">
+            onclick="cancelCourseInvite(${escHtml(JSON.stringify(e.id))}, ${escHtml(JSON.stringify(e.profile.email))}, ${escHtml(JSON.stringify(courseName))})">
             Cancel
           </button>
         </td>
@@ -731,34 +735,27 @@ function renderEnrollmentsSection() {
       <tr>
         <td style="font-weight:500;">${escHtml(e.profile.name || '—')}</td>
         <td>${escHtml(e.profile.email)}</td>
+        <td>${escHtml(courseName)}${courseCode}</td>
         <td><span class="role-badge role-enroll-${escHtml(e.role)}">${escHtml(e.role)}</span></td>
         <td>${formatDate(e.enrolled_at)}</td>
         <td style="text-align:right;">
           <button class="btn btn-secondary"
             style="padding:4px 10px; font-size:0.8rem; color:var(--danger);"
-            onclick="removeEnrollment(${escHtml(JSON.stringify(e.id))}, ${escHtml(JSON.stringify(e.profile.email))}, ${escHtml(JSON.stringify(course?.name || ''))})">
+            onclick="removeEnrollment(${escHtml(JSON.stringify(e.id))}, ${escHtml(JSON.stringify(e.profile.email))}, ${escHtml(JSON.stringify(courseName))})">
             Remove
           </button>
         </td>
       </tr>`;
-    }).join('');
+    })
+  ).join('');
 
-    return `
-      <div class="card" style="margin-bottom:20px;">
-        <div class="card-header">
-          <div class="card-title">${escHtml(course?.name || 'Unknown Course')}</div>
-          ${course?.code ? `<span class="muted" style="font-size:0.8rem;">${escHtml(course.code)}</span>` : ''}
-        </div>
-        <div class="admin-table-wrap" style="margin-top:0;">
-          <table class="admin-table">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Enrolled</th><th></th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      </div>`;
-  }).join('');
-
-  wrap.innerHTML = blocks;
+  wrap.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Name</th><th>Email</th><th>Course</th><th>Role</th><th>Enrolled</th><th></th></tr></thead>
+        <tbody>${allRows}</tbody>
+      </table>
+    </div>`;
 }
 
 // ─── Rendering: Audit Log ─────────────────────────────────────────────────────
