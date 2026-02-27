@@ -1378,15 +1378,93 @@ export async function supabaseEnsureProfile(user) {
     console.log('[Supabase] Profile upserted for', user.email);
   }
 
-  // Accept any pending org invites and course invites — creates org_members
-  // and enrollment entries, then deletes the invite rows.  Runs regardless of
-  // whether the upsert above succeeded because the DB trigger may have already
-  // created the profile row that the RPC function needs.
+  // Accept pending invites.  Try the SECURITY DEFINER RPC first (handles
+  // org_members creation and org_invites deletion which need elevated
+  // privileges).  Then run a client-side pass for anything the RPC missed
+  // (e.g. if the RPC migration hasn't been applied yet, or for course-level
+  // invites that the older RPC version didn't handle).
   const { error: rpcErr } = await supabaseClient.rpc('accept_pending_org_invites');
   if (rpcErr) {
-    console.warn('[Supabase] accept_pending_org_invites:', rpcErr.message);
+    console.warn('[Supabase] accept_pending_org_invites RPC:', rpcErr.message);
   }
+  await acceptPendingInvitesClientSide(user);
 }
+
+/**
+ * Client-side fallback for accepting pending invites.
+ *
+ * Handles both org-level (org_invites → org_members) and course-level
+ * (invites → enrollments) acceptance.  Requires RLS policies that allow:
+ *   • SELECT on org_invites for own email
+ *   • INSERT on org_members when a pending org_invite exists
+ *   • DELETE on org_invites for own email
+ *   • SELECT on invites for own email          (existing policy)
+ *   • INSERT on enrollments with pending invite (existing policy)
+ *   • DELETE on invites for own email           (existing policy)
+ *
+ * Safe to call even if the RPC already handled everything — queries will
+ * return no pending rows and the function becomes a no-op.
+ */
+async function acceptPendingInvitesClientSide(user) {
+  if (!supabaseClient || !user?.email) return;
+  const email = user.email.toLowerCase();
+
+  // ── Org-level invites ──────────────────────────────────────────────────────
+  try {
+    const { data: orgInvites } = await supabaseClient
+      .from('org_invites')
+      .select('id, org_id, role, invited_by')
+      .eq('email', email)
+      .eq('status', 'pending');
+
+    for (const inv of (orgInvites || [])) {
+      const { error: memErr } = await supabaseClient.from('org_members').insert({
+        org_id:     inv.org_id,
+        user_id:    user.id,
+        role:       inv.role,
+        created_by: inv.invited_by || user.id
+      });
+      if (memErr) {
+        console.warn('[Supabase] client-side org_members insert:', memErr.message);
+        continue;  // skip delete if insert failed
+      }
+      const { error: delErr } = await supabaseClient
+        .from('org_invites').delete().eq('id', inv.id);
+      if (delErr) {
+        console.warn('[Supabase] client-side org_invites delete:', delErr.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[Supabase] client-side org invite acceptance:', e.message);
+  }
+
+  // ── Course-level invites ───────────────────────────────────────────────────
+  try {
+    const { data: courseInvites } = await supabaseClient
+      .from('invites')
+      .select('id, course_id, role')
+      .eq('email', email)
+      .eq('status', 'pending');
+
+    for (const inv of (courseInvites || [])) {
+      const { error: enrollErr } = await supabaseClient.from('enrollments').insert({
+        user_id:   user.id,
+        course_id: inv.course_id,
+        role:      inv.role || 'student'
+      });
+      if (enrollErr) {
+        console.warn('[Supabase] client-side enrollment insert:', enrollErr.message);
+        continue;
+      }
+      const { error: delErr } = await supabaseClient
+        .from('invites').delete().eq('id', inv.id);
+      if (delErr) {
+        console.warn('[Supabase] client-side invites delete:', delErr.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[Supabase] client-side course invite acceptance:', e.message);
+  }
 
 export async function supabaseLoadUserGeminiKey(userId) {
   if (!supabaseClient) return null;

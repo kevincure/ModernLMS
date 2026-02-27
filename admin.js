@@ -369,24 +369,43 @@ async function loadEnrollments() {
 
   if (error) throw new Error(`[Admin] loadEnrollments: ${error.message}`);
 
-  if (!enrollments || enrollments.length === 0) {
-    admin.enrollments = [];
-    return;
+  // Join user profiles for actual enrollments
+  const enrollList = enrollments || [];
+  let profileMap = {};
+  if (enrollList.length > 0) {
+    const userIds = [...new Set(enrollList.map(e => e.user_id))];
+    const { data: profiles } = await admin.sb
+      .from('profiles')
+      .select('id, email, name')
+      .in('id', userIds);
+    profileMap = Object.fromEntries((profiles || []).map(p => [p.id, p]));
   }
 
-  // Join user profiles
-  const userIds = [...new Set(enrollments.map(e => e.user_id))];
-  const { data: profiles } = await admin.sb
-    .from('profiles')
-    .select('id, email, name')
-    .in('id', userIds);
-  const profileMap = Object.fromEntries((profiles || []).map(p => [p.id, p]));
-
-  admin.enrollments = enrollments.map(e => ({
+  const mapped = enrollList.map(e => ({
     ...e,
     profile: profileMap[e.user_id] || { id: e.user_id, email: '(unknown)', name: '' },
     course:  admin.orgCourses.find(c => c.id === e.course_id) || null
   }));
+
+  // Also load pending course invites so they appear in the Enrollments section
+  const { data: pendingInvites } = await admin.sb
+    .from('invites')
+    .select('id, course_id, email, role, status, created_at')
+    .in('course_id', courseIds)
+    .eq('status', 'pending');
+
+  const inviteMapped = (pendingInvites || []).map(inv => ({
+    id:          inv.id,
+    course_id:   inv.course_id,
+    user_id:     null,
+    role:        inv.role,
+    enrolled_at: inv.created_at,
+    _pending:    true,
+    profile:     { id: null, email: inv.email, name: '' },
+    course:      admin.orgCourses.find(c => c.id === inv.course_id) || null
+  }));
+
+  admin.enrollments = [...mapped, ...inviteMapped];
 }
 
 async function loadAuditLog() {
@@ -691,7 +710,24 @@ function renderEnrollmentsSection() {
   if (admin.filters.enrollmentsSort === 'newest') grouped.sort((a, b) => new Date(b.entries[0]?.enrolled_at || 0) - new Date(a.entries[0]?.enrolled_at || 0));
 
   const blocks = grouped.map(({ course, entries }) => {
-    const rows = entries.map(e => `
+    const rows = entries.map(e => {
+      if (e._pending) {
+        return `
+      <tr style="opacity:0.75;">
+        <td style="font-weight:500;">—</td>
+        <td>${escHtml(e.profile.email)}</td>
+        <td><span class="role-badge role-enroll-${escHtml(e.role)}">${escHtml(e.role)}</span></td>
+        <td><span class="muted" style="font-style:italic;">Pending invite</span></td>
+        <td style="text-align:right;">
+          <button class="btn btn-secondary"
+            style="padding:4px 10px; font-size:0.8rem; color:var(--danger);"
+            onclick="cancelCourseInvite(${escHtml(JSON.stringify(e.id))}, ${escHtml(JSON.stringify(e.profile.email))}, ${escHtml(JSON.stringify(course?.name || ''))})">
+            Cancel
+          </button>
+        </td>
+      </tr>`;
+      }
+      return `
       <tr>
         <td style="font-weight:500;">${escHtml(e.profile.name || '—')}</td>
         <td>${escHtml(e.profile.email)}</td>
@@ -704,7 +740,8 @@ function renderEnrollmentsSection() {
             Remove
           </button>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     return `
       <div class="card" style="margin-bottom:20px;">
@@ -1198,7 +1235,20 @@ async function addEnrollment() {
     await auditLog('add_invite', 'invite', null,
       { course_id: courseId, email, role });
 
+    // Add to local enrollments list so the pending invite appears immediately
+    admin.enrollments.push({
+      id:          `pending-${Date.now()}`,
+      course_id:   courseId,
+      user_id:     null,
+      role,
+      enrolled_at: new Date().toISOString(),
+      _pending:    true,
+      profile:     { id: null, email, name: '' },
+      course
+    });
+
     closeModal('modal-addEnrollment');
+    renderEnrollmentsSection();
     showToast(`Invite sent to ${email} for "${course?.name || courseId}" as ${role}. They will be enrolled on first login.`);
     return;
   }
@@ -1263,6 +1313,30 @@ function removeEnrollment(enrollmentId, email, courseName) {
       showToast(`${email} removed from "${courseName}".`);
     },
     'Remove'
+  );
+}
+
+// ─── CRUD: Cancel Course Invite ───────────────────────────────────────────────
+
+function cancelCourseInvite(inviteId, email, courseName) {
+  openConfirmModal(
+    'Cancel Invite',
+    `Cancel the pending course invite for ${email} in "${courseName}"?`,
+    async () => {
+      const { error } = await admin.sb
+        .from('invites')
+        .delete()
+        .eq('id', inviteId);
+
+      if (error) { showToast(`Error: ${error.message}`, true); return; }
+
+      await auditLog('cancel_course_invite', 'invite', inviteId, { email, course_name: courseName });
+
+      admin.enrollments = admin.enrollments.filter(e => e.id !== inviteId);
+      renderEnrollmentsSection();
+      showToast(`Course invite for ${email} cancelled.`);
+    },
+    'Cancel Invite'
   );
 }
 
@@ -1865,6 +1939,7 @@ window.deleteCourse           = deleteCourse;
 window.openAddEnrollmentModal = openAddEnrollmentModal;
 window.addEnrollment          = addEnrollment;
 window.removeEnrollment       = removeEnrollment;
+window.cancelCourseInvite     = cancelCourseInvite;
 window.setUsersSearch         = setUsersSearch;
 window.setUsersSort           = setUsersSort;
 window.setUsersTab            = setUsersTab;

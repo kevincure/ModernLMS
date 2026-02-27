@@ -1,16 +1,18 @@
 -- ============================================================
 -- ModernLMS — Schema Migration 2026-02-27d
--- Expand accept_pending_org_invites() to also auto-accept
--- course-level invites (the `invites` table).
+-- Full invite-acceptance support: RPC + client-side RLS.
 --
 -- When a student is invited via admin and then enrolled in a
 -- course, both an org_invites row and an invites row are
--- created.  On first login the RPC function should:
---   1. Create org_members + delete org_invites  (existing)
---   2. Create enrollments + delete invites      (new)
+-- created.  On first login:
+--   1. Create org_members + delete org_invites
+--   2. Create enrollments + delete invites
 --
--- Also adds a unique index on enrollments(user_id, course_id)
--- so the INSERT … ON CONFLICT is safe and idempotent.
+-- The JS client attempts both an RPC call (SECURITY DEFINER)
+-- and direct client-side operations.  This migration provides:
+--   A. RLS policies so the client can handle invites directly
+--   B. Updated RPC as a belt-and-suspenders fallback
+--   C. Unique index on enrollments for idempotent inserts
 -- ============================================================
 
 
@@ -23,7 +25,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollments_user_course
 
 
 -- ────────────────────────────────────────────────────────────
--- SECTION 2  Updated accept_pending_org_invites()
+-- SECTION 2  RLS — org_invites: let users read + delete their
+--            own pending invites
+-- ────────────────────────────────────────────────────────────
+
+DROP POLICY IF EXISTS "org_invites: own email select" ON public.org_invites;
+CREATE POLICY "org_invites: own email select"
+  ON public.org_invites
+  FOR SELECT
+  USING (email = auth.email());
+
+DROP POLICY IF EXISTS "org_invites: own email delete" ON public.org_invites;
+CREATE POLICY "org_invites: own email delete"
+  ON public.org_invites
+  FOR DELETE
+  USING (email = auth.email());
+
+
+-- ────────────────────────────────────────────────────────────
+-- SECTION 3  RLS — org_members: let users insert themselves
+--            when they have a matching pending org invite
+-- ────────────────────────────────────────────────────────────
+
+DROP POLICY IF EXISTS "org_members: self-insert via pending invite" ON public.org_members;
+CREATE POLICY "org_members: self-insert via pending invite"
+  ON public.org_members
+  FOR INSERT
+  WITH CHECK (
+    user_id = auth.uid()
+    AND EXISTS (
+      SELECT 1
+      FROM   public.org_invites oi
+      WHERE  oi.org_id = org_members.org_id
+        AND  oi.email  = auth.email()
+        AND  oi.status = 'pending'
+    )
+  );
+
+
+-- ────────────────────────────────────────────────────────────
+-- SECTION 4  Updated accept_pending_org_invites() RPC
 --
 -- Now also handles course-level invites: for each pending
 -- invite row matching the caller's email, inserts an
