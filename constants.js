@@ -340,7 +340,18 @@ export const DEFAULT_DATA = {
   invites: [],
   modules: [],
   questionBanks: [],
-  settings: {}
+  settings: {},
+  // Groups
+  groupSets: [],
+  courseGroups: [],
+  groupMembers: [],
+  // Messaging
+  conversations: [],
+  conversationParticipants: [],
+  allMessages: [],
+  // Notifications
+  notifications: [],
+  notificationPreferences: null
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

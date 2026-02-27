@@ -1200,6 +1200,31 @@ student3@example.com, 92, Well done" rows="10"></textarea>
                 Show class aggregate stats to students (avg, min, max)
               </label>
             </div>
+            <!-- Group Assignment Section -->
+            <div class="form-group" style="border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-top:8px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600;">
+                <input type="checkbox" id="newAssignmentIsGroup" onchange="document.getElementById('groupAssignmentOptions').style.display = this.checked ? 'block' : 'none'">
+                Group Assignment
+              </label>
+              <div class="hint">Students submit as a group. One submission counts for all members.</div>
+              <div id="groupAssignmentOptions" style="display:none; margin-top:10px;">
+                <div class="form-group">
+                  <label class="form-label">Group Set</label>
+                  <select class="form-select" id="newAssignmentGroupSet">
+                    <option value="">Select a group set…</option>
+                  </select>
+                  <div class="hint">Choose which group set to use. Create group sets from the Groups page.</div>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                  <label class="form-label">Grading Mode</label>
+                  <select class="form-select" id="newAssignmentGroupGradingMode">
+                    <option value="per_group">Per group (same grade for all members)</option>
+                    <option value="individual">Individual (grade each member separately)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
             <div class="form-group" style="margin-bottom:0;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
                 <input type="checkbox" id="newAssignmentExtraCredit">

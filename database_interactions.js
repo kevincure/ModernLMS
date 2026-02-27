@@ -252,6 +252,10 @@ export async function loadDataFromSupabase() {
       // Shared
       gradingNotes: a.grading_notes || null,
       blindGrading: a.blind_grading === true,
+      // Group assignment
+      isGroupAssignment: a.is_group_assignment === true,
+      groupSetId: a.group_set_id || null,
+      groupGradingMode: a.group_grading_mode || 'per_group',
       rubric: null
     }));
 
@@ -262,7 +266,8 @@ export async function loadDataFromSupabase() {
       text: s.content,
       fileName: s.file_name,
       filePath: s.file_path,
-      submittedAt: s.submitted_at
+      submittedAt: s.submitted_at,
+      groupId: s.group_id || null
     }));
 
     appData.grades = (gradesRes.data || []).map(g => {
@@ -518,6 +523,79 @@ export async function loadDataFromSupabase() {
 
     appData.settings = {};
 
+    // ── Group Sets, Groups, Group Members ──────────────────────────────
+    const [groupSetsRes, courseGroupsRes, groupMembersRes] = await Promise.all([
+      supabaseClient.from('group_sets').select('*').order('created_at', { ascending: true }),
+      supabaseClient.from('course_groups').select('*').order('name', { ascending: true }),
+      supabaseClient.from('group_members').select('*')
+    ]);
+    [{ name: 'group_sets', res: groupSetsRes }, { name: 'course_groups', res: courseGroupsRes }, { name: 'group_members', res: groupMembersRes }]
+      .forEach(({ name, res }) => { if (res.error) console.warn(`[Supabase] Error loading ${name}:`, res.error.message); });
+
+    const groupMembersData = (groupMembersRes.data || []).map(gm => ({
+      id: gm.id, groupId: gm.group_id, userId: gm.user_id, joinedAt: gm.joined_at
+    }));
+    appData.courseGroups = (courseGroupsRes.data || []).map(g => ({
+      id: g.id, groupSetId: g.group_set_id, courseId: g.course_id, name: g.name, createdAt: g.created_at,
+      members: groupMembersData.filter(gm => gm.groupId === g.id)
+    }));
+    appData.groupSets = (groupSetsRes.data || []).map(gs => ({
+      id: gs.id, courseId: gs.course_id, name: gs.name, description: gs.description,
+      createdBy: gs.created_by, createdAt: gs.created_at,
+      groups: appData.courseGroups.filter(g => g.groupSetId === gs.id)
+    }));
+    appData.groupMembers = groupMembersData;
+    console.log(`[Supabase] Loaded ${appData.groupSets.length} group_sets, ${appData.courseGroups.length} groups`);
+
+    // ── Conversations / Messages ──────────────────────────────────────
+    const [convosRes, convParticipantsRes, messagesRes] = await Promise.all([
+      supabaseClient.from('conversations').select('*').order('updated_at', { ascending: false }),
+      supabaseClient.from('conversation_participants').select('*'),
+      supabaseClient.from('messages').select('*').order('created_at', { ascending: true })
+    ]);
+    [{ name: 'conversations', res: convosRes }, { name: 'conversation_participants', res: convParticipantsRes }, { name: 'messages', res: messagesRes }]
+      .forEach(({ name, res }) => { if (res.error) console.warn(`[Supabase] Error loading ${name}:`, res.error.message); });
+
+    const participants = (convParticipantsRes.data || []).map(cp => ({
+      id: cp.id, conversationId: cp.conversation_id, userId: cp.user_id, lastReadAt: cp.last_read_at
+    }));
+    const allMessages = (messagesRes.data || []).map(m => ({
+      id: m.id, conversationId: m.conversation_id, senderId: m.sender_id,
+      content: m.content, createdAt: m.created_at
+    }));
+    appData.conversations = (convosRes.data || []).map(c => ({
+      id: c.id, courseId: c.course_id, subject: c.subject, createdBy: c.created_by,
+      createdAt: c.created_at, updatedAt: c.updated_at,
+      participants: participants.filter(p => p.conversationId === c.id),
+      messages: allMessages.filter(m => m.conversationId === c.id)
+    }));
+    appData.conversationParticipants = participants;
+    appData.allMessages = allMessages;
+    console.log(`[Supabase] Loaded ${appData.conversations.length} conversations, ${allMessages.length} messages`);
+
+    // ── Notifications ────────────────────────────────────────────────
+    const [notificationsRes, notifPrefsRes] = await Promise.all([
+      supabaseClient.from('notifications').select('*').order('created_at', { ascending: false }).limit(100),
+      supabaseClient.from('notification_preferences').select('*')
+    ]);
+    if (notificationsRes.error) console.warn('[Supabase] Error loading notifications:', notificationsRes.error.message);
+    if (notifPrefsRes.error) console.warn('[Supabase] Error loading notification_preferences:', notifPrefsRes.error.message);
+
+    appData.notifications = (notificationsRes.data || []).map(n => ({
+      id: n.id, userId: n.user_id, courseId: n.course_id, type: n.type,
+      title: n.title, body: n.body, link: n.link, refId: n.ref_id,
+      isRead: n.is_read, createdAt: n.created_at
+    }));
+    const myPrefs = (notifPrefsRes.data || []).find(p => p.user_id === appData.currentUser?.id);
+    appData.notificationPreferences = myPrefs ? {
+      gradeReleased: myPrefs.grade_released, assignmentDue: myPrefs.assignment_due,
+      announcement: myPrefs.announcement, submissionReceived: myPrefs.submission_received,
+      quizAvailable: myPrefs.quiz_available, messageReceived: myPrefs.message_received,
+      groupCreated: myPrefs.group_created, dueDateReminder: myPrefs.due_date_reminder,
+      reminderHoursBefore: myPrefs.reminder_hours_before
+    } : null;
+    console.log(`[Supabase] Loaded ${appData.notifications.length} notifications`);
+
     // Security: filter submissions/grades so students can't see other students' data.
     // A user may be staff (instructor/TA) in some courses and a student in others —
     // handle this per-course: keep a submission if the current user submitted it, OR
@@ -762,6 +840,10 @@ export async function supabaseCreateAssignment(assignment) {
     submission_modalities: assignment.submissionModalities || null,
     allowed_file_types: assignment.allowedFileTypes || null,
     max_file_size_mb: assignment.maxFileSizeMb || null,
+    // Group assignment
+    is_group_assignment: assignment.isGroupAssignment || false,
+    group_set_id: assignment.groupSetId || null,
+    group_grading_mode: assignment.groupGradingMode || 'per_group',
     created_by: appData.currentUser?.id
   };
 
@@ -816,7 +898,11 @@ export async function supabaseUpdateAssignment(assignment) {
     // Essay-specific
     submission_modalities: assignment.submissionModalities || null,
     allowed_file_types: assignment.allowedFileTypes || null,
-    max_file_size_mb: assignment.maxFileSizeMb || null
+    max_file_size_mb: assignment.maxFileSizeMb || null,
+    // Group assignment
+    is_group_assignment: assignment.isGroupAssignment || false,
+    group_set_id: assignment.groupSetId || null,
+    group_grading_mode: assignment.groupGradingMode || 'per_group'
   };
 
   const { data, error } = await supabaseClient.from('assignments').update(modernPayload).eq('id', assignment.id).select().single();
@@ -1147,7 +1233,8 @@ export async function supabaseCreateSubmission(submission) {
     user_id: submission.userId,
     content: submission.text || submission.content,
     file_name: submission.fileName || null,
-    file_path: submission.filePath || null
+    file_path: submission.filePath || null,
+    group_id: submission.groupId || null
   }, { onConflict: 'assignment_id,user_id' }).select().single();
 
   if (error) {
@@ -2276,4 +2363,221 @@ export async function supabaseLoadFeatureFlags(orgId) {
     console.warn('[Supabase] loadFeatureFlags error:', err);
     return {};
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GROUP SET OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseCreateGroupSet(groupSet) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('group_sets').insert({
+    id: groupSet.id,
+    course_id: groupSet.courseId,
+    name: groupSet.name,
+    description: groupSet.description || null,
+    created_by: appData.currentUser?.id
+  }).select().single();
+  if (error) { console.error('[Supabase] Create group set error:', error); showToast('Failed to create group set', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseUpdateGroupSet(groupSet) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('group_sets')
+    .update({ name: groupSet.name, description: groupSet.description || null })
+    .eq('id', groupSet.id).select().single();
+  if (error) { console.error('[Supabase] Update group set error:', error); showToast('Failed to update group set', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseDeleteGroupSet(id) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('group_sets').delete().eq('id', id);
+  if (error) { console.error('[Supabase] Delete group set error:', error); showToast('Failed to delete group set', 'error'); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COURSE GROUP OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseCreateCourseGroup(group) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('course_groups').insert({
+    id: group.id,
+    group_set_id: group.groupSetId,
+    course_id: group.courseId,
+    name: group.name
+  }).select().single();
+  if (error) { console.error('[Supabase] Create group error:', error); showToast('Failed to create group', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseUpdateCourseGroup(group) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('course_groups')
+    .update({ name: group.name })
+    .eq('id', group.id).select().single();
+  if (error) { console.error('[Supabase] Update group error:', error); showToast('Failed to update group', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseDeleteCourseGroup(id) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('course_groups').delete().eq('id', id);
+  if (error) { console.error('[Supabase] Delete group error:', error); showToast('Failed to delete group', 'error'); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GROUP MEMBER OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseAddGroupMember(groupId, userId) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('group_members').insert({
+    group_id: groupId,
+    user_id: userId
+  }).select().single();
+  if (error) { console.error('[Supabase] Add group member error:', error); return null; }
+  return data;
+}
+
+export async function supabaseRemoveGroupMember(groupId, userId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('group_members')
+    .delete().eq('group_id', groupId).eq('user_id', userId);
+  if (error) { console.error('[Supabase] Remove group member error:', error); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONVERSATION / MESSAGING OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseCreateConversation(conv) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('conversations').insert({
+    id: conv.id,
+    course_id: conv.courseId,
+    subject: conv.subject || null,
+    created_by: appData.currentUser?.id
+  }).select().single();
+  if (error) { console.error('[Supabase] Create conversation error:', error); showToast('Failed to create conversation', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseAddConversationParticipant(conversationId, userId) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('conversation_participants').insert({
+    conversation_id: conversationId,
+    user_id: userId
+  }).select().single();
+  if (error) { console.error('[Supabase] Add participant error:', error); return null; }
+  return data;
+}
+
+export async function supabaseCreateMessage(msg) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('messages').insert({
+    id: msg.id,
+    conversation_id: msg.conversationId,
+    sender_id: appData.currentUser?.id,
+    content: msg.content
+  }).select().single();
+  if (error) { console.error('[Supabase] Create message error:', error); showToast('Failed to send message', 'error'); return null; }
+
+  // Update conversation updated_at
+  await supabaseClient.from('conversations')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', msg.conversationId);
+
+  return data;
+}
+
+export async function supabaseMarkConversationRead(conversationId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('conversation_participants')
+    .update({ last_read_at: new Date().toISOString() })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', appData.currentUser?.id);
+  if (error) { console.error('[Supabase] Mark read error:', error); return false; }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOTIFICATION OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function supabaseCreateNotification(notif) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('notifications').insert({
+    user_id: notif.userId,
+    course_id: notif.courseId || null,
+    type: notif.type,
+    title: notif.title,
+    body: notif.body || null,
+    link: notif.link || null,
+    ref_id: notif.refId || null
+  }).select().single();
+  if (error) { console.error('[Supabase] Create notification error:', error); return null; }
+  return data;
+}
+
+export async function supabaseNotifyCourseStudents(courseId, type, title, body, link, refId) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.rpc('notify_course_students', {
+    p_course_id: courseId,
+    p_type: type,
+    p_title: title,
+    p_body: body || null,
+    p_link: link || null,
+    p_ref_id: refId || null
+  });
+  if (error) { console.error('[Supabase] Notify course students error:', error); return false; }
+  return true;
+}
+
+export async function supabaseMarkNotificationRead(id) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('notifications')
+    .update({ is_read: true }).eq('id', id);
+  if (error) { console.error('[Supabase] Mark notification read error:', error); return false; }
+  return true;
+}
+
+export async function supabaseMarkAllNotificationsRead() {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('notifications')
+    .update({ is_read: true })
+    .eq('user_id', appData.currentUser?.id)
+    .eq('is_read', false);
+  if (error) { console.error('[Supabase] Mark all read error:', error); return false; }
+  return true;
+}
+
+export async function supabaseDeleteNotification(id) {
+  if (!supabaseClient) return false;
+  const { error } = await supabaseClient.from('notifications').delete().eq('id', id);
+  if (error) { console.error('[Supabase] Delete notification error:', error); return false; }
+  return true;
+}
+
+export async function supabaseUpsertNotificationPreferences(prefs) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.from('notification_preferences').upsert({
+    user_id: appData.currentUser?.id,
+    grade_released: prefs.gradeReleased ?? true,
+    assignment_due: prefs.assignmentDue ?? true,
+    announcement: prefs.announcement ?? true,
+    submission_received: prefs.submissionReceived ?? true,
+    quiz_available: prefs.quizAvailable ?? true,
+    message_received: prefs.messageReceived ?? true,
+    group_created: prefs.groupCreated ?? true,
+    due_date_reminder: prefs.dueDateReminder ?? true,
+    reminder_hours_before: prefs.reminderHoursBefore ?? 24
+  }, { onConflict: 'user_id' }).select().single();
+  if (error) { console.error('[Supabase] Upsert notification prefs error:', error); showToast('Failed to save notification preferences', 'error'); return null; }
+  return data;
 }
