@@ -171,6 +171,9 @@ CREATE INDEX IF NOT EXISTS idx_discussion_threads_group
 -- ────────────────────────────────────────────────────────────
 -- 4. INBOX / DIRECT MESSAGING
 --    Threaded conversations between users within a course.
+--    NOTE: conversations table is created first, then
+--    conversation_participants, then conversations RLS
+--    policies (which reference conversation_participants).
 -- ────────────────────────────────────────────────────────────
 
 -- Conversation (thread header)
@@ -186,42 +189,8 @@ CREATE TABLE IF NOT EXISTS public.conversations (
 CREATE INDEX IF NOT EXISTS idx_conversations_course
   ON public.conversations (course_id);
 
-ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 
--- Only participants can see their conversations
-CREATE POLICY "conversations: participant select"
-  ON public.conversations FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM conversation_participants cp
-      WHERE cp.conversation_id = conversations.id
-        AND cp.user_id = auth.uid()
-    )
-  );
-
--- Any enrolled user can create a conversation
-CREATE POLICY "conversations: enrolled insert"
-  ON public.conversations FOR INSERT
-  WITH CHECK (
-    created_by = auth.uid()
-    AND is_enrolled_in_course(course_id)
-  );
-
--- Creator or staff can update (e.g. subject)
-CREATE POLICY "conversations: update"
-  ON public.conversations FOR UPDATE
-  USING (
-    created_by = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM enrollments e
-      WHERE e.course_id = conversations.course_id
-        AND e.user_id = auth.uid()
-        AND e.role IN ('instructor', 'ta')
-    )
-  );
-
-
--- Conversation participants
+-- Conversation participants (must exist before conversations RLS policies)
 CREATE TABLE IF NOT EXISTS public.conversation_participants (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   conversation_id  uuid NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
@@ -262,6 +231,42 @@ CREATE POLICY "convo_participants: enrolled insert"
 CREATE POLICY "convo_participants: own update"
   ON public.conversation_participants FOR UPDATE
   USING (user_id = auth.uid());
+
+
+-- Now add RLS policies to conversations (conversation_participants exists)
+ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
+
+-- Only participants can see their conversations
+CREATE POLICY "conversations: participant select"
+  ON public.conversations FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM conversation_participants cp
+      WHERE cp.conversation_id = conversations.id
+        AND cp.user_id = auth.uid()
+    )
+  );
+
+-- Any enrolled user can create a conversation
+CREATE POLICY "conversations: enrolled insert"
+  ON public.conversations FOR INSERT
+  WITH CHECK (
+    created_by = auth.uid()
+    AND is_enrolled_in_course(course_id)
+  );
+
+-- Creator or staff can update (e.g. subject)
+CREATE POLICY "conversations: update"
+  ON public.conversations FOR UPDATE
+  USING (
+    created_by = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM enrollments e
+      WHERE e.course_id = conversations.course_id
+        AND e.user_id = auth.uid()
+        AND e.role IN ('instructor', 'ta')
+    )
+  );
 
 
 -- Messages within a conversation
