@@ -4,7 +4,7 @@
 ═══════════════════════════════════════════════════════════════════════════════ */
 
 import { showToast, setText, getInitials } from './ui_helpers.js';
-import { loadDataFromSupabase, supabaseLoadUserGeminiKey, supabaseEnsureProfile } from './database_interactions.js';
+import { loadDataFromSupabase, supabaseEnsureProfile } from './database_interactions.js';
 import { DEFAULT_DATA } from './constants.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -62,7 +62,7 @@ export async function signInWithGoogle() {
     const { data, error } = await supabaseClient.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.SITE_URL || window.location.origin
+        redirectTo: window.location.origin
       }
     });
 
@@ -145,16 +145,6 @@ export async function handleSignedIn(user) {
 
     // Load data from Supabase
     await loadDataFromSupabase();
-
-    // Load user's Gemini key from Supabase profile
-    const userGeminiKey = await supabaseLoadUserGeminiKey(user.id);
-    if (userGeminiKey) {
-      console.log('[Auth] Loaded Gemini key from user profile');
-      appData.settings.geminiKey = userGeminiKey;
-      // Set on window for immediate use (takes priority over config.js)
-      window.GEMINI_API_KEY = userGeminiKey;
-    }
-
     // Initialize the app UI
     if (initAppCallback) initAppCallback();
   })();
