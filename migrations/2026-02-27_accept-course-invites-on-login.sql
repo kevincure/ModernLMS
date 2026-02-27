@@ -85,7 +85,7 @@ BEGIN
       AND  status = 'pending'
   LOOP
     INSERT INTO public.org_members (org_id, user_id, role, created_by)
-    VALUES (inv.org_id, NEW.id, inv.role, COALESCE(inv.invited_by, NEW.id))
+    VALUES (inv.org_id, NEW.id, inv.role::org_member_role, COALESCE(inv.invited_by, NEW.id))
     ON CONFLICT (org_id, user_id) DO NOTHING;
 
     DELETE FROM public.org_invites WHERE id = inv.id;
@@ -99,7 +99,7 @@ BEGIN
       AND  status = 'pending'
   LOOP
     INSERT INTO public.enrollments (user_id, course_id, role)
-    VALUES (NEW.id, cinv.course_id, cinv.role)
+    VALUES (NEW.id, cinv.course_id, cinv.role::enrollment_role)
     ON CONFLICT (user_id, course_id) DO NOTHING;
 
     DELETE FROM public.invites WHERE id = cinv.id;
@@ -152,7 +152,7 @@ BEGIN
       AND  status = 'pending'
   LOOP
     INSERT INTO public.org_members (org_id, user_id, role, created_by)
-    VALUES (inv.org_id, v_user_id, inv.role, COALESCE(inv.invited_by, v_user_id))
+    VALUES (inv.org_id, v_user_id, inv.role::org_member_role, COALESCE(inv.invited_by, v_user_id))
     ON CONFLICT (org_id, user_id) DO NOTHING;
 
     DELETE FROM public.org_invites WHERE id = inv.id;
@@ -166,7 +166,7 @@ BEGIN
       AND  status = 'pending'
   LOOP
     INSERT INTO public.enrollments (user_id, course_id, role)
-    VALUES (v_user_id, cinv.course_id, cinv.role)
+    VALUES (v_user_id, cinv.course_id, cinv.role::enrollment_role)
     ON CONFLICT (user_id, course_id) DO NOTHING;
 
     DELETE FROM public.invites WHERE id = cinv.id;
