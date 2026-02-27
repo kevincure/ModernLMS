@@ -76,6 +76,27 @@ import {
   supabaseLoadFeatureFlags,
   callGeminiAPI,
   callGeminiAPIWithRetry,
+  // Groups
+  supabaseCreateGroupSet,
+  supabaseUpdateGroupSet,
+  supabaseDeleteGroupSet,
+  supabaseCreateCourseGroup,
+  supabaseUpdateCourseGroup,
+  supabaseDeleteCourseGroup,
+  supabaseAddGroupMember,
+  supabaseRemoveGroupMember,
+  // Messaging
+  supabaseCreateConversation,
+  supabaseAddConversationParticipant,
+  supabaseCreateMessage,
+  supabaseMarkConversationRead,
+  // Notifications
+  supabaseCreateNotification,
+  supabaseNotifyCourseStudents,
+  supabaseMarkNotificationRead,
+  supabaseMarkAllNotificationsRead,
+  supabaseDeleteNotification,
+  supabaseUpsertNotificationPreferences,
 } from './database_interactions.js';
 
 // UI Helpers - DOM manipulation, formatting, markdown
@@ -1322,6 +1343,10 @@ function renderAll() {
   renderGradebook();
   renderPeople();
   renderDiscussion();
+  renderGroups();
+  renderInbox();
+  renderNotifications();
+  updateNotificationBadge();
 }
 
 function renderTopBarActions() {
@@ -1437,16 +1462,19 @@ function navigateTo(page) {
   // Re-render the target page to pick up any data changes since last visit
   if (appData.currentUser) {
     const pageRenders = {
-      courses:     renderCourses,
-      home:        renderHome,
-      updates:     renderUpdates,
-      assignments: renderAssignments,
-      calendar:    renderCalendar,
-      modules:     renderModules,
-      files:       renderFiles,
-      gradebook:   renderGradebook,
-      people:      renderPeople,
-      discussion:  renderDiscussion,
+      courses:       renderCourses,
+      home:          renderHome,
+      updates:       renderUpdates,
+      assignments:   renderAssignments,
+      calendar:      renderCalendar,
+      modules:       renderModules,
+      files:         renderFiles,
+      gradebook:     renderGradebook,
+      people:        renderPeople,
+      discussion:    renderDiscussion,
+      groups:        renderGroups,
+      inbox:         renderInbox,
+      notifications: renderNotifications,
     };
     if (pageRenders[page]) pageRenders[page]();
   }
@@ -2539,6 +2567,10 @@ async function createAnnouncement() {
     resetAnnouncementModal();
     renderUpdates();
     renderHome();
+
+    // Notify all enrolled students
+    supabaseNotifyCourseStudents(activeCourseId, 'announcement', 'New announcement: ' + title, content.slice(0, 100), 'updates', announcement.id);
+
     showToast('Announcement posted!', 'success');
   } catch (err) {
     console.error('[createAnnouncement] Error:', err);
@@ -2736,7 +2768,16 @@ function renderAssignments() {
   const assignmentCards = filteredAssignments.map(a => {
     const dueDate = new Date(a.dueDate);
     const isPast = dueDate < new Date();
-    const mySubmission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
+    // For group assignments, also check if a groupmate has submitted
+    let mySubmission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === appData.currentUser.id);
+    if (!mySubmission && a.isGroupAssignment && a.groupSetId) {
+      const myGroup = (appData.courseGroups || []).find(g =>
+        g.groupSetId === a.groupSetId && (g.members || []).some(m => m.userId === appData.currentUser.id)
+      );
+      if (myGroup) {
+        mySubmission = appData.submissions.find(s => s.assignmentId === a.id && s.groupId === myGroup.id);
+      }
+    }
     const submissionCount = appData.submissions.filter(s => s.assignmentId === a.id).length;
     const isPlaceholder = a.isPlaceholder;
 
@@ -2800,6 +2841,7 @@ function renderAssignments() {
 
     // Type badge for staff
     const typeBadge = effectiveStaff ? `<span style="font-size:0.7rem; background:var(--surface); border:1px solid var(--border); padding:1px 6px; border-radius:4px; margin-left:6px;">${atype === 'quiz' ? 'Quiz/Exam' : atype === 'no_submission' ? 'No Submission' : 'Essay'}</span>` : '';
+    const groupBadge = a.isGroupAssignment ? `<span style="font-size:0.7rem; background:var(--primary-light); color:var(--primary); border:1px solid var(--primary); padding:1px 6px; border-radius:4px; margin-left:6px;">Group</span>` : '';
 
     // Student action buttons
     let studentAction = '';
@@ -2845,7 +2887,7 @@ function renderAssignments() {
       <div class="card" style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHiddenAssignment ? 'opacity:0.7; border-style:dashed;' : ''}">
         <div class="card-header">
           <div>
-            <div class="card-title">${escapeHtml(a.title)}${typeBadge} ${visibilityBadge}</div>
+            <div class="card-title">${escapeHtml(a.title)}${typeBadge}${groupBadge} ${visibilityBadge}</div>
             <div class="muted">${formatDueDate(a.dueDate)} · ${pointsDisplay}${a.externalUrl ? ' · External Link' : ''}${notYetAvail ? ` · Opens ${availFrom.toLocaleDateString()}` : ''}${availEnded ? ` · Closed ${availUntil.toLocaleDateString()}` : ''}</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center;">
@@ -4141,9 +4183,21 @@ function openNewAssignmentModal(assignmentId = null) {
     document.getElementById('newAssignmentVisibleToStudents').checked = assignment.visibleToStudents !== false;
     document.getElementById('newAssignmentShowStats').checked = assignment.showStatsToStudents === true;
     document.getElementById('newAssignmentExtraCredit').checked = !!assignment.isExtraCredit;
+
+    // Group assignment fields
+    const isGroupEl = document.getElementById('newAssignmentIsGroup');
+    if (isGroupEl) {
+      isGroupEl.checked = !!assignment.isGroupAssignment;
+      document.getElementById('groupAssignmentOptions').style.display = assignment.isGroupAssignment ? 'block' : 'none';
+      if (assignment.groupSetId) document.getElementById('newAssignmentGroupSet').value = assignment.groupSetId;
+      if (assignment.groupGradingMode) document.getElementById('newAssignmentGroupGradingMode').value = assignment.groupGradingMode;
+    }
   } else {
     resetNewAssignmentModal();
   }
+
+  // Populate group set dropdown
+  populateGroupSetDropdown();
 
   // Show "Deadline Overrides" button only when editing an existing assignment
   const overridesBtn = document.getElementById('newAssignmentOverridesBtn');
@@ -4210,6 +4264,18 @@ function resetNewAssignmentModal() {
   document.getElementById('newAssignmentQuestionBank').value = '';
 
   setAssignmentType('essay');
+}
+
+function populateGroupSetDropdown() {
+  const groupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
+  const select = document.getElementById('newAssignmentGroupSet');
+  if (!select) return;
+  let html = '<option value="">Select a group set…</option>';
+  groupSets.forEach(gs => {
+    const groupCount = (appData.courseGroups || []).filter(g => g.groupSetId === gs.id).length;
+    html += `<option value="${gs.id}">${escapeHtml(gs.name)} (${groupCount} groups)</option>`;
+  });
+  select.innerHTML = html;
 }
 
 function populateQuestionBankDropdown() {
@@ -4601,7 +4667,11 @@ async function saveNewAssignment() {
     isExtraCredit: document.getElementById('newAssignmentExtraCredit')?.checked || false,
     proctorMode: document.getElementById('newAssignmentProctorMode')?.checked || false,
     proctorLockdown: document.getElementById('newAssignmentProctorLockdown')?.checked ?? true,
-    proctorAutoSubmit: document.getElementById('newAssignmentProctorAutoSubmit')?.checked || false
+    proctorAutoSubmit: document.getElementById('newAssignmentProctorAutoSubmit')?.checked || false,
+    // Group assignment
+    isGroupAssignment: document.getElementById('newAssignmentIsGroup')?.checked || false,
+    groupSetId: document.getElementById('newAssignmentGroupSet')?.value || null,
+    groupGradingMode: document.getElementById('newAssignmentGroupGradingMode')?.value || 'per_group'
   };
 
   if (currentNewAssignmentEditId) {
@@ -4919,6 +4989,19 @@ async function saveSubmission() {
     return;
   }
   
+  // Determine group ID for group assignments
+  let groupId = null;
+  if (assignment.isGroupAssignment && assignment.groupSetId) {
+    const myGroup = (appData.courseGroups || []).find(g =>
+      g.groupSetId === assignment.groupSetId && (g.members || []).some(m => m.userId === appData.currentUser.id)
+    );
+    if (!myGroup) {
+      showToast('You are not assigned to a group for this assignment', 'error');
+      return;
+    }
+    groupId = myGroup.id;
+  }
+
   const submission = {
     id: generateId(),
     assignmentId: assignmentId,
@@ -4926,9 +5009,10 @@ async function saveSubmission() {
     text: text,
     fileName: null,
     fileData: null,
-    submittedAt: new Date().toISOString()
+    submittedAt: new Date().toISOString(),
+    groupId: groupId
   };
-  
+
   if (fileInput.files[0]) {
     const file = fileInput.files[0];
     submission.fileName = file.name;
@@ -9570,6 +9654,24 @@ function bulkReleaseGrades(assignmentId) {
       }
     }
 
+    // Notify students their grades are released
+    const assignment = appData.assignments.find(a => a.id === assignmentId);
+    if (assignment && released > 0) {
+      for (const submission of submissions) {
+        const grade = appData.grades.find(g => g.submissionId === submission.id);
+        if (grade && grade.released) {
+          supabaseCreateNotification({
+            userId: submission.userId,
+            courseId: assignment.courseId,
+            type: 'grade_released',
+            title: 'Grade posted for ' + assignment.title,
+            body: 'Your grade has been released.',
+            link: 'gradebook'
+          });
+        }
+      }
+    }
+
     renderGradebook();
     showToast(`Released ${released} grade${released !== 1 ? 's' : ''} to students`, 'success');
   });
@@ -9890,6 +9992,863 @@ async function toggleAssignmentVisibility(assignmentId) {
 }
 
 // toggleQuizVisibility is defined in quiz_logic.js (canonical version with Supabase persistence)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GROUPS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let activeGroupDetailId = null;
+
+function renderGroups() {
+  if (!activeCourseId) {
+    setText('groupsSubtitle', 'Select a course');
+    setHTML('groupsActions', '');
+    setHTML('groupsContent', '<div class="empty-state-text">No active course</div>');
+    return;
+  }
+  const course = getCourseById(activeCourseId);
+  setText('groupsSubtitle', course.name);
+  const effectiveStaff = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+
+  if (activeGroupDetailId) {
+    renderGroupDetail(effectiveStaff);
+    return;
+  }
+
+  setHTML('groupsActions', effectiveStaff
+    ? `<button class="btn btn-primary" onclick="openCreateGroupSetModal()">New Group Set</button>`
+    : '');
+
+  const groupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
+  if (groupSets.length === 0) {
+    setHTML('groupsContent', '<div class="empty-state"><div class="empty-state-title">No groups yet</div><div class="empty-state-text">Instructors can create group sets to organize students into teams.</div></div>');
+    return;
+  }
+
+  const html = groupSets.map(gs => {
+    const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gs.id);
+    const groupCards = groups.map(g => {
+      const members = (g.members || []);
+      const memberNames = members.map(m => {
+        const user = getUserById(m.userId);
+        return user ? escapeHtml(user.name) : 'Unknown';
+      });
+      return `
+        <div class="card" style="cursor:pointer;" onclick="viewGroupDetail('${g.id}')">
+          <div class="card-header">
+            <div>
+              <div class="card-title">${escapeHtml(g.name)}</div>
+              <div class="muted">${members.length} member${members.length !== 1 ? 's' : ''}${memberNames.length ? ' · ' + memberNames.slice(0, 3).join(', ') + (memberNames.length > 3 ? '…' : '') : ''}</div>
+            </div>
+            ${effectiveStaff ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteGroup('${g.id}', '${gs.id}')">Delete</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Group assignment integration — show which assignments use this set
+    const linkedAssignments = (appData.assignments || []).filter(a => a.courseId === activeCourseId && a.groupSetId === gs.id);
+    const linkedHtml = linkedAssignments.length ? `<div class="muted" style="margin-top:8px; font-size:0.85rem;">Linked assignments: ${linkedAssignments.map(a => escapeHtml(a.title)).join(', ')}</div>` : '';
+
+    return `
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" style="font-size:1.1rem;">${escapeHtml(gs.name)}</div>
+            ${gs.description ? `<div class="muted">${escapeHtml(gs.description)}</div>` : ''}
+            ${linkedHtml}
+          </div>
+          ${effectiveStaff ? `
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="autoAssignGroups('${gs.id}')">Auto-assign</button>
+              <button class="btn btn-secondary btn-sm" onclick="openManageGroupsModal('${gs.id}')">Manage</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteGroupSet('${gs.id}')">Delete Set</button>
+            </div>
+          ` : ''}
+        </div>
+        <div style="margin-top:12px;">${groupCards || '<div class="muted">No groups created yet.</div>'}</div>
+      </div>
+    `;
+  }).join('');
+
+  setHTML('groupsContent', html);
+}
+
+function renderGroupDetail(effectiveStaff) {
+  const group = (appData.courseGroups || []).find(g => g.id === activeGroupDetailId);
+  if (!group) { activeGroupDetailId = null; renderGroups(); return; }
+
+  const groupSet = (appData.groupSets || []).find(gs => gs.id === group.groupSetId);
+  setText('groupsSubtitle', (groupSet ? groupSet.name + ' › ' : '') + group.name);
+  setHTML('groupsActions', `<button class="btn btn-secondary" onclick="closeGroupDetail()">← All Groups</button>`);
+
+  const members = (group.members || []);
+  const membersHtml = members.map(m => {
+    const user = getUserById(m.userId);
+    return `
+      <div class="card" style="margin-bottom:6px;">
+        <div class="card-header">
+          <div>
+            <strong>${escapeHtml(user?.name || 'Unknown')}</strong>
+            <span class="muted" style="margin-left:8px;">${escapeHtml(user?.email || '')}</span>
+          </div>
+          ${effectiveStaff ? `<button class="btn btn-danger btn-sm" onclick="removeMemberFromGroup('${group.id}', '${m.userId}')">Remove</button>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('') || '<div class="muted">No members yet.</div>';
+
+  // Group discussion threads
+  const groupThreads = (appData.discussionThreads || []).filter(t => t.groupId === group.id);
+  const threadsHtml = groupThreads.length
+    ? groupThreads.map(t => {
+        const author = getUserById(t.authorId);
+        return `<div class="card" style="cursor:pointer; margin-bottom:6px;" onclick="navigateTo('discussion'); openDiscussionThread('${t.id}');">
+          <div class="card-title">${escapeHtml(t.title)}</div>
+          <div class="muted">${escapeHtml(author?.name || 'Unknown')} · ${formatDate(t.createdAt)} · ${(t.replies || []).length} replies</div>
+        </div>`;
+      }).join('')
+    : '<div class="muted">No group discussions yet.</div>';
+
+  // Group submissions for linked assignments
+  const linkedAssignments = (appData.assignments || []).filter(a => a.courseId === group.courseId && a.groupSetId === group.groupSetId);
+  const submissionsHtml = linkedAssignments.length
+    ? linkedAssignments.map(a => {
+        const groupSub = (appData.submissions || []).find(s => s.assignmentId === a.id && s.groupId === group.id);
+        return `<div class="card" style="margin-bottom:6px;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">${escapeHtml(a.title)}</div>
+              <div class="muted">${groupSub ? 'Submitted ' + formatDate(groupSub.submittedAt) : 'Not yet submitted'}</div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')
+    : '';
+
+  setHTML('groupsContent', `
+    <div class="card" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 4px;">${escapeHtml(group.name)}</h2>
+      <div class="muted">${members.length} member${members.length !== 1 ? 's' : ''}</div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <div style="font-weight:600; margin-bottom:8px;">Members</div>
+      ${membersHtml}
+      ${effectiveStaff ? `
+        <div style="margin-top:12px;">
+          <select class="form-select" id="addMemberSelect" style="width:auto; display:inline-block;">
+            <option value="">Add a student…</option>
+            ${getUnassignedStudents(group.groupSetId, group.courseId).map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="addMemberToGroup('${group.id}')">Add</button>
+        </div>
+      ` : ''}
+    </div>
+    ${linkedAssignments.length ? `<div style="margin-bottom:16px;"><div style="font-weight:600; margin-bottom:8px;">Group Assignments</div>${submissionsHtml}</div>` : ''}
+    <div>
+      <div style="font-weight:600; margin-bottom:8px;">Group Discussions</div>
+      ${threadsHtml}
+    </div>
+  `);
+}
+
+function getUnassignedStudents(groupSetId, courseId) {
+  const assignedUserIds = new Set(
+    (appData.courseGroups || [])
+      .filter(g => g.groupSetId === groupSetId)
+      .flatMap(g => (g.members || []).map(m => m.userId))
+  );
+  return (appData.enrollments || [])
+    .filter(e => e.courseId === courseId && e.role === 'student' && !assignedUserIds.has(e.userId))
+    .map(e => getUserById(e.userId))
+    .filter(Boolean);
+}
+
+function viewGroupDetail(groupId) {
+  activeGroupDetailId = groupId;
+  renderGroups();
+}
+
+function closeGroupDetail() {
+  activeGroupDetailId = null;
+  renderGroups();
+}
+
+function openCreateGroupSetModal() {
+  if (!activeCourseId) return;
+  const existing = document.getElementById('groupSetModal');
+  if (existing) existing.remove();
+  const html = `
+    <div class="modal-overlay" id="groupSetModal" style="display:flex;">
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+          <h2 class="modal-title">New Group Set</h2>
+          <button class="modal-close" onclick="closeGroupSetModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Name *</label>
+            <input type="text" class="form-input" id="groupSetName" placeholder="e.g. Project Teams">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <input type="text" class="form-input" id="groupSetDescription" placeholder="Optional description…">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Number of groups to create</label>
+            <input type="number" class="form-input" id="groupSetCount" value="4" min="1" max="50" style="width:100px;">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeGroupSetModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="createGroupSet()">Create</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+  setTimeout(() => document.getElementById('groupSetName')?.focus(), 50);
+}
+
+function closeGroupSetModal() {
+  document.getElementById('groupSetModal')?.remove();
+}
+
+async function createGroupSet() {
+  const name = document.getElementById('groupSetName')?.value.trim();
+  if (!name) { showToast('Name is required', 'error'); return; }
+  const description = document.getElementById('groupSetDescription')?.value.trim();
+  const count = parseInt(document.getElementById('groupSetCount')?.value) || 4;
+
+  const gsId = generateId();
+  const saved = await supabaseCreateGroupSet({ id: gsId, courseId: activeCourseId, name, description });
+  if (!saved) return;
+
+  const gs = { id: gsId, courseId: activeCourseId, name, description, createdBy: appData.currentUser.id, createdAt: new Date().toISOString(), groups: [] };
+
+  // Create individual groups
+  for (let i = 1; i <= count; i++) {
+    const gId = generateId();
+    const groupSaved = await supabaseCreateCourseGroup({ id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${i}` });
+    if (groupSaved) {
+      const g = { id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${i}`, createdAt: new Date().toISOString(), members: [] };
+      if (!appData.courseGroups) appData.courseGroups = [];
+      appData.courseGroups.push(g);
+      gs.groups.push(g);
+    }
+  }
+
+  if (!appData.groupSets) appData.groupSets = [];
+  appData.groupSets.push(gs);
+  closeGroupSetModal();
+  renderGroups();
+  showToast('Group set created!', 'success');
+}
+
+async function deleteGroupSet(gsId) {
+  showConfirmDialog('Delete this entire group set and all its groups?', async () => {
+    const ok = await supabaseDeleteGroupSet(gsId);
+    if (!ok) return;
+    appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
+    appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
+    renderGroups();
+    showToast('Group set deleted', 'success');
+  });
+}
+
+function openManageGroupsModal(gsId) {
+  const gs = (appData.groupSets || []).find(s => s.id === gsId);
+  if (!gs) return;
+  const existing = document.getElementById('manageGroupsModal');
+  if (existing) existing.remove();
+
+  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
+  const groupList = groups.map(g => `
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+      <input type="text" class="form-input" value="${escapeHtml(g.name)}" data-group-id="${g.id}" style="flex:1;">
+      <button class="btn btn-danger btn-sm" onclick="deleteGroup('${g.id}', '${gsId}')">Delete</button>
+    </div>
+  `).join('');
+
+  const html = `
+    <div class="modal-overlay" id="manageGroupsModal" style="display:flex;">
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Manage: ${escapeHtml(gs.name)}</h2>
+          <button class="modal-close" onclick="closeManageGroupsModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="margin-bottom:12px;">${groupList || '<div class="muted">No groups yet.</div>'}</div>
+          <button class="btn btn-secondary btn-sm" onclick="addGroupToSet('${gsId}')">+ Add Group</button>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeManageGroupsModal()">Done</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+}
+
+function closeManageGroupsModal() {
+  document.getElementById('manageGroupsModal')?.remove();
+}
+
+async function addGroupToSet(gsId) {
+  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
+  const num = groups.length + 1;
+  const gId = generateId();
+  const saved = await supabaseCreateCourseGroup({ id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${num}` });
+  if (!saved) return;
+  const g = { id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${num}`, createdAt: new Date().toISOString(), members: [] };
+  appData.courseGroups.push(g);
+  const gs = (appData.groupSets || []).find(s => s.id === gsId);
+  if (gs) gs.groups.push(g);
+  closeManageGroupsModal();
+  openManageGroupsModal(gsId);
+  showToast('Group added', 'success');
+}
+
+async function deleteGroup(gId, gsId) {
+  showConfirmDialog('Delete this group?', async () => {
+    const ok = await supabaseDeleteCourseGroup(gId);
+    if (!ok) return;
+    appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
+    const gs = (appData.groupSets || []).find(s => s.id === gsId);
+    if (gs) gs.groups = gs.groups.filter(g => g.id !== gId);
+    closeManageGroupsModal();
+    renderGroups();
+    showToast('Group deleted', 'success');
+  });
+}
+
+async function addMemberToGroup(groupId) {
+  const select = document.getElementById('addMemberSelect');
+  const userId = select?.value;
+  if (!userId) { showToast('Select a student', 'error'); return; }
+
+  const saved = await supabaseAddGroupMember(groupId, userId);
+  if (!saved) { showToast('Failed to add member', 'error'); return; }
+
+  const member = { id: saved.id, groupId, userId, joinedAt: new Date().toISOString() };
+  const group = (appData.courseGroups || []).find(g => g.id === groupId);
+  if (group) {
+    if (!group.members) group.members = [];
+    group.members.push(member);
+  }
+  if (!appData.groupMembers) appData.groupMembers = [];
+  appData.groupMembers.push(member);
+  renderGroups();
+  showToast('Member added', 'success');
+}
+
+async function removeMemberFromGroup(groupId, userId) {
+  const ok = await supabaseRemoveGroupMember(groupId, userId);
+  if (!ok) { showToast('Failed to remove member', 'error'); return; }
+  const group = (appData.courseGroups || []).find(g => g.id === groupId);
+  if (group) group.members = (group.members || []).filter(m => m.userId !== userId);
+  appData.groupMembers = (appData.groupMembers || []).filter(m => !(m.groupId === groupId && m.userId === userId));
+  renderGroups();
+  showToast('Member removed', 'success');
+}
+
+async function autoAssignGroups(gsId) {
+  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
+  if (groups.length === 0) { showToast('Create groups first', 'error'); return; }
+
+  const unassigned = getUnassignedStudents(gsId, activeCourseId);
+  if (unassigned.length === 0) { showToast('All students are already assigned', 'info'); return; }
+
+  // Shuffle students randomly
+  const shuffled = [...unassigned];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  // Round-robin assign
+  let idx = 0;
+  for (const student of shuffled) {
+    const group = groups[idx % groups.length];
+    const saved = await supabaseAddGroupMember(group.id, student.id);
+    if (saved) {
+      const member = { id: saved.id, groupId: group.id, userId: student.id, joinedAt: new Date().toISOString() };
+      if (!group.members) group.members = [];
+      group.members.push(member);
+      if (!appData.groupMembers) appData.groupMembers = [];
+      appData.groupMembers.push(member);
+    }
+    idx++;
+  }
+
+  renderGroups();
+  showToast(`${shuffled.length} students auto-assigned!`, 'success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INBOX / DIRECT MESSAGING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let activeConversationId = null;
+
+function renderInbox() {
+  if (!activeCourseId) {
+    setText('inboxSubtitle', 'Select a course');
+    setHTML('inboxActions', '');
+    setHTML('inboxContent', '<div class="empty-state-text">No active course</div>');
+    return;
+  }
+  const course = getCourseById(activeCourseId);
+  setText('inboxSubtitle', course.name);
+
+  if (activeConversationId) {
+    renderConversationThread();
+    return;
+  }
+
+  setHTML('inboxActions', `<button class="btn btn-primary" onclick="openNewMessageModal()">New Message</button>`);
+
+  const conversations = (appData.conversations || [])
+    .filter(c => c.courseId === activeCourseId && c.participants.some(p => p.userId === appData.currentUser.id))
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
+  if (conversations.length === 0) {
+    setHTML('inboxContent', '<div class="empty-state"><div class="empty-state-title">No messages yet</div><div class="empty-state-text">Start a conversation with an instructor or classmate.</div></div>');
+    return;
+  }
+
+  const html = conversations.map(c => {
+    const otherParticipants = c.participants.filter(p => p.userId !== appData.currentUser.id);
+    const names = otherParticipants.map(p => {
+      const user = getUserById(p.userId);
+      return user ? escapeHtml(user.name) : 'Unknown';
+    }).join(', ') || 'Just you';
+
+    const lastMsg = c.messages.length ? c.messages[c.messages.length - 1] : null;
+    const myParticipant = c.participants.find(p => p.userId === appData.currentUser.id);
+    const unreadCount = myParticipant?.lastReadAt
+      ? c.messages.filter(m => m.senderId !== appData.currentUser.id && new Date(m.createdAt) > new Date(myParticipant.lastReadAt)).length
+      : c.messages.filter(m => m.senderId !== appData.currentUser.id).length;
+
+    return `
+      <div class="card" style="cursor:pointer;" onclick="openConversation('${c.id}')">
+        <div class="card-header">
+          <div style="flex:1;">
+            <div class="card-title" style="display:flex; align-items:center; gap:8px;">
+              ${escapeHtml(c.subject || names)}
+              ${unreadCount > 0 ? `<span class="notification-badge" style="position:static; font-size:0.7rem;">${unreadCount}</span>` : ''}
+            </div>
+            <div class="muted" style="font-size:0.85rem;">
+              ${names} · ${lastMsg ? formatDate(lastMsg.createdAt) : formatDate(c.createdAt)}
+            </div>
+            ${lastMsg ? `<div class="muted" style="font-size:0.85rem; margin-top:2px; max-height:1.5em; overflow:hidden;">${escapeHtml(lastMsg.content.slice(0, 100))}</div>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  setHTML('inboxContent', html);
+}
+
+function renderConversationThread() {
+  const convo = (appData.conversations || []).find(c => c.id === activeConversationId);
+  if (!convo) { activeConversationId = null; renderInbox(); return; }
+
+  const otherParticipants = convo.participants.filter(p => p.userId !== appData.currentUser.id);
+  const names = otherParticipants.map(p => { const u = getUserById(p.userId); return u ? escapeHtml(u.name) : 'Unknown'; }).join(', ');
+
+  setText('inboxSubtitle', convo.subject || names);
+  setHTML('inboxActions', `<button class="btn btn-secondary" onclick="closeConversation()">← All Messages</button>`);
+
+  const messagesHtml = convo.messages.map(m => {
+    const sender = getUserById(m.senderId);
+    const isMe = m.senderId === appData.currentUser.id;
+    return `
+      <div class="message-bubble ${isMe ? 'message-sent' : 'message-received'}">
+        <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px;">
+          ${escapeHtml(sender?.name || 'Unknown')}
+          <span class="muted" style="font-weight:400; margin-left:8px;">${formatDate(m.createdAt)}</span>
+        </div>
+        <div class="markdown-content">${renderMarkdown(m.content)}</div>
+      </div>
+    `;
+  }).join('') || '<div class="muted" style="padding:12px 0;">No messages yet.</div>';
+
+  setHTML('inboxContent', `
+    <div class="card" style="margin-bottom:12px; padding:12px 16px;">
+      <div style="font-weight:600;">${escapeHtml(convo.subject || 'Conversation')}</div>
+      <div class="muted" style="font-size:0.85rem;">With ${names}</div>
+    </div>
+    <div class="messages-container" id="messagesContainer">
+      ${messagesHtml}
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <textarea class="form-textarea" id="replyMessageInput" rows="3" placeholder="Write a reply…"></textarea>
+      <div style="margin-top:8px;">
+        <button class="btn btn-primary" onclick="sendReplyMessage('${convo.id}')">Send</button>
+      </div>
+    </div>
+  `);
+
+  // Mark as read
+  supabaseMarkConversationRead(convo.id);
+  const myPart = convo.participants.find(p => p.userId === appData.currentUser.id);
+  if (myPart) myPart.lastReadAt = new Date().toISOString();
+
+  // Scroll messages to bottom
+  setTimeout(() => {
+    const container = document.getElementById('messagesContainer');
+    if (container) container.scrollTop = container.scrollHeight;
+  }, 50);
+}
+
+function openConversation(conversationId) {
+  activeConversationId = conversationId;
+  renderInbox();
+}
+
+function closeConversation() {
+  activeConversationId = null;
+  renderInbox();
+}
+
+function openNewMessageModal() {
+  if (!activeCourseId) return;
+  const existing = document.getElementById('newMessageModal');
+  if (existing) existing.remove();
+
+  // Get all enrolled users in this course except self
+  const courseUsers = (appData.enrollments || [])
+    .filter(e => e.courseId === activeCourseId && e.userId !== appData.currentUser.id)
+    .map(e => {
+      const user = getUserById(e.userId);
+      const role = e.role === 'instructor' ? 'Instructor' : e.role === 'ta' ? 'TA' : 'Student';
+      return user ? { id: user.id, name: user.name, role } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const roleOrder = { Instructor: 0, TA: 1, Student: 2 };
+      return (roleOrder[a.role] || 9) - (roleOrder[b.role] || 9) || a.name.localeCompare(b.name);
+    });
+
+  const options = courseUsers.map(u => `<option value="${u.id}">${escapeHtml(u.name)} (${u.role})</option>`).join('');
+
+  const html = `
+    <div class="modal-overlay" id="newMessageModal" style="display:flex;">
+      <div class="modal" style="max-width:550px;">
+        <div class="modal-header">
+          <h2 class="modal-title">New Message</h2>
+          <button class="modal-close" onclick="closeNewMessageModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">To *</label>
+            <select class="form-select" id="newMessageRecipient">
+              <option value="">Select a recipient…</option>
+              ${options}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Subject</label>
+            <input type="text" class="form-input" id="newMessageSubject" placeholder="Optional subject…">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Message *</label>
+            <textarea class="form-textarea" id="newMessageContent" rows="5" placeholder="Write your message…"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeNewMessageModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="sendNewMessage()">Send</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+  setTimeout(() => document.getElementById('newMessageRecipient')?.focus(), 50);
+}
+
+function closeNewMessageModal() {
+  document.getElementById('newMessageModal')?.remove();
+}
+
+async function sendNewMessage() {
+  const recipientId = document.getElementById('newMessageRecipient')?.value;
+  const subject = document.getElementById('newMessageSubject')?.value.trim();
+  const content = document.getElementById('newMessageContent')?.value.trim();
+
+  if (!recipientId) { showToast('Please select a recipient', 'error'); return; }
+  if (!content) { showToast('Message cannot be empty', 'error'); return; }
+
+  // Check for existing conversation with this person
+  let convo = (appData.conversations || []).find(c =>
+    c.courseId === activeCourseId &&
+    c.participants.length === 2 &&
+    c.participants.some(p => p.userId === recipientId) &&
+    c.participants.some(p => p.userId === appData.currentUser.id)
+  );
+
+  if (!convo) {
+    const convoId = generateId();
+    const saved = await supabaseCreateConversation({ id: convoId, courseId: activeCourseId, subject: subject || null });
+    if (!saved) return;
+
+    // Add both participants
+    await supabaseAddConversationParticipant(convoId, appData.currentUser.id);
+    await supabaseAddConversationParticipant(convoId, recipientId);
+
+    convo = {
+      id: convoId, courseId: activeCourseId, subject: subject || null,
+      createdBy: appData.currentUser.id, createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      participants: [
+        { conversationId: convoId, userId: appData.currentUser.id, lastReadAt: new Date().toISOString() },
+        { conversationId: convoId, userId: recipientId, lastReadAt: null }
+      ],
+      messages: []
+    };
+    if (!appData.conversations) appData.conversations = [];
+    appData.conversations.unshift(convo);
+  }
+
+  // Send message
+  const msgId = generateId();
+  const msgSaved = await supabaseCreateMessage({ id: msgId, conversationId: convo.id, content });
+  if (!msgSaved) return;
+
+  const msg = { id: msgId, conversationId: convo.id, senderId: appData.currentUser.id, content, createdAt: new Date().toISOString() };
+  convo.messages.push(msg);
+  convo.updatedAt = new Date().toISOString();
+
+  // Create notification for recipient
+  const recipientUser = getUserById(recipientId);
+  await supabaseCreateNotification({
+    userId: recipientId,
+    courseId: activeCourseId,
+    type: 'message_received',
+    title: 'New message from ' + (appData.currentUser.name || 'someone'),
+    body: content.slice(0, 100),
+    link: 'inbox'
+  });
+
+  closeNewMessageModal();
+  openConversation(convo.id);
+  showToast('Message sent!', 'success');
+}
+
+async function sendReplyMessage(conversationId) {
+  const input = document.getElementById('replyMessageInput');
+  const content = input?.value.trim();
+  if (!content) { showToast('Message cannot be empty', 'error'); return; }
+
+  const msgId = generateId();
+  const saved = await supabaseCreateMessage({ id: msgId, conversationId, content });
+  if (!saved) return;
+
+  const convo = (appData.conversations || []).find(c => c.id === conversationId);
+  if (convo) {
+    const msg = { id: msgId, conversationId, senderId: appData.currentUser.id, content, createdAt: new Date().toISOString() };
+    convo.messages.push(msg);
+    convo.updatedAt = new Date().toISOString();
+
+    // Notify other participants
+    for (const p of convo.participants) {
+      if (p.userId !== appData.currentUser.id) {
+        await supabaseCreateNotification({
+          userId: p.userId,
+          courseId: convo.courseId,
+          type: 'message_received',
+          title: 'New message from ' + (appData.currentUser.name || 'someone'),
+          body: content.slice(0, 100),
+          link: 'inbox'
+        });
+      }
+    }
+  }
+
+  if (input) input.value = '';
+  renderConversationThread();
+  showToast('Reply sent!', 'success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderNotifications() {
+  setText('notificationsSubtitle', '');
+
+  const unreadCount = (appData.notifications || []).filter(n => !n.isRead).length;
+  setHTML('notificationsActions', `
+    <div style="display:flex; gap:8px; align-items:center;">
+      ${unreadCount > 0 ? `<button class="btn btn-secondary btn-sm" onclick="markAllNotificationsRead()">Mark all as read</button>` : ''}
+      <button class="btn btn-secondary btn-sm" onclick="openNotificationPreferences()">Preferences</button>
+    </div>
+  `);
+
+  const notifications = appData.notifications || [];
+
+  if (notifications.length === 0) {
+    setHTML('notificationsContent', '<div class="empty-state"><div class="empty-state-title">No notifications</div><div class="empty-state-text">You\'re all caught up!</div></div>');
+    return;
+  }
+
+  const html = notifications.map(n => {
+    const course = n.courseId ? getCourseById(n.courseId) : null;
+    const typeIcons = {
+      grade_released: '📊', assignment_due: '📝', announcement: '📢',
+      submission_received: '📥', quiz_available: '📋', message_received: '✉️',
+      group_created: '👥', due_date_reminder: '⏰', invite: '📧'
+    };
+    const icon = typeIcons[n.type] || '🔔';
+
+    return `
+      <div class="card notification-item ${n.isRead ? 'notification-read' : 'notification-unread'}" style="margin-bottom:6px; cursor:pointer;" onclick="markNotificationRead('${n.id}', '${n.link || ''}')">
+        <div class="card-header">
+          <div style="flex:1;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-size:1.1rem;">${icon}</span>
+              <div>
+                <div style="font-weight:${n.isRead ? '400' : '600'};">${escapeHtml(n.title)}</div>
+                ${n.body ? `<div class="muted" style="font-size:0.85rem; margin-top:2px;">${escapeHtml(n.body.slice(0, 120))}</div>` : ''}
+                <div class="muted" style="font-size:0.8rem; margin-top:2px;">
+                  ${course ? escapeHtml(course.name) + ' · ' : ''}${formatDate(n.createdAt)}
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteNotificationItem('${n.id}')" title="Dismiss">×</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  setHTML('notificationsContent', html);
+}
+
+function updateNotificationBadge() {
+  const badge = document.getElementById('notificationBadge');
+  if (!badge) return;
+  const unreadCount = (appData.notifications || []).filter(n => !n.isRead).length;
+  if (unreadCount > 0) {
+    badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+    badge.style.display = 'flex';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+async function markNotificationRead(id, link) {
+  const notif = (appData.notifications || []).find(n => n.id === id);
+  if (notif && !notif.isRead) {
+    notif.isRead = true;
+    await supabaseMarkNotificationRead(id);
+    updateNotificationBadge();
+  }
+  if (link) {
+    navigateTo(link);
+  } else {
+    renderNotifications();
+  }
+}
+
+async function markAllNotificationsRead() {
+  await supabaseMarkAllNotificationsRead();
+  (appData.notifications || []).forEach(n => n.isRead = true);
+  updateNotificationBadge();
+  renderNotifications();
+  showToast('All notifications marked as read', 'success');
+}
+
+async function deleteNotificationItem(id) {
+  await supabaseDeleteNotification(id);
+  appData.notifications = (appData.notifications || []).filter(n => n.id !== id);
+  updateNotificationBadge();
+  renderNotifications();
+}
+
+function openNotificationPreferences() {
+  const existing = document.getElementById('notifPrefsModal');
+  if (existing) existing.remove();
+
+  const prefs = appData.notificationPreferences || {};
+  const checked = (key, def = true) => (prefs[key] ?? def) ? 'checked' : '';
+
+  const html = `
+    <div class="modal-overlay" id="notifPrefsModal" style="display:flex;">
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Notification Preferences</h2>
+          <button class="modal-close" onclick="closeNotificationPreferences()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex; flex-direction:column; gap:12px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="prefGradeReleased" ${checked('gradeReleased')}> Grade posted
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="prefAnnouncement" ${checked('announcement')}> New announcement
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="prefAssignmentDue" ${checked('assignmentDue')}> Assignment due
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="prefSubmissionReceived" ${checked('submissionReceived')}> Submission received
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="prefMessageReceived" ${checked('messageReceived')}> New message
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="prefGroupCreated" ${checked('groupCreated')}> Group changes
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="prefDueDateReminder" ${checked('dueDateReminder')}> Due date reminder
+            </label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label class="form-label" style="margin:0;">Remind me</label>
+              <select class="form-select" id="prefReminderHours" style="width:auto;">
+                <option value="12" ${(prefs.reminderHoursBefore || 24) === 12 ? 'selected' : ''}>12 hours before</option>
+                <option value="24" ${(prefs.reminderHoursBefore || 24) === 24 ? 'selected' : ''}>24 hours before</option>
+                <option value="48" ${(prefs.reminderHoursBefore || 24) === 48 ? 'selected' : ''}>48 hours before</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeNotificationPreferences()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveNotificationPreferences()">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+}
+
+function closeNotificationPreferences() {
+  document.getElementById('notifPrefsModal')?.remove();
+}
+
+async function saveNotificationPreferences() {
+  const prefs = {
+    gradeReleased: document.getElementById('prefGradeReleased')?.checked ?? true,
+    assignmentDue: document.getElementById('prefAssignmentDue')?.checked ?? true,
+    announcement: document.getElementById('prefAnnouncement')?.checked ?? true,
+    submissionReceived: document.getElementById('prefSubmissionReceived')?.checked ?? true,
+    quizAvailable: true,
+    messageReceived: document.getElementById('prefMessageReceived')?.checked ?? true,
+    groupCreated: document.getElementById('prefGroupCreated')?.checked ?? true,
+    dueDateReminder: document.getElementById('prefDueDateReminder')?.checked ?? true,
+    reminderHoursBefore: parseInt(document.getElementById('prefReminderHours')?.value) || 24
+  };
+
+  const saved = await supabaseUpsertNotificationPreferences(prefs);
+  if (saved) {
+    appData.notificationPreferences = prefs;
+    closeNotificationPreferences();
+    showToast('Notification preferences saved!', 'success');
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VIEW QUIZ DETAILS (Full Preview)
@@ -11085,6 +12044,41 @@ window.removeQuizTimeOverride = removeQuizTimeOverride;
 window.openDeadlineOverridesModal = openDeadlineOverridesModal;
 window.saveDeadlineOverrides = saveDeadlineOverrides;
 window.removeDeadlineOverride = removeDeadlineOverride;
+
+// Groups
+window.renderGroups = renderGroups;
+window.openCreateGroupSetModal = openCreateGroupSetModal;
+window.closeGroupSetModal = closeGroupSetModal;
+window.createGroupSet = createGroupSet;
+window.deleteGroupSet = deleteGroupSet;
+window.openManageGroupsModal = openManageGroupsModal;
+window.closeManageGroupsModal = closeManageGroupsModal;
+window.addGroupToSet = addGroupToSet;
+window.deleteGroup = deleteGroup;
+window.addMemberToGroup = addMemberToGroup;
+window.removeMemberFromGroup = removeMemberFromGroup;
+window.autoAssignGroups = autoAssignGroups;
+window.viewGroupDetail = viewGroupDetail;
+window.closeGroupDetail = closeGroupDetail;
+
+// Inbox / Messaging
+window.renderInbox = renderInbox;
+window.openNewMessageModal = openNewMessageModal;
+window.closeNewMessageModal = closeNewMessageModal;
+window.sendNewMessage = sendNewMessage;
+window.openConversation = openConversation;
+window.closeConversation = closeConversation;
+window.sendReplyMessage = sendReplyMessage;
+
+// Notifications
+window.renderNotifications = renderNotifications;
+window.markNotificationRead = markNotificationRead;
+window.markAllNotificationsRead = markAllNotificationsRead;
+window.deleteNotificationItem = deleteNotificationItem;
+window.openNotificationPreferences = openNotificationPreferences;
+window.closeNotificationPreferences = closeNotificationPreferences;
+window.saveNotificationPreferences = saveNotificationPreferences;
+window.updateNotificationBadge = updateNotificationBadge;
 
 // Discussion board
 window.updateDiscussionSearch = updateDiscussionSearch;
