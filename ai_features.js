@@ -1328,13 +1328,26 @@ function handleAiAction(action) {
       rejected: false
     });
   } else if (action.action === 'create_question_bank') {
+    // Normalize questions: AI sometimes uses questionPrompt/questionType instead of prompt/type
+    const normalizedQuestions = (action.questions || []).map(q => ({
+      type: q.type || q.questionType || 'true_false',
+      prompt: q.prompt || q.questionPrompt || q.question || '',
+      options: q.options || undefined,
+      correctAnswer: q.correctAnswer,
+      points: q.points || 1,
+      ...(q.caseSensitive !== undefined ? { caseSensitive: q.caseSensitive } : {}),
+      ...(q.shuffleOptions !== undefined ? { shuffleOptions: q.shuffleOptions } : {}),
+      ...(q.partialCredit ? { partialCredit: q.partialCredit } : {}),
+      ...(q.feedbackCorrect ? { feedbackCorrect: q.feedbackCorrect } : {}),
+      ...(q.feedbackIncorrect ? { feedbackIncorrect: q.feedbackIncorrect } : {}),
+    }));
     aiThread.push({
       role: 'action',
       actionType: 'question_bank_create',
       data: {
-        name: action.name || '',
+        name: action.name || action.bankName || '',
         description: action.description || '',
-        questions: action.questions || [],
+        questions: normalizedQuestions,
         notes: action.notes || ''
       },
       confirmed: false,

@@ -283,7 +283,7 @@ export const AI_TOOL_REGISTRY = {
     // Quizzes
     { name: 'create_quiz_from_bank',   description: 'Create quiz/exam linked to a question bank',            fields: 'title, description, category, questionBankId*, numQuestions, randomizeQuestions, randomizeAnswers, dueDate, availableFrom, availableUntil, points, timeLimit, attempts, allowLateSubmissions, status, gradingNotes' },
     // Question Banks
-    { name: 'create_question_bank',    description: 'Create a new question bank with questions. Supported question types: multiple_choice, true_false, short_answer, essay, fill_in_blank, matching, ordering', fields: 'name, description, questions:[{type,prompt,options,correctAnswer,points}]' },
+    { name: 'create_question_bank',    description: 'Create a new question bank with questions. Supported question types: multiple_choice, true_false, short_answer, essay, fill_in_blank, matching, ordering', fields: 'name* (bank title — use "name" NOT "bankName"), description, questions:[{type* (use "type" NOT "questionType"), prompt* (use "prompt" NOT "questionPrompt"), options, correctAnswer, points}]' },
     { name: 'update_question_bank',    description: 'Edit question bank name or description',                 fields: 'id* (from list_question_banks), name, description' },
     { name: 'add_questions_to_bank',   description: 'Append new questions to an existing question bank',      fields: 'id* (from list_question_banks), bankName, questions:[{type,prompt,options,correctAnswer,points}]' },
     { name: 'delete_question_bank',    description: 'Permanently delete a question bank', dangerous: true,   fields: 'id* (from list_question_banks)' },
