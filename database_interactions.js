@@ -1465,6 +1465,7 @@ async function acceptPendingInvitesClientSide(user) {
   } catch (e) {
     console.warn('[Supabase] client-side course invite acceptance:', e.message);
   }
+}
 
 export async function supabaseLoadUserGeminiKey(userId) {
   if (!supabaseClient) return null;
