@@ -1889,11 +1889,11 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! Added ${b(d.title)} (${escapeHtml(d.eventType || 'Event')}) to the ${pageLink('calendar', 'Calendar')}${evDate ? ` on ${escapeHtml(evDate)}` : ''}.`;
     }
     case 'group_set_create':
-      return `Done! Created group set ${b(d.name)} with ${d.groupCount || 4} groups. Manage from ${pageLink('groups', 'Groups')}.`;
+      return `Done! Created group set ${b(d.name)} with ${d.groupCount || 4} groups. Manage from ${pageLink('assignments', 'Assignments')} > Groups.`;
     case 'group_set_delete':
       return `Done! Group set ${b(d.name || '')} has been permanently deleted.`;
     case 'group_auto_assign':
-      return `Done! Students have been auto-assigned to groups in ${b(d.groupSetName || '')}. See ${pageLink('groups', 'Groups')}.`;
+      return `Done! Students have been auto-assigned to groups in ${b(d.groupSetName || '')}. See ${pageLink('assignments', 'Assignments')} > Groups.`;
     case 'send_message':
       return `Done! Message sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
     default:
