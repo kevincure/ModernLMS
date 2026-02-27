@@ -467,11 +467,14 @@ DEFAULTS (use unless user specifies otherwise):
 
 DATE/TIME RULES — CRITICAL:
 - The "Current date/time" in the course context is already in the user's LOCAL time zone. Use it as local time.
-- All date/time fields (dueDate, availableFrom, availableUntil) must be output as LOCAL time WITHOUT a trailing Z or timezone offset.
+- All date/time fields (dueDate, availableFrom, availableUntil, eventDate) must be output as LOCAL time WITHOUT a trailing Z or timezone offset.
   ✓ RIGHT: "2025-09-15T14:00:00"  (local 2pm, no Z)
   ❌ WRONG: "2025-09-15T14:00:00.000Z"  (this is interpreted as UTC, shifts display time by timezone offset)
   ❌ WRONG: "2025-09-15T14:00:00+05:00"  (do not include offset)
 - When a user says "2pm" they mean 2pm in their local time — output T14:00:00 with no suffix.
+- EXTRACT DATES FROM CONTENT: If the user pastes announcement/message text that contains a date/time (e.g. "next Saturday, March 7th, 2026, at 2:00 PM"), parse it and use it as the eventDate. Do NOT leave the date blank or ask for it if it appears in the pasted text.
+  Example: "add this to the calendar: we meet next Saturday March 7 at 2pm" → eventDate:"2026-03-07T14:00:00"
+- For relative dates like "next Saturday", resolve them relative to the Current date/time in the course context.
 
 CONTENT FORMATTING (markdown supported in description/content fields):
 - **bold**, *italic*, ## headers, - bullet lists
@@ -2542,6 +2545,66 @@ export function renderAiThread() {
 }
 
 /**
+ * Return a human-readable description of a single pipeline step.
+ */
+function describeStep(step) {
+  const a = step.action || '';
+  const title = step.title || step.name || '';
+  const module = step.moduleName || '';
+  const bank = step.bankName || '';
+  switch (a) {
+    case 'create_assignment':
+      return `Create assignment: "${title}"${step.assignmentType ? ` (${step.assignmentType})` : ''}`;
+    case 'update_assignment':
+      return `Update assignment: "${title}"`;
+    case 'delete_assignment':
+      return `Delete assignment: "${title}"`;
+    case 'create_quiz_from_bank':
+      return `Create quiz: "${title}"${bank ? ` from bank "${bank}"` : ''}`;
+    case 'create_question_bank':
+      return `Create question bank: "${title}"${step.questions ? ` (${step.questions.length} questions)` : ''}`;
+    case 'add_questions_to_bank':
+      return `Add questions to bank: "${bank || title}"`;
+    case 'delete_question_bank':
+      return `Delete question bank: "${bank || title}"`;
+    case 'create_announcement':
+      return `Create announcement: "${title}"`;
+    case 'update_announcement':
+      return `Update announcement: "${title}"`;
+    case 'delete_announcement':
+      return `Delete announcement: "${title}"`;
+    case 'create_module':
+      return `Create module: "${title}"`;
+    case 'update_module':
+      return `Rename module: "${step.moduleName || title}"${step.name ? ` → "${step.name}"` : ''}`;
+    case 'set_module_visibility':
+      return `${step.hidden ? 'Hide' : 'Show'} module: "${module || title}"`;
+    case 'add_to_module':
+      return `Add "${step.itemTitle || title}" to module: "${module}"`;
+    case 'remove_from_module':
+      return `Remove "${step.itemTitle || title}" from module: "${module}"`;
+    case 'move_to_module':
+      return `Move item to module: "${step.toModuleId || ''}"`;
+    case 'invite_person':
+      return `Invite: ${step.email || title}${step.role ? ` as ${step.role}` : ''}`;
+    case 'revoke_invite':
+      return `Revoke invite: ${step.email || title}`;
+    case 'remove_person':
+      return `Remove person: ${step.name || step.email || title}`;
+    case 'create_calendar_event':
+      return `Add calendar event: "${title}"${step.eventDate ? ` on ${new Date(step.eventDate).toLocaleDateString()}` : ''}`;
+    case 'set_assignment_visibility':
+      return `${step.hidden ? 'Hide' : 'Show'} assignment: "${step.assignmentTitle || title}"`;
+    case 'set_course_visibility':
+      return `${step.visible ? 'Show' : 'Hide'} course from students`;
+    case 'update_start_here':
+      return `Update Start Here page`;
+    default:
+      return title ? `${a.replace(/_/g, ' ')}: "${title}"` : a.replace(/_/g, ' ');
+  }
+}
+
+/**
  * Render preview for an action — all fields are editable
  */
 function renderActionPreview(msg, idx) {
@@ -2948,9 +3011,19 @@ function renderActionPreview(msg, idx) {
 
   // ─── CALENDAR EVENT CREATE ───────────────────────────────────────────────
   if (msg.actionType === 'calendar_event_create') {
+    const dtLocal = toDatetimeLocal(d.eventDate); // "YYYY-MM-DDTHH:MM" or ""
+    const datePart = dtLocal ? dtLocal.slice(0, 10) : '';
+    const timePart = dtLocal ? dtLocal.slice(11, 16) : '14:00';
+    const dateTimeInputs = `
+      <div style="display:flex; gap:8px;">
+        <input type="date" class="form-input" style="flex:1;" id="aiCalEvtDate_${idx}" value="${escapeHtml(datePart)}"
+          onchange="(function(el){const t=document.getElementById('aiCalEvtTime_${idx}');window.updateAiActionField(${idx},'eventDate',new Date(el.value+'T'+(t?t.value:'14:00')+':00').toISOString());})(this)">
+        <input type="time" class="form-input" style="width:130px;" id="aiCalEvtTime_${idx}" value="${escapeHtml(timePart)}" step="1800"
+          onchange="(function(el){const d=document.getElementById('aiCalEvtDate_${idx}');window.updateAiActionField(${idx},'eventDate',new Date((d?d.value:'2000-01-01')+'T'+el.value+':00').toISOString());})(this)">
+      </div>`;
     return `
       ${field('Title', textInput('title', d.title))}
-      ${field('Date & Time', `<input type="datetime-local" class="form-input" data-ai-idx="${idx}" data-ai-field="eventDate" value="${escapeHtml(toDatetimeLocal(d.eventDate))}" onchange="window.updateAiActionField(${idx}, 'eventDate', new Date(this.value).toISOString())">`)}
+      ${field('Date & Time', dateTimeInputs)}
       ${field('Event Type', selectInput('eventType', d.eventType || 'Event', [['Class','Class'],['Lecture','Special Lecture'],['Office Hours','Office Hours'],['Exam','Exam'],['Event','Other']]))}
       ${field('Description', textarea('description', d.description, 2))}
     `;
@@ -2959,10 +3032,8 @@ function renderActionPreview(msg, idx) {
   // ─── PIPELINE ────────────────────────────────────────────────────────────
   if (msg.actionType === 'pipeline') {
     const steps = Array.isArray(d.steps) ? d.steps : [];
-    const stepsHtml = steps.map((step, i) => {
-      const idText = step.id || step.quizId || step.announcementId || step.assignmentId || step.moduleId || '';
-      const title = step.title || step.name || '';
-      return `<li style="margin-bottom:6px;"><code>${escapeHtml(step.action || 'unknown')}</code>${title ? ` — <em>${escapeHtml(title)}</em>` : ''}${idText ? ` <span class="muted" style="font-size:0.8rem;">(${escapeHtml(idText)})</span>` : ''}</li>`;
+    const stepsHtml = steps.map((step) => {
+      return `<li style="margin-bottom:6px;">${escapeHtml(describeStep(step))}</li>`;
     }).join('');
     return `
       <div class="muted" style="font-size:0.9rem; margin-bottom:8px;">${steps.length} step${steps.length !== 1 ? 's' : ''}</div>

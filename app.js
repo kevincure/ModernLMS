@@ -167,6 +167,7 @@ import {
 import {
   initModalsModule,
   generateModals,
+  generateTimeSelectOptions,
   setActiveCourseId as setModalsActiveCourseId
 } from './modals.js';
 
@@ -2875,22 +2876,22 @@ function renderCalendar() {
   const end = new Date();
   end.setDate(now.getDate() + 45);
 
-  const items = [
-    ...appData.assignments
-      .filter(a => a.courseId === activeCourseId)
-      .filter(a => effectiveStaff || (
-        a.status === 'published' && !a.hidden &&
-        (!a.availableFrom || new Date(a.availableFrom) <= now)
-      ))
-      .filter(a => a.dueDate)
-      .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status, id: a.id })),
-    ...(appData.calendarEvents || [])
-      .filter(ev => ev.courseId === activeCourseId)
-      .map(ev => ({ type: ev.eventType || 'Event', title: ev.title, dueDate: ev.eventDate, status: 'event', id: ev.id, isEvent: true })),
-  ].filter(item => {
-    const date = new Date(item.dueDate);
-    return date >= start && date <= end;
-  });
+  // Assignments get the date window filter; calendar events always show (they are manually added)
+  const assignmentItems = appData.assignments
+    .filter(a => a.courseId === activeCourseId)
+    .filter(a => effectiveStaff || (
+      a.status === 'published' && !a.hidden &&
+      (!a.availableFrom || new Date(a.availableFrom) <= now)
+    ))
+    .filter(a => a.dueDate)
+    .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate, status: a.status, id: a.id }))
+    .filter(a => { const d = new Date(a.dueDate); return d >= start && d <= end; });
+
+  const calendarEventItems = (appData.calendarEvents || [])
+    .filter(ev => ev.courseId === activeCourseId)
+    .map(ev => ({ type: ev.eventType || 'Event', title: ev.title, dueDate: ev.eventDate, status: 'event', id: ev.id, isEvent: true }));
+
+  const items = [...assignmentItems, ...calendarEventItems];
   
   if (items.length === 0) {
     setHTML('calendarList', '<div class="empty-state"><div class="empty-state-title">No upcoming work</div></div>');
@@ -2946,8 +2947,14 @@ function openCreateCalendarEventModal() {
           <input type="text" id="calEvtTitle" class="form-input" placeholder="e.g. Class 12 – Guest Lecture">
         </div>
         <div class="form-group">
-          <label class="form-label">Date &amp; Time <span style="color:var(--danger)">*</span></label>
-          <input type="datetime-local" id="calEvtDate" class="form-input">
+          <label class="form-label">Date <span style="color:var(--danger)">*</span></label>
+          <input type="date" id="calEvtDate" class="form-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Time</label>
+          <select id="calEvtTime" class="form-select">
+            ${generateTimeSelectOptions('14:00')}
+          </select>
         </div>
         <div class="form-group">
           <label class="form-label">Event Type</label>
@@ -2976,6 +2983,7 @@ function openCreateCalendarEventModal() {
 async function saveCalendarEvent() {
   const title = document.getElementById('calEvtTitle')?.value.trim();
   const dateVal = document.getElementById('calEvtDate')?.value;
+  const timeVal = document.getElementById('calEvtTime')?.value || '14:00';
   const eventType = document.getElementById('calEvtType')?.value || 'Event';
   const description = document.getElementById('calEvtDesc')?.value.trim() || '';
 
@@ -2986,7 +2994,7 @@ async function saveCalendarEvent() {
     id: generateId(),
     courseId: activeCourseId,
     title,
-    eventDate: new Date(dateVal).toISOString(),
+    eventDate: new Date(`${dateVal}T${timeVal}:00`).toISOString(),
     eventType,
     description,
     createdBy: appData.currentUser?.id,
@@ -3623,7 +3631,32 @@ function readOptionsFromDOM(prefix, count) {
   return opts;
 }
 
+/**
+ * Flush all DOM fields from the question editor back into the draft question object.
+ * Call this before any add/remove item operation to prevent losing unsaved text.
+ */
+function flushQuestionEditorToState() {
+  if (currentEditQuestionIndex === null) return;
+  const q = questionBankDraftQuestions[currentEditQuestionIndex];
+  if (!q) return;
+  const promptEl = document.getElementById('questionPrompt');
+  if (promptEl) q.prompt = promptEl.value;
+  const titleEl = document.getElementById('questionTitle');
+  if (titleEl) q.title = titleEl.value;
+  const ptsEl = document.getElementById('questionPoints');
+  if (ptsEl) q.points = parseFloat(ptsEl.value) || q.points || 1;
+  // Save correct answers for MC types (so checked state survives re-render)
+  const type = document.getElementById('questionType')?.value || q.type;
+  if (type === 'mc_multi') {
+    q.correctAnswer = [...document.querySelectorAll('input[name="qCorrectMulti"]:checked')].map(el => parseInt(el.value));
+  } else if (type === 'mc_single' || type === 'multiple_choice') {
+    const sel = document.querySelector('input[name="qCorrect"]:checked');
+    if (sel) q.correctAnswer = parseInt(sel.value);
+  }
+}
+
 function addShortAnswer() {
+  flushQuestionEditorToState();
   const q = questionBankDraftQuestions[currentEditQuestionIndex];
   const current = [];
   let i = 0;
@@ -3638,6 +3671,7 @@ function addShortAnswer() {
 window.addShortAnswer = addShortAnswer;
 
 function removeShortAnswer(index) {
+  flushQuestionEditorToState();
   const q = questionBankDraftQuestions[currentEditQuestionIndex];
   const current = [];
   let i = 0;
@@ -3652,6 +3686,7 @@ function removeShortAnswer(index) {
 window.removeShortAnswer = removeShortAnswer;
 
 function addMatchPair() {
+  flushQuestionEditorToState();
   const q = questionBankDraftQuestions[currentEditQuestionIndex];
   const current = [];
   let i = 0;
@@ -3669,6 +3704,7 @@ function addMatchPair() {
 window.addMatchPair = addMatchPair;
 
 function removeMatchPair(index) {
+  flushQuestionEditorToState();
   const q = questionBankDraftQuestions[currentEditQuestionIndex];
   const current = [];
   let i = 0;
@@ -3686,6 +3722,7 @@ function removeMatchPair(index) {
 window.removeMatchPair = removeMatchPair;
 
 function addOrderItem() {
+  flushQuestionEditorToState();
   const q = questionBankDraftQuestions[currentEditQuestionIndex];
   const current = [];
   let i = 0;
@@ -3700,6 +3737,7 @@ function addOrderItem() {
 window.addOrderItem = addOrderItem;
 
 function removeOrderItem(index) {
+  flushQuestionEditorToState();
   const q = questionBankDraftQuestions[currentEditQuestionIndex];
   const current = [];
   let i = 0;
@@ -3760,10 +3798,11 @@ function changeQuestionType() {
 }
 
 function addQuestionOption() {
+  flushQuestionEditorToState(); // saves prompt, title, points, and correctAnswer
   const question = questionBankDraftQuestions[currentEditQuestionIndex];
   if (!question.options) question.options = [];
 
-  // Save current option values before re-rendering
+  // Save current option text values before re-rendering
   const currentOptions = [];
   let i = 0;
   while (document.getElementById(`qOpt${i}`)) {
@@ -3773,17 +3812,14 @@ function addQuestionOption() {
   question.options = currentOptions;
   question.options.push('');
 
-  // Preserve selected correct answer
-  const selected = document.querySelector('input[name="qCorrect"]:checked');
-  if (selected) question.correctAnswer = parseInt(selected.value);
-
   openQuestionEditor(currentEditQuestionIndex);
 }
 
 function removeQuestionOption(index) {
+  flushQuestionEditorToState(); // saves prompt, title, points, and correctAnswer
   const question = questionBankDraftQuestions[currentEditQuestionIndex];
 
-  // Save current option values before re-rendering
+  // Save current option text values before re-rendering
   const currentOptions = [];
   let i = 0;
   while (document.getElementById(`qOpt${i}`)) {
@@ -3793,9 +3829,15 @@ function removeQuestionOption(index) {
   question.options = currentOptions;
   question.options.splice(index, 1);
 
-  // Adjust correct answer if needed
-  if (question.correctAnswer >= question.options.length) {
+  // Adjust single-correct answer index if it pointed at/past the removed option
+  if (typeof question.correctAnswer === 'number' && question.correctAnswer >= question.options.length) {
     question.correctAnswer = question.options.length - 1;
+  }
+  // Adjust multi-correct array: remove the removed index, shift down higher indices
+  if (Array.isArray(question.correctAnswer)) {
+    question.correctAnswer = question.correctAnswer
+      .filter(idx => idx !== index)
+      .map(idx => idx > index ? idx - 1 : idx);
   }
 
   openQuestionEditor(currentEditQuestionIndex);
@@ -4775,7 +4817,18 @@ function previewQuiz(assignmentId) {
         <div class="modal-header">
           <div>
             <h2 class="modal-title" style="font-size:1.1rem;">Quiz Preview: ${escapeHtml(assignment.title)}</h2>
-            <div class="muted" style="font-size:0.85rem;">${numQ} questions · ${questions.slice(0, numQ).reduce((s, q) => s + (parseFloat(q.points) || 1), 0)} total points · ${assignment.timeLimit ? assignment.timeLimit + ' min time limit' : 'No time limit'}</div>
+            <div class="muted" style="font-size:0.85rem;">${numQ} questions · ${(() => {
+              const gt = assignment.gradingType || 'points';
+              if (assignment.masteryMode) {
+                const thresh = assignment.masteryThreshold || Math.ceil(numQ * 0.7);
+                return `Complete/Incomplete · Mastery (${thresh}/${numQ} correct to pass)`;
+              } else if (gt === 'complete_incomplete') {
+                return 'Complete / Incomplete';
+              } else {
+                const totalPts = questions.slice(0, numQ).reduce((s, q) => s + (parseFloat(q.points) || 1), 0);
+                return `${totalPts} total points`;
+              }
+            })()} · ${assignment.timeLimit ? assignment.timeLimit + ' min time limit' : 'No time limit'}</div>
           </div>
           <button class="modal-close" onclick="document.getElementById('quizPreviewModal').remove()">&times;</button>
         </div>
