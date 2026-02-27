@@ -1375,6 +1375,12 @@ export async function supabaseEnsureProfile(user) {
     console.warn('[Supabase] Could not upsert profile:', error.message);
   } else {
     console.log('[Supabase] Profile upserted for', user.email);
+    // Accept any pending org invites — creates org_members entry and flips
+    // org_invites.status to 'accepted' so admin sees them as an active member.
+    const { error: rpcErr } = await supabaseClient.rpc('accept_pending_org_invites');
+    if (rpcErr) {
+      console.warn('[Supabase] accept_pending_org_invites:', rpcErr.message);
+    }
   }
 }
 
