@@ -125,7 +125,7 @@ export async function loadDataFromSupabase() {
       gradeSettingsRes,
       questionBanksRes
     ] = await Promise.all([
-      // Exclude gemini_key: sensitive, fetched separately only for own profile.
+      // Exclude sensitive profile-only fields from the client payload.
       // Row-level RLS (Section 1 migration) limits which profiles are visible.
       supabaseClient.from('profiles').select('id, email, name, avatar, given_name, family_name, created_at, updated_at'),
       supabaseClient.from('courses').select('*'),
@@ -1326,30 +1326,11 @@ export async function supabaseCopyStorageFile(sourceFile, destCourseId, uploaded
 // USER PROFILE OPERATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function supabaseUpdateUserGeminiKey(userId, geminiKey) {
-  if (!supabaseClient) return false;
-  console.log('[Supabase] Updating Gemini key for user:', userId);
-
-  const { error } = await supabaseClient.from('profiles').update({
-    gemini_key: geminiKey,
-    updated_at: new Date().toISOString()
-  }).eq('id', userId);
-
-  if (error) {
-    console.error('[Supabase] Error updating Gemini key:', error);
-    if (showToast) showToast('Failed to save Gemini key to profile', 'error');
-    return false;
-  }
-  console.log('[Supabase] Gemini key updated');
-  return true;
-}
-
 /**
  * Upsert a profiles row for the signed-in user.
  * Called on every sign-in so invited users (who have an auth.users row but no
- * profiles row) get their row created automatically.  Existing rows are updated
- * with fresh OAuth metadata (name, email) but gemini_key is intentionally left
- * untouched so the UPDATE doesn't clobber the user's stored key.
+ * profiles row) get their row created automatically. Existing rows are updated
+ * with fresh OAuth metadata (name, email).
  */
 export async function supabaseEnsureProfile(user) {
   if (!supabaseClient || !user?.id) return;
@@ -1467,20 +1448,6 @@ async function acceptPendingInvitesClientSide(user) {
   }
 }
 
-export async function supabaseLoadUserGeminiKey(userId) {
-  if (!supabaseClient) return null;
-
-  const { data, error } = await supabaseClient.from('profiles')
-    .select('gemini_key')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error('[Supabase] Error loading Gemini key:', error);
-    return null;
-  }
-  return data?.gemini_key || null;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUIZ OPERATIONS
@@ -2004,8 +1971,6 @@ export async function callGeminiAPI(contents, generationConfig = null) {
   if (!session) {
     throw new Error('Not authenticated - please sign in again');
   }
-
-  console.log('[Gemini] Access token (first 20 chars):', session.access_token?.substring(0, 20));
 
   // Extra diagnostics for project/token mismatch (common source of 401 on Edge Functions)
   let tokenIssuer = null;
