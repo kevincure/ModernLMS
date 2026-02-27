@@ -2097,6 +2097,7 @@ function renderHome() {
   const now = new Date();
   const upcomingAssignments = appData.assignments
     .filter(a => a.courseId === activeCourseId && a.status === 'published' && !a.hidden)
+    .filter(a => isStaffOnHome || !a.availableFrom || new Date(a.availableFrom) <= now)
     .filter(a => (a.assignmentType || 'essay') !== 'no_submission')
     .filter(a => a.dueDate && new Date(a.dueDate) > now)
     .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate }));
