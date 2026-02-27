@@ -1371,16 +1371,20 @@ export async function supabaseEnsureProfile(user) {
   );
 
   if (error) {
-    // Non-fatal: log and continue. The rest of the sign-in flow will still work.
+    // Non-fatal: log and continue. The rest of the sign-in flow will still work
+    // because the handle_new_user() trigger already created the profile row.
     console.warn('[Supabase] Could not upsert profile:', error.message);
   } else {
     console.log('[Supabase] Profile upserted for', user.email);
-    // Accept any pending org invites — creates org_members entry and flips
-    // org_invites.status to 'accepted' so admin sees them as an active member.
-    const { error: rpcErr } = await supabaseClient.rpc('accept_pending_org_invites');
-    if (rpcErr) {
-      console.warn('[Supabase] accept_pending_org_invites:', rpcErr.message);
-    }
+  }
+
+  // Accept any pending org invites and course invites — creates org_members
+  // and enrollment entries, then deletes the invite rows.  Runs regardless of
+  // whether the upsert above succeeded because the DB trigger may have already
+  // created the profile row that the RPC function needs.
+  const { error: rpcErr } = await supabaseClient.rpc('accept_pending_org_invites');
+  if (rpcErr) {
+    console.warn('[Supabase] accept_pending_org_invites:', rpcErr.message);
   }
 }
 
