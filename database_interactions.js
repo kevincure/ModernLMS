@@ -1344,13 +1344,47 @@ export async function supabaseUpdateUserGeminiKey(userId, geminiKey) {
   return true;
 }
 
+/**
+ * Upsert a profiles row for the signed-in user.
+ * Called on every sign-in so invited users (who have an auth.users row but no
+ * profiles row) get their row created automatically.  Existing rows are updated
+ * with fresh OAuth metadata (name, email) but gemini_key is intentionally left
+ * untouched so the UPDATE doesn't clobber the user's stored key.
+ */
+export async function supabaseEnsureProfile(user) {
+  if (!supabaseClient || !user?.id) return;
+
+  const fullName = user.user_metadata?.full_name || user.email?.split('@')[0] || '';
+  const givenName = user.user_metadata?.given_name || null;
+  const familyName = user.user_metadata?.family_name || null;
+
+  const { error } = await supabaseClient.from('profiles').upsert(
+    {
+      id: user.id,
+      email: user.email,
+      name: fullName,
+      given_name: givenName,
+      family_name: familyName,
+      updated_at: new Date().toISOString()
+    },
+    { onConflict: 'id' }
+  );
+
+  if (error) {
+    // Non-fatal: log and continue. The rest of the sign-in flow will still work.
+    console.warn('[Supabase] Could not upsert profile:', error.message);
+  } else {
+    console.log('[Supabase] Profile upserted for', user.email);
+  }
+}
+
 export async function supabaseLoadUserGeminiKey(userId) {
   if (!supabaseClient) return null;
 
   const { data, error } = await supabaseClient.from('profiles')
     .select('gemini_key')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error('[Supabase] Error loading Gemini key:', error);

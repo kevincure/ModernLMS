@@ -231,8 +231,8 @@ export function renderMarkdown(text) {
     return `@@PRESERVED${index}@@`;
   });
 
-  // Convert raw YouTube URLs to embeds
-  working = working.replace(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[^\s]*)?/g, (match, videoId) => {
+  // Convert raw YouTube URLs to embeds (handles watch, youtu.be, Shorts, Live)
+  working = working.replace(/https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[^\s<"]*)?/g, (match, videoId) => {
     const index = preservedBlocks.length;
     preservedBlocks.push(`<div class="video-embed"><iframe src="https://www.youtube.com/embed/${videoId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`);
     return `@@PRESERVED${index}@@`;
@@ -411,12 +411,25 @@ export function readFileAsText(file) {
 
 export function extractYouTubeId(url) {
   if (!url) return null;
+  // Standard watch URL: youtube.com/watch?v=ID
+  if (url.includes('v=')) {
+    return url.split('v=')[1].split('&')[0].split('?')[0] || null;
+  }
+  // Short URL: youtu.be/ID
   if (url.includes('youtu.be/')) {
-    return url.split('youtu.be/')[1].split('?')[0].split('&')[0];
-  } else if (url.includes('v=')) {
-    return url.split('v=')[1].split('&')[0].split('?')[0];
-  } else if (url.includes('embed/')) {
-    return url.split('embed/')[1].split('?')[0].split('&')[0];
+    return url.split('youtu.be/')[1].split('?')[0].split('&')[0] || null;
+  }
+  // YouTube Shorts: youtube.com/shorts/ID
+  if (url.includes('/shorts/')) {
+    return url.split('/shorts/')[1].split('?')[0].split('&')[0] || null;
+  }
+  // YouTube Live: youtube.com/live/ID
+  if (url.includes('/live/')) {
+    return url.split('/live/')[1].split('?')[0].split('&')[0] || null;
+  }
+  // Already an embed URL: youtube.com/embed/ID
+  if (url.includes('/embed/')) {
+    return url.split('/embed/')[1].split('?')[0].split('&')[0] || null;
   }
   return null;
 }

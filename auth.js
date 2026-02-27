@@ -4,7 +4,7 @@
 ═══════════════════════════════════════════════════════════════════════════════ */
 
 import { showToast, setText, getInitials } from './ui_helpers.js';
-import { loadDataFromSupabase, supabaseLoadUserGeminiKey } from './database_interactions.js';
+import { loadDataFromSupabase, supabaseLoadUserGeminiKey, supabaseEnsureProfile } from './database_interactions.js';
 import { DEFAULT_DATA } from './constants.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -138,6 +138,10 @@ export async function handleSignedIn(user) {
     };
 
     console.log('[Auth] Current user set:', appData.currentUser);
+
+    // Ensure a profiles row exists for this user (invited users won't have one
+    // until their first sign-in because the admin only writes to org_invites).
+    await supabaseEnsureProfile(user);
 
     // Load data from Supabase
     await loadDataFromSupabase();
