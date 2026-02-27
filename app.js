@@ -60,7 +60,6 @@ import {
   supabaseDeleteQuestionBank,
   supabaseCreateInvite,
   supabaseDeleteInvite,
-  supabaseUpdateInviteStatus,
   supabaseCopyStorageFile,
   supabaseCreateDiscussionThread,
   supabaseUpdateDiscussionThread,
@@ -2022,21 +2021,20 @@ async function acceptInvite(inviteId) {
     return;
   }
 
-  // Mark invite accepted
-  const inviteAccepted = await supabaseUpdateInviteStatus(inviteId, 'accepted');
-  if (!inviteAccepted) {
+  // Delete the invite row — it's no longer needed once enrolled
+  const inviteDeleted = await supabaseDeleteInvite(inviteId);
+  if (!inviteDeleted) {
     const rollbackOk = await supabaseDeleteEnrollment(enrollment.userId, enrollment.courseId);
     if (!rollbackOk) {
-      showToast('Enrollment created but invite update failed. Please contact an administrator.', 'error');
+      showToast('Enrollment created but invite could not be removed. Please contact an administrator.', 'error');
     } else {
-      showToast('Failed to update invite status', 'error');
+      showToast('Failed to process invite', 'error');
     }
     return;
   }
 
   appData.enrollments.push(enrollment);
-  const inv = appData.invites.find(i => i.id === inviteId);
-  if (inv) inv.status = 'accepted';
+  appData.invites = (appData.invites || []).filter(i => i.id !== inviteId);
 
   // Refresh invite list in modal
   const remaining = (appData.invites || []).filter(
@@ -2055,13 +2053,12 @@ async function acceptInvite(inviteId) {
 window.acceptInvite = acceptInvite;
 
 async function rejectInvite(inviteId) {
-  const inviteRejected = await supabaseUpdateInviteStatus(inviteId, 'rejected');
-  if (!inviteRejected) {
-    showToast('Failed to update invite status', 'error');
+  const inviteDeleted = await supabaseDeleteInvite(inviteId);
+  if (!inviteDeleted) {
+    showToast('Failed to decline invite', 'error');
     return;
   }
-  const inv = (appData.invites || []).find(i => i.id === inviteId);
-  if (inv) inv.status = 'rejected';
+  appData.invites = (appData.invites || []).filter(i => i.id !== inviteId);
 
   const remaining = (appData.invites || []).filter(
     i => i.email?.toLowerCase() === appData.currentUser.email?.toLowerCase() && i.status === 'pending'
@@ -2095,21 +2092,26 @@ function renderHome() {
   
   const isStaffOnHome = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
 
-  // Upcoming assignments + quizzes
+  // Upcoming items: assignments, quizzes, and calendar events.
+  // Hidden assignments are never shown here regardless of staff/student view.
+  const now = new Date();
   const upcomingAssignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && a.status === 'published')
-    .filter(a => isStaffOnHome || (!a.hidden && (a.assignmentType || 'essay') !== 'no_submission'))
-    .filter(a => new Date(a.dueDate) > new Date())
-    .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate }))
-    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  
+    .filter(a => a.courseId === activeCourseId && a.status === 'published' && !a.hidden)
+    .filter(a => (a.assignmentType || 'essay') !== 'no_submission')
+    .filter(a => a.dueDate && new Date(a.dueDate) > now)
+    .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate }));
+
   const upcomingQuizzes = appData.quizzes
     .filter(q => q.courseId === activeCourseId && q.status === 'published')
-    .filter(q => new Date(q.dueDate) > new Date())
-    .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate }))
-    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  
-  const upcoming = [...upcomingAssignments, ...upcomingQuizzes]
+    .filter(q => q.dueDate && new Date(q.dueDate) > now)
+    .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate }));
+
+  const upcomingCalEvents = (appData.calendarEvents || [])
+    .filter(ev => ev.courseId === activeCourseId)
+    .filter(ev => ev.eventDate && new Date(ev.eventDate) > now)
+    .map(ev => ({ type: ev.eventType || 'Event', title: ev.title, dueDate: ev.eventDate }));
+
+  const upcoming = [...upcomingAssignments, ...upcomingQuizzes, ...upcomingCalEvents]
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
     .slice(0, 5);
   
