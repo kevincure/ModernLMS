@@ -2723,6 +2723,7 @@ function renderAssignments() {
           <option value="za" ${assignmentsSort === 'za' ? 'selected' : ''}>Z → A</option>
         </select>
         ${isStaffUser && !studentViewMode ? `
+          <button class="btn btn-secondary" onclick="openGroupSetsModal()">Group Sets</button>
           <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
           <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
         ` : ''}
@@ -10174,6 +10175,76 @@ function closeGroupDetail() {
   renderGroups();
 }
 
+function openGroupSetsModal() {
+  if (!activeCourseId) return;
+  const existing = document.getElementById('groupSetsListModal');
+  if (existing) existing.remove();
+  renderGroupSetsModalContent();
+}
+
+function renderGroupSetsModalContent() {
+  const existing = document.getElementById('groupSetsListModal');
+  if (existing) existing.remove();
+
+  const groupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
+  const listHtml = groupSets.length === 0
+    ? '<div class="empty-state"><div class="empty-state-text">No group sets yet. Create one to organize students into teams.</div></div>'
+    : groupSets.map(gs => {
+        const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gs.id);
+        const totalMembers = groups.reduce((sum, g) => sum + (g.members || []).length, 0);
+        const linkedAssignments = (appData.assignments || []).filter(a => a.courseId === activeCourseId && a.groupSetId === gs.id);
+        return `
+          <div class="card" style="margin-bottom:8px;">
+            <div class="card-header">
+              <div style="flex:1;">
+                <div class="card-title">${escapeHtml(gs.name)}</div>
+                <div class="muted" style="font-size:0.85rem;">
+                  ${groups.length} group${groups.length !== 1 ? 's' : ''} · ${totalMembers} member${totalMembers !== 1 ? 's' : ''}
+                  ${linkedAssignments.length ? ` · Used by: ${linkedAssignments.map(a => escapeHtml(a.title)).join(', ')}` : ''}
+                </div>
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button class="btn btn-secondary btn-sm" onclick="closeModal('groupSetsListModal'); autoAssignGroups('${gs.id}')">Auto-assign</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeModal('groupSetsListModal'); openManageGroupsModal('${gs.id}')">Manage</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteGroupSetFromModal('${gs.id}')">Delete</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+  const html = `
+    <div class="modal-overlay" id="groupSetsListModal" style="display:flex;">
+      <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Group Sets</h2>
+          <button class="modal-close" onclick="closeModal('groupSetsListModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:60vh; overflow-y:auto;">
+          ${listHtml}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('groupSetsListModal')">Close</button>
+          <button class="btn btn-primary" onclick="closeModal('groupSetsListModal'); openCreateGroupSetModal()">New Group Set</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+}
+
+async function deleteGroupSetFromModal(gsId) {
+  showConfirmDialog('Delete this entire group set and all its groups?', async () => {
+    const ok = await supabaseDeleteGroupSet(gsId);
+    if (!ok) return;
+    appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
+    appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
+    renderGroupSetsModalContent();
+    renderGroups();
+    showToast('Group set deleted', 'success');
+  });
+}
+
 function openCreateGroupSetModal() {
   if (!activeCourseId) return;
   const existing = document.getElementById('groupSetModal');
@@ -10728,15 +10799,16 @@ function renderNotifications() {
 }
 
 function updateNotificationBadge() {
-  const badge = document.getElementById('notificationBadge');
-  if (!badge) return;
   const unreadCount = (appData.notifications || []).filter(n => !n.isRead).length;
-  if (unreadCount > 0) {
-    badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
-    badge.style.display = 'flex';
-  } else {
-    badge.style.display = 'none';
-  }
+  const text = unreadCount > 99 ? '99+' : String(unreadCount);
+  const show = unreadCount > 0;
+  // Update both sidebar and mobile drawer badges
+  ['notificationBadge', 'notificationBadgeMobile'].forEach(id => {
+    const badge = document.getElementById(id);
+    if (!badge) return;
+    badge.textContent = text;
+    badge.style.display = show ? 'flex' : 'none';
+  });
 }
 
 async function markNotificationRead(id, link) {
@@ -12047,6 +12119,9 @@ window.removeDeadlineOverride = removeDeadlineOverride;
 
 // Groups
 window.renderGroups = renderGroups;
+window.openGroupSetsModal = openGroupSetsModal;
+window.renderGroupSetsModalContent = renderGroupSetsModalContent;
+window.deleteGroupSetFromModal = deleteGroupSetFromModal;
 window.openCreateGroupSetModal = openCreateGroupSetModal;
 window.closeGroupSetModal = closeGroupSetModal;
 window.createGroupSet = createGroupSet;

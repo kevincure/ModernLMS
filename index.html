@@ -188,9 +188,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           Inbox
         </button>
-        <button class="mobile-drawer-item" data-page="notifications" onclick="navigateTo('notifications'); closeMobileDrawer()">
+        <button class="mobile-drawer-item" data-page="notifications" onclick="navigateTo('notifications'); closeMobileDrawer()" style="position:relative;">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           Notifications
+          <span id="notificationBadgeMobile" class="notification-badge" style="display:none; position:static; margin-left:4px;"></span>
         </button>
         <button class="mobile-drawer-item" onclick="toggleAiOverlay(); closeMobileDrawer()">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><path d="M7 7h10v10H7z"/></svg>

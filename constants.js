@@ -250,12 +250,12 @@ Example: {"title":"...","content":"..."} - do not wrap in code fences or extra t
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const AI_TOOL_REGISTRY = {
-  version: '1.2',
+  version: '1.3',
 
   // Context tools: AI calls these to look up real IDs and current data.
   // Each result is fed back into the conversation before the AI emits an action.
   context_tools: [
-    { name: 'list_assignments',         description: 'All assignments (id, title, assignmentType, gradingType, status, points, dueDate)' },
+    { name: 'list_assignments',         description: 'All assignments (id, title, assignmentType, gradingType, status, points, dueDate, isGroupAssignment, groupSetId)' },
     { name: 'list_quizzes',             description: 'All standalone quizzes (id, title, status, dueDate, questionCount)' },
     { name: 'list_files',               description: 'All uploaded files (id, name, type, size, hidden, folder)' },
     { name: 'list_modules',             description: 'Module structure with item IDs, titles, and hidden status' },
@@ -265,20 +265,22 @@ export const AI_TOOL_REGISTRY = {
     { name: 'get_grade_categories',     description: 'Grade categories and weights for this course (read-only)' },
     { name: 'get_grade_settings',       description: 'Letter grade thresholds and curve settings (read-only)' },
     { name: 'list_discussion_threads',  description: 'Discussion threads (id, title, pinned, replyCount)' },
+    { name: 'list_group_sets',          description: 'All group sets in this course (id, name, description, groupCount, groups[{id, name, memberCount}])' },
     { name: 'get_question_bank',        description: 'Full question list for a bank (includes question IDs)', params: { bank_id: 'string' } },
     { name: 'get_assignment',           description: 'Full assignment details including rubric', params: { assignment_id: 'string' } },
     { name: 'get_quiz',                 description: 'Full quiz with all questions', params: { quiz_id: 'string' } },
     { name: 'get_file_content',         description: 'Read text content of a file (PDF/doc)', params: { file_id: 'string' } },
     { name: 'get_assignment_analytics', description: 'Submission and grade stats for an assignment (submittedCount, averageScore, ungradedCount, etc.)', params: { assignment_id: 'string' } },
-    { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } }
+    { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } },
+    { name: 'get_group_set',            description: 'Full group set details including groups and their members', params: { group_set_id: 'string' } }
   ],
 
   // Action types: AI emits one of these → system renders a Take Action Card →
   // user clicks Confirm → deterministic code executes (AI never touches the DB).
   action_types: [
     // Assignments
-    { name: 'create_assignment',       description: 'Create a new assignment (essay / quiz / no_submission)',  fields: 'title, description, assignmentType, gradingType, points, dueDate, status, submissionModalities, allowLateSubmissions, lateDeduction, allowResubmission, submissionAttempts, gradingNotes, questionBankId, timeLimit, randomizeQuestions, availableFrom, availableUntil, fileIds' },
-    { name: 'update_assignment',       description: 'Edit an existing assignment',                             fields: 'id*, title, description, points, dueDate, status, assignmentType, gradingType, allowLateSubmissions, lateDeduction, allowResubmission' },
+    { name: 'create_assignment',       description: 'Create a new assignment (essay / quiz / no_submission). For group assignments set isGroupAssignment=true, groupSetId (from list_group_sets), and groupGradingMode (per_group or individual)',  fields: 'title, description, assignmentType, gradingType, points, dueDate, status, submissionModalities, allowLateSubmissions, lateDeduction, allowResubmission, submissionAttempts, gradingNotes, questionBankId, timeLimit, randomizeQuestions, availableFrom, availableUntil, fileIds, isGroupAssignment, groupSetId, groupGradingMode' },
+    { name: 'update_assignment',       description: 'Edit an existing assignment. Can also toggle group assignment settings.',  fields: 'id*, title, description, points, dueDate, status, assignmentType, gradingType, allowLateSubmissions, lateDeduction, allowResubmission, isGroupAssignment, groupSetId, groupGradingMode' },
     { name: 'delete_assignment',       description: 'Permanently delete an assignment',   dangerous: true,    fields: 'id*' },
     // Quizzes
     { name: 'create_quiz_from_bank',   description: 'Create quiz/exam linked to a question bank',            fields: 'title, description, category, questionBankId*, numQuestions, randomizeQuestions, randomizeAnswers, dueDate, availableFrom, availableUntil, points, timeLimit, attempts, allowLateSubmissions, status, gradingNotes' },
@@ -314,6 +316,12 @@ export const AI_TOOL_REGISTRY = {
     { name: 'set_course_visibility',   description: 'Show or hide the entire course from students',          fields: 'visible (boolean)' },
     // Calendar
     { name: 'create_calendar_event',   description: 'Add a non-assignment calendar entry (class, lecture, office hours, etc.)', fields: 'title, eventDate (ISO 8601), eventType (Class|Lecture|Office Hours|Exam|Event), description' },
+    // Groups
+    { name: 'create_group_set',        description: 'Create a new group set with N groups. Students can be auto-assigned afterwards.', fields: 'name*, description, groupCount (number of groups to create, default 4)' },
+    { name: 'delete_group_set',        description: 'Permanently delete a group set and all its groups', dangerous: true, fields: 'id* (from list_group_sets), name' },
+    { name: 'auto_assign_groups',      description: 'Randomly assign all unassigned students to groups in a set (round-robin)', fields: 'groupSetId* (from list_group_sets), groupSetName' },
+    // Messaging
+    { name: 'send_message',            description: 'Send a direct message to one or more users in this course', fields: 'recipientIds* (array of user IDs from list_people), subject, message*' },
     { name: 'pipeline',                description: 'Execute multiple actions in sequence',                  fields: 'steps (array of action objects)' }
   ]
 };

@@ -205,18 +205,32 @@ CREATE INDEX IF NOT EXISTS idx_convo_participants_user
 CREATE INDEX IF NOT EXISTS idx_convo_participants_convo
   ON public.conversation_participants (conversation_id);
 
+
+-- Helper function: check conversation membership without triggering RLS
+-- (SECURITY DEFINER bypasses RLS, preventing infinite recursion)
+CREATE OR REPLACE FUNCTION public.is_conversation_participant(p_conversation_id uuid)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.conversation_participants
+    WHERE conversation_id = p_conversation_id
+      AND user_id = auth.uid()
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_conversation_participant(uuid) TO authenticated;
+
+
 ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "convo_participants: own select"
+-- Participants can see all members in conversations they belong to
+CREATE POLICY "convo_participants: participant select"
   ON public.conversation_participants FOR SELECT
-  USING (
-    user_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM conversation_participants cp2
-      WHERE cp2.conversation_id = conversation_participants.conversation_id
-        AND cp2.user_id = auth.uid()
-    )
-  );
+  USING (is_conversation_participant(conversation_id));
 
 CREATE POLICY "convo_participants: enrolled insert"
   ON public.conversation_participants FOR INSERT
@@ -236,15 +250,14 @@ CREATE POLICY "convo_participants: own update"
 -- Now add RLS policies to conversations (conversation_participants exists)
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 
--- Only participants can see their conversations
+-- Participants (or the creator) can see their conversations
+-- NOTE: created_by check is needed so the creator can see the conversation
+-- immediately after INSERT (before participants are added).
 CREATE POLICY "conversations: participant select"
   ON public.conversations FOR SELECT
   USING (
-    EXISTS (
-      SELECT 1 FROM conversation_participants cp
-      WHERE cp.conversation_id = conversations.id
-        AND cp.user_id = auth.uid()
-    )
+    created_by = auth.uid()
+    OR is_conversation_participant(id)
   );
 
 -- Any enrolled user can create a conversation
@@ -286,24 +299,14 @@ ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 -- Only conversation participants can see messages
 CREATE POLICY "messages: participant select"
   ON public.messages FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM conversation_participants cp
-      WHERE cp.conversation_id = messages.conversation_id
-        AND cp.user_id = auth.uid()
-    )
-  );
+  USING (is_conversation_participant(conversation_id));
 
 -- Only participants can insert messages
 CREATE POLICY "messages: participant insert"
   ON public.messages FOR INSERT
   WITH CHECK (
     sender_id = auth.uid()
-    AND EXISTS (
-      SELECT 1 FROM conversation_participants cp
-      WHERE cp.conversation_id = messages.conversation_id
-        AND cp.user_id = auth.uid()
-    )
+    AND is_conversation_participant(conversation_id)
   );
 
 
