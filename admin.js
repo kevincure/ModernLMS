@@ -278,8 +278,13 @@ async function loadOrgInvites() {
     .eq('org_id', admin.org.id)
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
-  if (error) { console.warn('[Admin] loadOrgInvites:', error.message); admin.orgInvites = []; return; }
+  if (error) {
+    console.error('[Admin] loadOrgInvites failed:', error.message, error);
+    admin.orgInvites = [];
+    return;
+  }
   admin.orgInvites = data || [];
+  console.log('[Admin] loadOrgInvites: loaded', admin.orgInvites.length, 'pending invite(s)');
 }
 
 async function loadOrgMembers() {
@@ -813,7 +818,12 @@ async function addUserToOrg() {
       showInlineError('addUserError',
         `No account found for "${escHtml(email)}" and could not create invite: ${invErr.message}`);
     } else {
+      // Reload invites from the server so we have the real id, then switch to
+      // the pending tab so the admin can immediately see and act on the invite.
+      await loadOrgInvites();
+      admin.filters.usersTab = 'pending';
       closeModal('modal-addUser');
+      renderUsersSection();
       showToast(`Invite queued for ${email}. They'll be added to the org when they first sign in.`);
     }
     return;
