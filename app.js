@@ -2095,21 +2095,26 @@ function renderHome() {
   
   const isStaffOnHome = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
 
-  // Upcoming assignments + quizzes
+  // Upcoming items: assignments, quizzes, and calendar events.
+  // Hidden assignments are never shown here regardless of staff/student view.
+  const now = new Date();
   const upcomingAssignments = appData.assignments
-    .filter(a => a.courseId === activeCourseId && a.status === 'published')
-    .filter(a => isStaffOnHome || (!a.hidden && (a.assignmentType || 'essay') !== 'no_submission'))
-    .filter(a => new Date(a.dueDate) > new Date())
-    .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate }))
-    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  
+    .filter(a => a.courseId === activeCourseId && a.status === 'published' && !a.hidden)
+    .filter(a => (a.assignmentType || 'essay') !== 'no_submission')
+    .filter(a => a.dueDate && new Date(a.dueDate) > now)
+    .map(a => ({ type: 'Assignment', title: a.title, dueDate: a.dueDate }));
+
   const upcomingQuizzes = appData.quizzes
     .filter(q => q.courseId === activeCourseId && q.status === 'published')
-    .filter(q => new Date(q.dueDate) > new Date())
-    .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate }))
-    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  
-  const upcoming = [...upcomingAssignments, ...upcomingQuizzes]
+    .filter(q => q.dueDate && new Date(q.dueDate) > now)
+    .map(q => ({ type: 'Quiz', title: q.title, dueDate: q.dueDate }));
+
+  const upcomingCalEvents = (appData.calendarEvents || [])
+    .filter(ev => ev.courseId === activeCourseId)
+    .filter(ev => ev.eventDate && new Date(ev.eventDate) > now)
+    .map(ev => ({ type: ev.eventType || 'Event', title: ev.title, dueDate: ev.eventDate }));
+
+  const upcoming = [...upcomingAssignments, ...upcomingQuizzes, ...upcomingCalEvents]
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
     .slice(0, 5);
   
