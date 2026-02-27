@@ -60,7 +60,6 @@ import {
   supabaseDeleteQuestionBank,
   supabaseCreateInvite,
   supabaseDeleteInvite,
-  supabaseUpdateInviteStatus,
   supabaseCopyStorageFile,
   supabaseCreateDiscussionThread,
   supabaseUpdateDiscussionThread,
@@ -2022,21 +2021,20 @@ async function acceptInvite(inviteId) {
     return;
   }
 
-  // Mark invite accepted
-  const inviteAccepted = await supabaseUpdateInviteStatus(inviteId, 'accepted');
-  if (!inviteAccepted) {
+  // Delete the invite row — it's no longer needed once enrolled
+  const inviteDeleted = await supabaseDeleteInvite(inviteId);
+  if (!inviteDeleted) {
     const rollbackOk = await supabaseDeleteEnrollment(enrollment.userId, enrollment.courseId);
     if (!rollbackOk) {
-      showToast('Enrollment created but invite update failed. Please contact an administrator.', 'error');
+      showToast('Enrollment created but invite could not be removed. Please contact an administrator.', 'error');
     } else {
-      showToast('Failed to update invite status', 'error');
+      showToast('Failed to process invite', 'error');
     }
     return;
   }
 
   appData.enrollments.push(enrollment);
-  const inv = appData.invites.find(i => i.id === inviteId);
-  if (inv) inv.status = 'accepted';
+  appData.invites = (appData.invites || []).filter(i => i.id !== inviteId);
 
   // Refresh invite list in modal
   const remaining = (appData.invites || []).filter(
@@ -2055,13 +2053,12 @@ async function acceptInvite(inviteId) {
 window.acceptInvite = acceptInvite;
 
 async function rejectInvite(inviteId) {
-  const inviteRejected = await supabaseUpdateInviteStatus(inviteId, 'rejected');
-  if (!inviteRejected) {
-    showToast('Failed to update invite status', 'error');
+  const inviteDeleted = await supabaseDeleteInvite(inviteId);
+  if (!inviteDeleted) {
+    showToast('Failed to decline invite', 'error');
     return;
   }
-  const inv = (appData.invites || []).find(i => i.id === inviteId);
-  if (inv) inv.status = 'rejected';
+  appData.invites = (appData.invites || []).filter(i => i.id !== inviteId);
 
   const remaining = (appData.invites || []).filter(
     i => i.email?.toLowerCase() === appData.currentUser.email?.toLowerCase() && i.status === 'pending'
