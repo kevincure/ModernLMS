@@ -7845,9 +7845,6 @@ function renderPeopleList() {
             <div style="font-weight:500; font-size:0.95rem;">${escapeHtml(p.name)}</div>
             <div class="muted" style="font-size:0.8rem;">${escapeHtml(p.email)}</div>
           </div>
-          ${effectiveStaff && p.id !== appData.currentUser.id ? `
-            <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
-          ` : ''}
         </div>
       `;
     }
@@ -8032,7 +8029,6 @@ function renderPeople() {
       <input type="text" class="form-input" id="peopleSearchInput" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" oninput="updatePeopleSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       ${effectiveStaff ? `
         <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
-        <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
       ` : ''}
     </div>
   `);

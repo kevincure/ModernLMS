@@ -557,7 +557,6 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             <select class="form-select" id="addPersonRole">
               <option value="student">Student</option>
               <option value="ta">Teaching Assistant</option>
-              <option value="instructor">Instructor</option>
             </select>
           </div>
         </div>
