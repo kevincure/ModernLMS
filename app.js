@@ -1343,7 +1343,6 @@ function renderAll() {
   renderGradebook();
   renderPeople();
   renderDiscussion();
-  renderGroups();
   renderInbox();
   renderNotifications();
   updateNotificationBadge();
@@ -1472,7 +1471,6 @@ function navigateTo(page) {
       gradebook:     renderGradebook,
       people:        renderPeople,
       discussion:    renderDiscussion,
-      groups:        renderGroups,
       inbox:         renderInbox,
       notifications: renderNotifications,
     };
@@ -2723,7 +2721,7 @@ function renderAssignments() {
           <option value="za" ${assignmentsSort === 'za' ? 'selected' : ''}>Z → A</option>
         </select>
         ${isStaffUser && !studentViewMode ? `
-          <button class="btn btn-secondary" onclick="openGroupSetsModal()">Group Sets</button>
+          <button class="btn btn-secondary" onclick="openGroupSetsModal()">Groups</button>
           <button class="btn btn-secondary" onclick="openQuestionBankModal()">Question Banks</button>
           <button class="btn btn-primary" onclick="openNewAssignmentModal()">New Assignment</button>
         ` : ''}
@@ -10000,157 +9998,13 @@ async function toggleAssignmentVisibility(assignmentId) {
 
 let activeGroupDetailId = null;
 
+// Legacy stubs — Groups page was removed; now managed via modal in Assignments tab
 function renderGroups() {
-  if (!activeCourseId) {
-    setText('groupsSubtitle', 'Select a course');
-    setHTML('groupsActions', '');
-    setHTML('groupsContent', '<div class="empty-state-text">No active course</div>');
-    return;
-  }
-  const course = getCourseById(activeCourseId);
-  setText('groupsSubtitle', course.name);
-  const effectiveStaff = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
-
-  if (activeGroupDetailId) {
-    renderGroupDetail(effectiveStaff);
-    return;
-  }
-
-  setHTML('groupsActions', effectiveStaff
-    ? `<button class="btn btn-primary" onclick="openCreateGroupSetModal()">New Group Set</button>`
-    : '');
-
-  const groupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
-  if (groupSets.length === 0) {
-    setHTML('groupsContent', '<div class="empty-state"><div class="empty-state-title">No groups yet</div><div class="empty-state-text">Instructors can create group sets to organize students into teams.</div></div>');
-    return;
-  }
-
-  const html = groupSets.map(gs => {
-    const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gs.id);
-    const groupCards = groups.map(g => {
-      const members = (g.members || []);
-      const memberNames = members.map(m => {
-        const user = getUserById(m.userId);
-        return user ? escapeHtml(user.name) : 'Unknown';
-      });
-      return `
-        <div class="card" style="cursor:pointer;" onclick="viewGroupDetail('${g.id}')">
-          <div class="card-header">
-            <div>
-              <div class="card-title">${escapeHtml(g.name)}</div>
-              <div class="muted">${members.length} member${members.length !== 1 ? 's' : ''}${memberNames.length ? ' · ' + memberNames.slice(0, 3).join(', ') + (memberNames.length > 3 ? '…' : '') : ''}</div>
-            </div>
-            ${effectiveStaff ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteGroup('${g.id}', '${gs.id}')">Delete</button>` : ''}
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    // Group assignment integration — show which assignments use this set
-    const linkedAssignments = (appData.assignments || []).filter(a => a.courseId === activeCourseId && a.groupSetId === gs.id);
-    const linkedHtml = linkedAssignments.length ? `<div class="muted" style="margin-top:8px; font-size:0.85rem;">Linked assignments: ${linkedAssignments.map(a => escapeHtml(a.title)).join(', ')}</div>` : '';
-
-    return `
-      <div class="card" style="margin-bottom:16px;">
-        <div class="card-header">
-          <div>
-            <div class="card-title" style="font-size:1.1rem;">${escapeHtml(gs.name)}</div>
-            ${gs.description ? `<div class="muted">${escapeHtml(gs.description)}</div>` : ''}
-            ${linkedHtml}
-          </div>
-          ${effectiveStaff ? `
-            <div style="display:flex; gap:8px;">
-              <button class="btn btn-secondary btn-sm" onclick="autoAssignGroups('${gs.id}')">Auto-assign</button>
-              <button class="btn btn-secondary btn-sm" onclick="openManageGroupsModal('${gs.id}')">Manage</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteGroupSet('${gs.id}')">Delete Set</button>
-            </div>
-          ` : ''}
-        </div>
-        <div style="margin-top:12px;">${groupCards || '<div class="muted">No groups created yet.</div>'}</div>
-      </div>
-    `;
-  }).join('');
-
-  setHTML('groupsContent', html);
+  openGroupSetsModal();
 }
 
-function renderGroupDetail(effectiveStaff) {
-  const group = (appData.courseGroups || []).find(g => g.id === activeGroupDetailId);
-  if (!group) { activeGroupDetailId = null; renderGroups(); return; }
-
-  const groupSet = (appData.groupSets || []).find(gs => gs.id === group.groupSetId);
-  setText('groupsSubtitle', (groupSet ? groupSet.name + ' › ' : '') + group.name);
-  setHTML('groupsActions', `<button class="btn btn-secondary" onclick="closeGroupDetail()">← All Groups</button>`);
-
-  const members = (group.members || []);
-  const membersHtml = members.map(m => {
-    const user = getUserById(m.userId);
-    return `
-      <div class="card" style="margin-bottom:6px;">
-        <div class="card-header">
-          <div>
-            <strong>${escapeHtml(user?.name || 'Unknown')}</strong>
-            <span class="muted" style="margin-left:8px;">${escapeHtml(user?.email || '')}</span>
-          </div>
-          ${effectiveStaff ? `<button class="btn btn-danger btn-sm" onclick="removeMemberFromGroup('${group.id}', '${m.userId}')">Remove</button>` : ''}
-        </div>
-      </div>
-    `;
-  }).join('') || '<div class="muted">No members yet.</div>';
-
-  // Group discussion threads
-  const groupThreads = (appData.discussionThreads || []).filter(t => t.groupId === group.id);
-  const threadsHtml = groupThreads.length
-    ? groupThreads.map(t => {
-        const author = getUserById(t.authorId);
-        return `<div class="card" style="cursor:pointer; margin-bottom:6px;" onclick="navigateTo('discussion'); openDiscussionThread('${t.id}');">
-          <div class="card-title">${escapeHtml(t.title)}</div>
-          <div class="muted">${escapeHtml(author?.name || 'Unknown')} · ${formatDate(t.createdAt)} · ${(t.replies || []).length} replies</div>
-        </div>`;
-      }).join('')
-    : '<div class="muted">No group discussions yet.</div>';
-
-  // Group submissions for linked assignments
-  const linkedAssignments = (appData.assignments || []).filter(a => a.courseId === group.courseId && a.groupSetId === group.groupSetId);
-  const submissionsHtml = linkedAssignments.length
-    ? linkedAssignments.map(a => {
-        const groupSub = (appData.submissions || []).find(s => s.assignmentId === a.id && s.groupId === group.id);
-        return `<div class="card" style="margin-bottom:6px;">
-          <div class="card-header">
-            <div>
-              <div class="card-title">${escapeHtml(a.title)}</div>
-              <div class="muted">${groupSub ? 'Submitted ' + formatDate(groupSub.submittedAt) : 'Not yet submitted'}</div>
-            </div>
-          </div>
-        </div>`;
-      }).join('')
-    : '';
-
-  setHTML('groupsContent', `
-    <div class="card" style="margin-bottom:16px;">
-      <h2 style="margin:0 0 4px;">${escapeHtml(group.name)}</h2>
-      <div class="muted">${members.length} member${members.length !== 1 ? 's' : ''}</div>
-    </div>
-    <div style="margin-bottom:16px;">
-      <div style="font-weight:600; margin-bottom:8px;">Members</div>
-      ${membersHtml}
-      ${effectiveStaff ? `
-        <div style="margin-top:12px;">
-          <select class="form-select" id="addMemberSelect" style="width:auto; display:inline-block;">
-            <option value="">Add a student…</option>
-            ${getUnassignedStudents(group.groupSetId, group.courseId).map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
-          </select>
-          <button class="btn btn-primary btn-sm" onclick="addMemberToGroup('${group.id}')">Add</button>
-        </div>
-      ` : ''}
-    </div>
-    ${linkedAssignments.length ? `<div style="margin-bottom:16px;"><div style="font-weight:600; margin-bottom:8px;">Group Assignments</div>${submissionsHtml}</div>` : ''}
-    <div>
-      <div style="font-weight:600; margin-bottom:8px;">Group Discussions</div>
-      ${threadsHtml}
-    </div>
-  `);
+function renderGroupDetail() {
+  openGroupSetsModal();
 }
 
 function getUnassignedStudents(groupSetId, courseId) {
@@ -10166,29 +10020,54 @@ function getUnassignedStudents(groupSetId, courseId) {
 }
 
 function viewGroupDetail(groupId) {
-  activeGroupDetailId = groupId;
-  renderGroups();
+  // Find which group set this group belongs to and open the detail view
+  const group = (appData.courseGroups || []).find(g => g.id === groupId);
+  if (group) {
+    activeGroupsModalSetId = group.groupSetId;
+    renderGroupsManagerModal();
+  }
 }
 
 function closeGroupDetail() {
-  activeGroupDetailId = null;
-  renderGroups();
+  backToGroupsList();
 }
+
+let activeGroupsModalSetId = null;
 
 function openGroupSetsModal() {
   if (!activeCourseId) return;
-  const existing = document.getElementById('groupSetsListModal');
+  activeGroupsModalSetId = null;
+  const existing = document.getElementById('groupsManagerModal');
   if (existing) existing.remove();
-  renderGroupSetsModalContent();
+  renderGroupsManagerModal();
 }
 
-function renderGroupSetsModalContent() {
-  const existing = document.getElementById('groupSetsListModal');
+function renderGroupsManagerModal() {
+  const existing = document.getElementById('groupsManagerModal');
   if (existing) existing.remove();
 
+  const innerHtml = activeGroupsModalSetId
+    ? renderGroupDetailView(activeGroupsModalSetId)
+    : renderGroupSetsList();
+
+  const html = `
+    <div class="modal-overlay" id="groupsManagerModal" style="display:flex;">
+      <div class="modal" style="max-width:${activeGroupsModalSetId ? '950px' : '700px'}; width:95vw;">
+        ${innerHtml}
+      </div>
+    </div>
+  `;
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+
+  if (activeGroupsModalSetId) {
+    initGroupDragAndDrop();
+  }
+}
+
+function renderGroupSetsList() {
   const groupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
   const listHtml = groupSets.length === 0
-    ? '<div class="empty-state"><div class="empty-state-text">No group sets yet. Create one to organize students into teams.</div></div>'
+    ? '<div class="empty-state"><div class="empty-state-text">No groups yet. Create one to organize students into teams.</div></div>'
     : groupSets.map(gs => {
         const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gs.id);
         const totalMembers = groups.reduce((sum, g) => sum + (g.members || []).length, 0);
@@ -10204,8 +10083,7 @@ function renderGroupSetsModalContent() {
                 </div>
               </div>
               <div style="display:flex; gap:6px;">
-                <button class="btn btn-secondary btn-sm" onclick="closeModal('groupSetsListModal'); autoAssignGroups('${gs.id}')">Auto-assign</button>
-                <button class="btn btn-secondary btn-sm" onclick="closeModal('groupSetsListModal'); openManageGroupsModal('${gs.id}')">Manage</button>
+                <button class="btn btn-secondary btn-sm" onclick="openGroupDetailView('${gs.id}')">Manage</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteGroupSetFromModal('${gs.id}')">Delete</button>
               </div>
             </div>
@@ -10213,24 +10091,246 @@ function renderGroupSetsModalContent() {
         `;
       }).join('');
 
-  const html = `
-    <div class="modal-overlay" id="groupSetsListModal" style="display:flex;">
-      <div class="modal" style="max-width:700px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Group Sets</h2>
-          <button class="modal-close" onclick="closeModal('groupSetsListModal')">&times;</button>
-        </div>
-        <div class="modal-body" style="max-height:60vh; overflow-y:auto;">
-          ${listHtml}
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('groupSetsListModal')">Close</button>
-          <button class="btn btn-primary" onclick="closeModal('groupSetsListModal'); openCreateGroupSetModal()">New Group Set</button>
-        </div>
+  return `
+    <div class="modal-header">
+      <h2 class="modal-title">Groups</h2>
+      <button class="modal-close" onclick="closeModal('groupsManagerModal')">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:65vh; overflow-y:auto;">
+      ${listHtml}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('groupsManagerModal')">Close</button>
+      <button class="btn btn-primary" onclick="closeModal('groupsManagerModal'); openCreateGroupSetModal()">New Group Set</button>
+    </div>
+  `;
+}
+
+function openGroupDetailView(gsId) {
+  activeGroupsModalSetId = gsId;
+  renderGroupsManagerModal();
+}
+
+function renderGroupDetailView(gsId) {
+  const gs = (appData.groupSets || []).find(s => s.id === gsId);
+  if (!gs) { activeGroupsModalSetId = null; return renderGroupSetsList(); }
+
+  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
+  const unassigned = getUnassignedStudents(gsId, activeCourseId);
+
+  // Unassigned students column
+  const unassignedHtml = `
+    <div class="group-column" style="min-width:200px; max-width:240px; flex-shrink:0;">
+      <div style="font-weight:600; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+        <span>Unassigned (${unassigned.length})</span>
+      </div>
+      <div class="group-dropzone" data-group-id="unassigned" style="min-height:60px; background:var(--bg-secondary); border-radius:8px; padding:6px; border:2px dashed transparent; transition:border-color 0.15s;">
+        ${unassigned.map(u => `
+          <div class="group-member-chip" draggable="true" data-user-id="${u.id}" data-source-group="unassigned"
+               style="background:var(--bg-primary); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; margin-bottom:4px; cursor:grab; display:flex; align-items:center; justify-content:space-between; font-size:0.85rem;">
+            <span>${escapeHtml(u.name)}</span>
+          </div>
+        `).join('') || '<div class="muted" style="font-size:0.8rem; padding:8px;">All students assigned</div>'}
       </div>
     </div>
   `;
-  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+
+  // Group columns
+  const groupColumnsHtml = groups.map(g => {
+    const members = g.members || [];
+    return `
+      <div class="group-column" style="min-width:200px; max-width:240px; flex-shrink:0;">
+        <div style="font-weight:600; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+          <span>${escapeHtml(g.name)} (${members.length})</span>
+          <button class="btn btn-danger btn-sm" style="padding:2px 6px; font-size:0.7rem;" onclick="deleteGroupFromDetail('${g.id}', '${gsId}')">x</button>
+        </div>
+        <div class="group-dropzone" data-group-id="${g.id}" style="min-height:60px; background:var(--bg-secondary); border-radius:8px; padding:6px; border:2px dashed transparent; transition:border-color 0.15s;">
+          ${members.map(m => {
+            const user = getUserById(m.userId);
+            return `
+              <div class="group-member-chip" draggable="true" data-user-id="${m.userId}" data-source-group="${g.id}"
+                   style="background:var(--bg-primary); border:1px solid var(--border-color); border-radius:6px; padding:6px 10px; margin-bottom:4px; cursor:grab; display:flex; align-items:center; justify-content:space-between; font-size:0.85rem;">
+                <span>${escapeHtml(user?.name || 'Unknown')}</span>
+                <button class="btn btn-sm" style="padding:0 4px; font-size:0.7rem; color:var(--text-secondary); background:none; border:none;" onclick="event.stopPropagation(); removeStudentFromGroupDetail('${g.id}', '${m.userId}', '${gsId}')">x</button>
+              </div>
+            `;
+          }).join('') || '<div class="muted" style="font-size:0.8rem; padding:8px;">Drop students here</div>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const totalStudents = (appData.enrollments || []).filter(e => e.courseId === activeCourseId && e.role === 'student').length;
+  const assignedCount = totalStudents - unassigned.length;
+
+  return `
+    <div class="modal-header">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="backToGroupsList()">← Back</button>
+        <div>
+          <h2 class="modal-title" style="margin:0;">${escapeHtml(gs.name)}</h2>
+          <div class="muted" style="font-size:0.8rem;">${assignedCount}/${totalStudents} students assigned · ${groups.length} groups · Drag to move students</div>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeModal('groupsManagerModal')">&times;</button>
+    </div>
+    <div class="modal-body" style="overflow-x:auto; overflow-y:auto; max-height:60vh; padding:12px;">
+      <div style="display:flex; gap:12px; align-items:flex-start; min-width:max-content;">
+        ${unassignedHtml}
+        ${groupColumnsHtml}
+        <div class="group-column" style="min-width:140px; flex-shrink:0; display:flex; align-items:center; justify-content:center;">
+          <button class="btn btn-secondary" style="white-space:nowrap;" onclick="addGroupFromDetail('${gsId}')">+ Add Group</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex; gap:8px; justify-content:space-between;">
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-secondary" onclick="autoAssignFromDetail('${gsId}')">Auto-assign Unassigned</button>
+      </div>
+      <button class="btn btn-primary" onclick="closeModal('groupsManagerModal')">Done</button>
+    </div>
+  `;
+}
+
+function backToGroupsList() {
+  activeGroupsModalSetId = null;
+  renderGroupsManagerModal();
+}
+
+function initGroupDragAndDrop() {
+  const chips = document.querySelectorAll('.group-member-chip[draggable="true"]');
+  const dropzones = document.querySelectorAll('.group-dropzone');
+
+  chips.forEach(chip => {
+    chip.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({
+        userId: chip.dataset.userId,
+        sourceGroup: chip.dataset.sourceGroup
+      }));
+      e.dataTransfer.effectAllowed = 'move';
+      chip.style.opacity = '0.4';
+    });
+    chip.addEventListener('dragend', () => {
+      chip.style.opacity = '1';
+      dropzones.forEach(dz => dz.style.borderColor = 'transparent');
+    });
+  });
+
+  dropzones.forEach(dz => {
+    dz.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      dz.style.borderColor = 'var(--primary-color)';
+    });
+    dz.addEventListener('dragleave', () => {
+      dz.style.borderColor = 'transparent';
+    });
+    dz.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dz.style.borderColor = 'transparent';
+      const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+      const targetGroupId = dz.dataset.groupId;
+      if (data.sourceGroup === targetGroupId) return;
+      await moveStudentBetweenGroups(data.userId, data.sourceGroup, targetGroupId);
+    });
+  });
+}
+
+async function moveStudentBetweenGroups(userId, sourceGroupId, targetGroupId) {
+  // Remove from source group (if not "unassigned")
+  if (sourceGroupId !== 'unassigned') {
+    const ok = await supabaseRemoveGroupMember(sourceGroupId, userId);
+    if (!ok) { showToast('Failed to move student', 'error'); return; }
+    const srcGroup = (appData.courseGroups || []).find(g => g.id === sourceGroupId);
+    if (srcGroup) srcGroup.members = (srcGroup.members || []).filter(m => m.userId !== userId);
+    appData.groupMembers = (appData.groupMembers || []).filter(m => !(m.groupId === sourceGroupId && m.userId === userId));
+  }
+
+  // Add to target group (if not "unassigned")
+  if (targetGroupId !== 'unassigned') {
+    const saved = await supabaseAddGroupMember(targetGroupId, userId);
+    if (!saved) { showToast('Failed to add student to group', 'error'); renderGroupsManagerModal(); return; }
+    const member = { id: saved.id, groupId: targetGroupId, userId, joinedAt: new Date().toISOString() };
+    const tgtGroup = (appData.courseGroups || []).find(g => g.id === targetGroupId);
+    if (tgtGroup) {
+      if (!tgtGroup.members) tgtGroup.members = [];
+      tgtGroup.members.push(member);
+    }
+    if (!appData.groupMembers) appData.groupMembers = [];
+    appData.groupMembers.push(member);
+  }
+
+  renderGroupsManagerModal();
+}
+
+async function removeStudentFromGroupDetail(groupId, userId, gsId) {
+  const ok = await supabaseRemoveGroupMember(groupId, userId);
+  if (!ok) { showToast('Failed to remove student', 'error'); return; }
+  const group = (appData.courseGroups || []).find(g => g.id === groupId);
+  if (group) group.members = (group.members || []).filter(m => m.userId !== userId);
+  appData.groupMembers = (appData.groupMembers || []).filter(m => !(m.groupId === groupId && m.userId === userId));
+  renderGroupsManagerModal();
+  showToast('Student removed', 'success');
+}
+
+async function deleteGroupFromDetail(gId, gsId) {
+  showConfirmDialog('Delete this group? Members will become unassigned.', async () => {
+    const ok = await supabaseDeleteCourseGroup(gId);
+    if (!ok) return;
+    appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
+    const gs = (appData.groupSets || []).find(s => s.id === gsId);
+    if (gs && gs.groups) gs.groups = gs.groups.filter(g => g.id !== gId);
+    renderGroupsManagerModal();
+    showToast('Group deleted', 'success');
+  });
+}
+
+async function addGroupFromDetail(gsId) {
+  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
+  const num = groups.length + 1;
+  const gId = generateId();
+  const saved = await supabaseCreateCourseGroup({ id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${num}` });
+  if (!saved) return;
+  const g = { id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${num}`, createdAt: new Date().toISOString(), members: [] };
+  appData.courseGroups.push(g);
+  const gs = (appData.groupSets || []).find(s => s.id === gsId);
+  if (gs) { if (!gs.groups) gs.groups = []; gs.groups.push(g); }
+  renderGroupsManagerModal();
+  showToast('Group added', 'success');
+}
+
+async function autoAssignFromDetail(gsId) {
+  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
+  if (groups.length === 0) { showToast('Create groups first', 'error'); return; }
+
+  const unassigned = getUnassignedStudents(gsId, activeCourseId);
+  if (unassigned.length === 0) { showToast('All students are already assigned', 'info'); return; }
+
+  // Shuffle students randomly
+  const shuffled = [...unassigned];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  // Round-robin assign to balance group sizes
+  const sortedGroups = [...groups].sort((a, b) => (a.members || []).length - (b.members || []).length);
+  let idx = 0;
+  for (const student of shuffled) {
+    const group = sortedGroups[idx % sortedGroups.length];
+    const saved = await supabaseAddGroupMember(group.id, student.id);
+    if (saved) {
+      const member = { id: saved.id, groupId: group.id, userId: student.id, joinedAt: new Date().toISOString() };
+      if (!group.members) group.members = [];
+      group.members.push(member);
+      if (!appData.groupMembers) appData.groupMembers = [];
+      appData.groupMembers.push(member);
+    }
+    idx++;
+  }
+
+  renderGroupsManagerModal();
+  showToast(`${shuffled.length} students auto-assigned!`, 'success');
 }
 
 async function deleteGroupSetFromModal(gsId) {
@@ -10239,8 +10339,8 @@ async function deleteGroupSetFromModal(gsId) {
     if (!ok) return;
     appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
     appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
-    renderGroupSetsModalContent();
-    renderGroups();
+    activeGroupsModalSetId = null;
+    renderGroupsManagerModal();
     showToast('Group set deleted', 'success');
   });
 }
@@ -10312,7 +10412,9 @@ async function createGroupSet() {
   if (!appData.groupSets) appData.groupSets = [];
   appData.groupSets.push(gs);
   closeGroupSetModal();
-  renderGroups();
+  // Open the new group set's detail view directly
+  activeGroupsModalSetId = gsId;
+  renderGroupsManagerModal();
   showToast('Group set created!', 'success');
 }
 
@@ -10322,75 +10424,27 @@ async function deleteGroupSet(gsId) {
     if (!ok) return;
     appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
     appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
-    renderGroups();
     showToast('Group set deleted', 'success');
   });
 }
 
 function openManageGroupsModal(gsId) {
-  const gs = (appData.groupSets || []).find(s => s.id === gsId);
-  if (!gs) return;
-  const existing = document.getElementById('manageGroupsModal');
+  activeGroupsModalSetId = gsId;
+  const existing = document.getElementById('groupsManagerModal');
   if (existing) existing.remove();
-
-  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
-  const groupList = groups.map(g => `
-    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-      <input type="text" class="form-input" value="${escapeHtml(g.name)}" data-group-id="${g.id}" style="flex:1;">
-      <button class="btn btn-danger btn-sm" onclick="deleteGroup('${g.id}', '${gsId}')">Delete</button>
-    </div>
-  `).join('');
-
-  const html = `
-    <div class="modal-overlay" id="manageGroupsModal" style="display:flex;">
-      <div class="modal" style="max-width:500px;">
-        <div class="modal-header">
-          <h2 class="modal-title">Manage: ${escapeHtml(gs.name)}</h2>
-          <button class="modal-close" onclick="closeManageGroupsModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div style="margin-bottom:12px;">${groupList || '<div class="muted">No groups yet.</div>'}</div>
-          <button class="btn btn-secondary btn-sm" onclick="addGroupToSet('${gsId}')">+ Add Group</button>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeManageGroupsModal()">Done</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+  renderGroupsManagerModal();
 }
 
 function closeManageGroupsModal() {
-  document.getElementById('manageGroupsModal')?.remove();
+  document.getElementById('groupsManagerModal')?.remove();
 }
 
 async function addGroupToSet(gsId) {
-  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
-  const num = groups.length + 1;
-  const gId = generateId();
-  const saved = await supabaseCreateCourseGroup({ id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${num}` });
-  if (!saved) return;
-  const g = { id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${num}`, createdAt: new Date().toISOString(), members: [] };
-  appData.courseGroups.push(g);
-  const gs = (appData.groupSets || []).find(s => s.id === gsId);
-  if (gs) gs.groups.push(g);
-  closeManageGroupsModal();
-  openManageGroupsModal(gsId);
-  showToast('Group added', 'success');
+  await addGroupFromDetail(gsId);
 }
 
 async function deleteGroup(gId, gsId) {
-  showConfirmDialog('Delete this group?', async () => {
-    const ok = await supabaseDeleteCourseGroup(gId);
-    if (!ok) return;
-    appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
-    const gs = (appData.groupSets || []).find(s => s.id === gsId);
-    if (gs) gs.groups = gs.groups.filter(g => g.id !== gId);
-    closeManageGroupsModal();
-    renderGroups();
-    showToast('Group deleted', 'success');
-  });
+  await deleteGroupFromDetail(gId, gsId);
 }
 
 async function addMemberToGroup(groupId) {
@@ -10409,7 +10463,7 @@ async function addMemberToGroup(groupId) {
   }
   if (!appData.groupMembers) appData.groupMembers = [];
   appData.groupMembers.push(member);
-  renderGroups();
+  renderGroupsManagerModal();
   showToast('Member added', 'success');
 }
 
@@ -10419,41 +10473,12 @@ async function removeMemberFromGroup(groupId, userId) {
   const group = (appData.courseGroups || []).find(g => g.id === groupId);
   if (group) group.members = (group.members || []).filter(m => m.userId !== userId);
   appData.groupMembers = (appData.groupMembers || []).filter(m => !(m.groupId === groupId && m.userId === userId));
-  renderGroups();
+  renderGroupsManagerModal();
   showToast('Member removed', 'success');
 }
 
 async function autoAssignGroups(gsId) {
-  const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
-  if (groups.length === 0) { showToast('Create groups first', 'error'); return; }
-
-  const unassigned = getUnassignedStudents(gsId, activeCourseId);
-  if (unassigned.length === 0) { showToast('All students are already assigned', 'info'); return; }
-
-  // Shuffle students randomly
-  const shuffled = [...unassigned];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-
-  // Round-robin assign
-  let idx = 0;
-  for (const student of shuffled) {
-    const group = groups[idx % groups.length];
-    const saved = await supabaseAddGroupMember(group.id, student.id);
-    if (saved) {
-      const member = { id: saved.id, groupId: group.id, userId: student.id, joinedAt: new Date().toISOString() };
-      if (!group.members) group.members = [];
-      group.members.push(member);
-      if (!appData.groupMembers) appData.groupMembers = [];
-      appData.groupMembers.push(member);
-    }
-    idx++;
-  }
-
-  renderGroups();
-  showToast(`${shuffled.length} students auto-assigned!`, 'success');
+  await autoAssignFromDetail(gsId);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -12120,8 +12145,15 @@ window.removeDeadlineOverride = removeDeadlineOverride;
 // Groups
 window.renderGroups = renderGroups;
 window.openGroupSetsModal = openGroupSetsModal;
-window.renderGroupSetsModalContent = renderGroupSetsModalContent;
+window.renderGroupsManagerModal = renderGroupsManagerModal;
+window.openGroupDetailView = openGroupDetailView;
+window.backToGroupsList = backToGroupsList;
 window.deleteGroupSetFromModal = deleteGroupSetFromModal;
+window.deleteGroupFromDetail = deleteGroupFromDetail;
+window.addGroupFromDetail = addGroupFromDetail;
+window.removeStudentFromGroupDetail = removeStudentFromGroupDetail;
+window.autoAssignFromDetail = autoAssignFromDetail;
+window.moveStudentBetweenGroups = moveStudentBetweenGroups;
 window.openCreateGroupSetModal = openCreateGroupSetModal;
 window.closeGroupSetModal = closeGroupSetModal;
 window.createGroupSet = createGroupSet;

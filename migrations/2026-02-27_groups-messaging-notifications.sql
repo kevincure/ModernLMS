@@ -3,6 +3,9 @@
 -- Add: Group Management & Group Assignments
 --      Inbox / Direct Messaging
 --      Persistent Notifications System
+--
+-- IDEMPOTENT: safe to run multiple times (uses IF NOT EXISTS
+-- and DROP POLICY IF EXISTS).
 -- ============================================================
 
 
@@ -24,11 +27,8 @@ END $$;
 
 -- ────────────────────────────────────────────────────────────
 -- 1. COURSE GROUPS
---    Reusable groups within a course. Instructors create
---    group sets, then assign students to groups within them.
 -- ────────────────────────────────────────────────────────────
 
--- Group sets: a named collection of groups (e.g. "Project Teams", "Lab Partners")
 CREATE TABLE IF NOT EXISTS public.group_sets (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   course_id   uuid NOT NULL REFERENCES public.courses(id) ON DELETE CASCADE,
@@ -44,10 +44,12 @@ CREATE INDEX IF NOT EXISTS idx_group_sets_course
 
 ALTER TABLE public.group_sets ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "group_sets: enrolled select" ON public.group_sets;
 CREATE POLICY "group_sets: enrolled select"
   ON public.group_sets FOR SELECT
   USING (is_enrolled_in_course(course_id));
 
+DROP POLICY IF EXISTS "group_sets: staff manage" ON public.group_sets;
 CREATE POLICY "group_sets: staff manage"
   ON public.group_sets FOR ALL
   USING (
@@ -60,7 +62,6 @@ CREATE POLICY "group_sets: staff manage"
   );
 
 
--- Individual groups within a group set
 CREATE TABLE IF NOT EXISTS public.course_groups (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   group_set_id  uuid NOT NULL REFERENCES public.group_sets(id) ON DELETE CASCADE,
@@ -77,10 +78,12 @@ CREATE INDEX IF NOT EXISTS idx_course_groups_course
 
 ALTER TABLE public.course_groups ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "course_groups: enrolled select" ON public.course_groups;
 CREATE POLICY "course_groups: enrolled select"
   ON public.course_groups FOR SELECT
   USING (is_enrolled_in_course(course_id));
 
+DROP POLICY IF EXISTS "course_groups: staff manage" ON public.course_groups;
 CREATE POLICY "course_groups: staff manage"
   ON public.course_groups FOR ALL
   USING (
@@ -93,7 +96,6 @@ CREATE POLICY "course_groups: staff manage"
   );
 
 
--- Group membership (which students are in which group)
 CREATE TABLE IF NOT EXISTS public.group_members (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   group_id   uuid NOT NULL REFERENCES public.course_groups(id) ON DELETE CASCADE,
@@ -110,7 +112,7 @@ CREATE INDEX IF NOT EXISTS idx_group_members_user
 
 ALTER TABLE public.group_members ENABLE ROW LEVEL SECURITY;
 
--- Students can see members of groups in courses they're enrolled in
+DROP POLICY IF EXISTS "group_members: enrolled select" ON public.group_members;
 CREATE POLICY "group_members: enrolled select"
   ON public.group_members FOR SELECT
   USING (
@@ -121,6 +123,7 @@ CREATE POLICY "group_members: enrolled select"
     )
   );
 
+DROP POLICY IF EXISTS "group_members: staff manage" ON public.group_members;
 CREATE POLICY "group_members: staff manage"
   ON public.group_members FOR ALL
   USING (
@@ -136,18 +139,13 @@ CREATE POLICY "group_members: staff manage"
 
 -- ────────────────────────────────────────────────────────────
 -- 2. GROUP ASSIGNMENTS
---    Link assignments to group sets. When a group submits,
---    all members get credit. Grading can be per-group or
---    individual.
 -- ────────────────────────────────────────────────────────────
 
--- Add group columns to assignments table
 ALTER TABLE public.assignments
   ADD COLUMN IF NOT EXISTS is_group_assignment boolean DEFAULT false,
   ADD COLUMN IF NOT EXISTS group_set_id uuid REFERENCES public.group_sets(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS group_grading_mode text DEFAULT 'per_group';
 
--- Add group_id to submissions so we know which group submitted
 ALTER TABLE public.submissions
   ADD COLUMN IF NOT EXISTS group_id uuid REFERENCES public.course_groups(id) ON DELETE SET NULL;
 
@@ -157,8 +155,6 @@ CREATE INDEX IF NOT EXISTS idx_submissions_group
 
 -- ────────────────────────────────────────────────────────────
 -- 3. GROUP DISCUSSION SPACES
---    Each group can have its own discussion threads, visible
---    only to group members and staff.
 -- ────────────────────────────────────────────────────────────
 
 ALTER TABLE public.discussion_threads
@@ -170,13 +166,8 @@ CREATE INDEX IF NOT EXISTS idx_discussion_threads_group
 
 -- ────────────────────────────────────────────────────────────
 -- 4. INBOX / DIRECT MESSAGING
---    Threaded conversations between users within a course.
---    NOTE: conversations table is created first, then
---    conversation_participants, then conversations RLS
---    policies (which reference conversation_participants).
 -- ────────────────────────────────────────────────────────────
 
--- Conversation (thread header)
 CREATE TABLE IF NOT EXISTS public.conversations (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   course_id   uuid NOT NULL REFERENCES public.courses(id) ON DELETE CASCADE,
@@ -190,7 +181,6 @@ CREATE INDEX IF NOT EXISTS idx_conversations_course
   ON public.conversations (course_id);
 
 
--- Conversation participants (must exist before conversations RLS policies)
 CREATE TABLE IF NOT EXISTS public.conversation_participants (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   conversation_id  uuid NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
@@ -207,7 +197,6 @@ CREATE INDEX IF NOT EXISTS idx_convo_participants_convo
 
 
 -- Helper function: check conversation membership without triggering RLS
--- (SECURITY DEFINER bypasses RLS, preventing infinite recursion)
 CREATE OR REPLACE FUNCTION public.is_conversation_participant(p_conversation_id uuid)
 RETURNS boolean
 LANGUAGE sql
@@ -227,11 +216,13 @@ GRANT EXECUTE ON FUNCTION public.is_conversation_participant(uuid) TO authentica
 
 ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;
 
--- Participants can see all members in conversations they belong to
+DROP POLICY IF EXISTS "convo_participants: own select" ON public.conversation_participants;
+DROP POLICY IF EXISTS "convo_participants: participant select" ON public.conversation_participants;
 CREATE POLICY "convo_participants: participant select"
   ON public.conversation_participants FOR SELECT
   USING (is_conversation_participant(conversation_id));
 
+DROP POLICY IF EXISTS "convo_participants: enrolled insert" ON public.conversation_participants;
 CREATE POLICY "convo_participants: enrolled insert"
   ON public.conversation_participants FOR INSERT
   WITH CHECK (
@@ -242,17 +233,15 @@ CREATE POLICY "convo_participants: enrolled insert"
     )
   );
 
+DROP POLICY IF EXISTS "convo_participants: own update" ON public.conversation_participants;
 CREATE POLICY "convo_participants: own update"
   ON public.conversation_participants FOR UPDATE
   USING (user_id = auth.uid());
 
 
--- Now add RLS policies to conversations (conversation_participants exists)
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 
--- Participants (or the creator) can see their conversations
--- NOTE: created_by check is needed so the creator can see the conversation
--- immediately after INSERT (before participants are added).
+DROP POLICY IF EXISTS "conversations: participant select" ON public.conversations;
 CREATE POLICY "conversations: participant select"
   ON public.conversations FOR SELECT
   USING (
@@ -260,7 +249,7 @@ CREATE POLICY "conversations: participant select"
     OR is_conversation_participant(id)
   );
 
--- Any enrolled user can create a conversation
+DROP POLICY IF EXISTS "conversations: enrolled insert" ON public.conversations;
 CREATE POLICY "conversations: enrolled insert"
   ON public.conversations FOR INSERT
   WITH CHECK (
@@ -268,7 +257,7 @@ CREATE POLICY "conversations: enrolled insert"
     AND is_enrolled_in_course(course_id)
   );
 
--- Creator or staff can update (e.g. subject)
+DROP POLICY IF EXISTS "conversations: update" ON public.conversations;
 CREATE POLICY "conversations: update"
   ON public.conversations FOR UPDATE
   USING (
@@ -282,7 +271,6 @@ CREATE POLICY "conversations: update"
   );
 
 
--- Messages within a conversation
 CREATE TABLE IF NOT EXISTS public.messages (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   conversation_id  uuid NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
@@ -296,12 +284,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation
 
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
--- Only conversation participants can see messages
+DROP POLICY IF EXISTS "messages: participant select" ON public.messages;
 CREATE POLICY "messages: participant select"
   ON public.messages FOR SELECT
   USING (is_conversation_participant(conversation_id));
 
--- Only participants can insert messages
+DROP POLICY IF EXISTS "messages: participant insert" ON public.messages;
 CREATE POLICY "messages: participant insert"
   ON public.messages FOR INSERT
   WITH CHECK (
@@ -312,7 +300,6 @@ CREATE POLICY "messages: participant insert"
 
 -- ────────────────────────────────────────────────────────────
 -- 5. PERSISTENT NOTIFICATIONS
---    In-app notification feed with read status and preferences.
 -- ────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS public.notifications (
@@ -322,8 +309,8 @@ CREATE TABLE IF NOT EXISTS public.notifications (
   type         notification_type NOT NULL,
   title        text NOT NULL,
   body         text,
-  link         text,          -- e.g. page to navigate to
-  ref_id       uuid,          -- generic reference (assignment_id, thread_id, etc.)
+  link         text,
+  ref_id       uuid,
   is_read      boolean NOT NULL DEFAULT false,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
@@ -336,40 +323,40 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_created
 
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
--- Users can only see their own notifications
+DROP POLICY IF EXISTS "notifications: own select" ON public.notifications;
 CREATE POLICY "notifications: own select"
   ON public.notifications FOR SELECT
   USING (user_id = auth.uid());
 
--- System (or staff via RPC) can insert notifications for users
--- For client-side creation, allow if the creator is staff in the course
+-- Allow: insert for yourself, OR insert for any enrolled user in a course
+-- you're also enrolled in (enables student→student message notifications)
+DROP POLICY IF EXISTS "notifications: insert" ON public.notifications;
 CREATE POLICY "notifications: insert"
   ON public.notifications FOR INSERT
   WITH CHECK (
     user_id = auth.uid()
     OR (
       course_id IS NOT NULL
+      AND is_enrolled_in_course(course_id)
       AND EXISTS (
         SELECT 1 FROM enrollments e
         WHERE e.course_id = notifications.course_id
-          AND e.user_id = auth.uid()
-          AND e.role IN ('instructor', 'ta')
+          AND e.user_id = notifications.user_id
       )
     )
   );
 
--- Users can update their own notifications (mark read)
+DROP POLICY IF EXISTS "notifications: own update" ON public.notifications;
 CREATE POLICY "notifications: own update"
   ON public.notifications FOR UPDATE
   USING (user_id = auth.uid());
 
--- Users can delete their own notifications
+DROP POLICY IF EXISTS "notifications: own delete" ON public.notifications;
 CREATE POLICY "notifications: own delete"
   ON public.notifications FOR DELETE
   USING (user_id = auth.uid());
 
 
--- Per-user notification preferences
 CREATE TABLE IF NOT EXISTS public.notification_preferences (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id               uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -387,22 +374,24 @@ CREATE TABLE IF NOT EXISTS public.notification_preferences (
 
 ALTER TABLE public.notification_preferences ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "notification_preferences: own select" ON public.notification_preferences;
 CREATE POLICY "notification_preferences: own select"
   ON public.notification_preferences FOR SELECT
   USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "notification_preferences: own insert" ON public.notification_preferences;
 CREATE POLICY "notification_preferences: own insert"
   ON public.notification_preferences FOR INSERT
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "notification_preferences: own update" ON public.notification_preferences;
 CREATE POLICY "notification_preferences: own update"
   ON public.notification_preferences FOR UPDATE
   USING (user_id = auth.uid());
 
 
 -- ────────────────────────────────────────────────────────────
--- 6. HELPER FUNCTION: Batch-create notifications for
---    all enrolled students in a course.
+-- 6. HELPER FUNCTION: Batch-create notifications
 -- ────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.notify_course_students(
@@ -423,8 +412,7 @@ BEGIN
   SELECT e.user_id, p_course_id, p_type, p_title, p_body, p_link, p_ref_id
   FROM   public.enrollments e
   WHERE  e.course_id = p_course_id
-    AND  e.user_id != auth.uid()  -- don't notify yourself
-    -- Respect per-user preferences
+    AND  e.user_id != auth.uid()
     AND  NOT EXISTS (
       SELECT 1 FROM public.notification_preferences np
       WHERE np.user_id = e.user_id
@@ -447,5 +435,4 @@ GRANT EXECUTE ON FUNCTION public.notify_course_students(uuid, notification_type,
 
 -- ============================================================
 -- End of migration.
--- Apply in Supabase SQL editor or psql as superuser.
 -- ============================================================
