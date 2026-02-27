@@ -489,12 +489,8 @@ function renderUsersSection() {
         <td><span class="role-badge">${escHtml(i.role || 'member')}</span></td>
         <td><span style="color:var(--warning, #d97706); font-size:0.82rem; font-weight:500;">Pending</span></td>
         <td>${formatDate(i.created_at)}</td>
-        <td style="text-align:right; white-space:nowrap;">
-          <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;"
-            onclick="openAssignToCourseModal(${escHtml(JSON.stringify(i.email))})">
-            Add to Course
-          </button>
-          <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; margin-left:4px; color:var(--danger);"
+        <td style="text-align:right;">
+          <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem; color:var(--danger);"
             onclick="cancelOrgInvite(${escHtml(JSON.stringify(i.id))}, ${escHtml(JSON.stringify(i.email))})">
             Cancel
           </button>
@@ -1130,31 +1126,87 @@ function openAddEnrollmentModal() {
     cs.appendChild(opt);
   });
 
-  // Users
+  // Users — active members
   const us = document.getElementById('enrollUserSelect');
-  us.innerHTML = '<option value="">Select org member…</option>';
+  us.innerHTML = '<option value="">Select user…</option>';
+  const memberGroup = document.createElement('optgroup');
+  memberGroup.label = 'Org Members';
   admin.orgMembers.forEach(m => {
     const opt = document.createElement('option');
     opt.value       = m.user_id;
     opt.textContent = m.profile.email + (m.profile.name ? ` — ${m.profile.name}` : '');
-    us.appendChild(opt);
+    memberGroup.appendChild(opt);
   });
+  us.appendChild(memberGroup);
+
+  // Pending invitees — not yet signed in
+  if (admin.orgInvites.length > 0) {
+    const pendingGroup = document.createElement('optgroup');
+    pendingGroup.label = 'Pending Invites (not yet signed in)';
+    admin.orgInvites.forEach(inv => {
+      const opt = document.createElement('option');
+      opt.value       = `pending:${inv.email}`;
+      opt.textContent = inv.email;
+      pendingGroup.appendChild(opt);
+    });
+    us.appendChild(pendingGroup);
+  }
 
   document.getElementById('enrollRoleSelect').value = 'student';
   openModal('modal-addEnrollment');
 }
 
 async function addEnrollment() {
-  const courseId = document.getElementById('enrollCourseSelect').value;
-  const userId   = document.getElementById('enrollUserSelect').value;
-  const role     = document.getElementById('enrollRoleSelect').value;
+  const courseId    = document.getElementById('enrollCourseSelect').value;
+  const userValue   = document.getElementById('enrollUserSelect').value;
+  const role        = document.getElementById('enrollRoleSelect').value;
 
   hideInlineError('addEnrollError');
 
-  if (!courseId) { showInlineError('addEnrollError', 'Select a course.'); return; }
-  if (!userId)   { showInlineError('addEnrollError', 'Select a user.'); return; }
+  if (!courseId)   { showInlineError('addEnrollError', 'Select a course.'); return; }
+  if (!userValue)  { showInlineError('addEnrollError', 'Select a user.'); return; }
 
-  // Check for duplicate
+  const isPending = userValue.startsWith('pending:');
+
+  if (isPending) {
+    // Pending org-invite user — create a course invite instead of an enrollment
+    const email = userValue.slice('pending:'.length);
+
+    // Check for duplicate invite
+    const dupInvite = admin.enrollments.find(
+      e => e.course_id === courseId && e.profile?.email === email
+    );
+    if (dupInvite) {
+      showInlineError('addEnrollError', 'This user already has an enrollment or invite for that course.');
+      return;
+    }
+
+    setSubmitLoading('addEnrollSubmitBtn', true);
+
+    const { error } = await admin.sb
+      .from('invites')
+      .insert({ course_id: courseId, email, role, status: 'pending', invited_by: admin.user.id });
+
+    setSubmitLoading('addEnrollSubmitBtn', false);
+
+    if (error) {
+      showInlineError('addEnrollError', `Error: ${error.message}`);
+      return;
+    }
+
+    const course = admin.orgCourses.find(c => c.id === courseId);
+    await auditLog('add_invite', 'invite', null,
+      { course_id: courseId, email, role });
+
+    closeModal('modal-addEnrollment');
+    showToast(`Invite sent to ${email} for "${course?.name || courseId}" as ${role}. They will be enrolled on first login.`);
+    return;
+  }
+
+  // Active org member — create enrollment directly
+  const userId = userValue;
+
+  // Check for duplicate enrollment
   const dup = admin.enrollments.find(e => e.course_id === courseId && e.user_id === userId);
   if (dup) {
     showInlineError('addEnrollError',
@@ -1755,121 +1807,6 @@ function hydrateCourseTermFilter() {
 function setUsersSearch(v) { admin.filters.usersSearch = v.trim(); renderUsersSection(); }
 function setUsersSort(v) { admin.filters.usersSort = v; renderUsersSection(); }
 function setUsersTab(tab) { admin.filters.usersTab = tab; renderUsersSection(); }
-
-// ─── Assign pending org-invite user to a course ─────────────────────────────
-
-let _assignToCourseEmail = '';
-
-function ensureAssignToCourseModalRendered() {
-  if (document.getElementById('modal-assignToCourse')) return;
-  const overlay = document.createElement('div');
-  overlay.id = 'modal-assignToCourse';
-  overlay.className = 'modal-overlay';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-labelledby', 'assignToCourseTitle');
-  overlay.style.display = 'none';
-  overlay.innerHTML = `
-    <div class="modal" style="max-width:480px;">
-      <div class="modal-header">
-        <h3 class="modal-title" id="assignToCourseTitle">Add to Course</h3>
-        <button class="modal-close" onclick="closeModal('modal-assignToCourse')" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p id="assignToCourseLabel" style="margin-bottom:14px; font-size:0.9rem; color:var(--text-muted);"></p>
-        <div class="form-group">
-          <label class="form-label" for="assignToCourseSelect">Course <span style="color:var(--danger);">*</span></label>
-          <select id="assignToCourseSelect" class="form-select"></select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="assignToCourseRole">Role</label>
-          <select id="assignToCourseRole" class="form-select">
-            <option value="student">Student</option>
-            <option value="ta">Teaching Assistant</option>
-            <option value="instructor">Instructor</option>
-          </select>
-        </div>
-        <div id="assignToCourseError" class="admin-inline-error" style="display:none;" role="alert"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('modal-assignToCourse')">Cancel</button>
-        <button class="btn btn-primary" id="assignToCourseSubmitBtn" onclick="submitAssignToCourse()">Add to Course</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
-function openAssignToCourseModal(email) {
-  ensureAssignToCourseModalRendered();
-  _assignToCourseEmail = email;
-
-  document.getElementById('assignToCourseLabel').textContent =
-    `A course invite will be created for ${email}. When they sign in they'll be prompted to join.`;
-
-  const sel = document.getElementById('assignToCourseSelect');
-  sel.innerHTML = '<option value="">Select a course…</option>';
-  admin.orgCourses.forEach(c => {
-    const opt = document.createElement('option');
-    opt.value = c.id;
-    opt.textContent = c.name + (c.code ? ` (${c.code})` : '');
-    sel.appendChild(opt);
-  });
-
-  document.getElementById('assignToCourseRole').value = 'student';
-  hideInlineError('assignToCourseError');
-  openModal('modal-assignToCourse');
-  setTimeout(() => sel.focus(), 80);
-}
-
-async function submitAssignToCourse() {
-  const courseId = document.getElementById('assignToCourseSelect').value;
-  const role = document.getElementById('assignToCourseRole').value;
-  const email = _assignToCourseEmail;
-
-  if (!courseId) { showInlineError('assignToCourseError', 'Please select a course.'); return; }
-  if (!email) return;
-
-  setSubmitLoading('assignToCourseSubmitBtn', true);
-
-  // Idempotency check: don't create a duplicate pending invite
-  const { data: existing } = await admin.sb
-    .from('invites')
-    .select('id, status')
-    .eq('course_id', courseId)
-    .eq('email', email)
-    .limit(1);
-
-  if (existing && existing.length > 0) {
-    setSubmitLoading('assignToCourseSubmitBtn', false);
-    const st = existing[0].status;
-    if (st === 'pending') {
-      showInlineError('assignToCourseError', `${email} already has a pending invite for this course.`);
-    } else if (st === 'accepted') {
-      showInlineError('assignToCourseError', `${email} is already enrolled in this course.`);
-    } else {
-      showInlineError('assignToCourseError', `An invite already exists with status "${st}".`);
-    }
-    return;
-  }
-
-  const { error } = await admin.sb.from('invites').insert({
-    course_id: courseId,
-    email: email,
-    role: role,
-    status: 'pending',
-    invited_by: admin.user.id
-  });
-
-  setSubmitLoading('assignToCourseSubmitBtn', false);
-
-  if (error) { showInlineError('assignToCourseError', `Error: ${error.message}`); return; }
-
-  await auditLog('assign_pending_user_to_course', 'invite', courseId, { email, role });
-
-  closeModal('modal-assignToCourse');
-  const course = admin.orgCourses.find(c => c.id === courseId);
-  showToast(`Course invite created for ${email}${course ? ` — "${course.name}"` : ''}. They'll be enrolled on sign-in.`);
-}
 
 async function cancelOrgInvite(inviteId, email) {
   openConfirmModal(
