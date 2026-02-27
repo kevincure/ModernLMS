@@ -19,7 +19,10 @@ import {
   supabaseUpdateFile,
   supabaseCreateQuestionBank, supabaseUpdateQuestionBank, supabaseDeleteQuestionBank,
   supabaseCreateCalendarEvent,
-  supabaseDownloadFileBlob
+  supabaseDownloadFileBlob,
+  supabaseCreateGroupSet, supabaseCreateCourseGroup, supabaseDeleteGroupSet,
+  supabaseAddGroupMember,
+  supabaseCreateConversation, supabaseAddConversationParticipant, supabaseCreateMessage
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 
@@ -29,7 +32,8 @@ import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 const STUDENT_TOOLS = [
   'list_assignments', 'list_quizzes', 'list_files', 'list_modules',
   'list_announcements', 'list_discussion_threads', 'get_assignment',
-  'get_file_content', 'get_grade_categories', 'get_grade_settings'
+  'get_file_content', 'get_grade_categories', 'get_grade_settings',
+  'list_group_sets', 'get_group_set'
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -590,7 +594,7 @@ async function executeAiTool(toolName, params = {}) {
       return (appData.assignments || [])
         .filter(a => a.courseId === activeCourseId)
         .filter(a => effectiveIsStaff || (a.status === 'published' && !a.hidden && (a.assignmentType || 'essay') !== 'no_submission'))
-        .map(a => ({ id: a.id, title: a.title, type: a.assignmentType || 'essay', gradingType: a.gradingType || 'points', status: a.status, points: a.points, dueDate: a.dueDate }));
+        .map(a => ({ id: a.id, title: a.title, type: a.assignmentType || 'essay', gradingType: a.gradingType || 'points', status: a.status, points: a.points, dueDate: a.dueDate, isGroupAssignment: !!a.isGroupAssignment, groupSetId: a.groupSetId || null }));
 
     case 'list_quizzes':
       return (appData.quizzes || [])
@@ -653,6 +657,35 @@ async function executeAiTool(toolName, params = {}) {
       return (appData.discussionThreads || [])
         .filter(t => t.courseId === activeCourseId)
         .map(t => ({ id: t.id, title: t.title, pinned: !!t.pinned, replyCount: (t.replies || []).length }));
+
+    case 'list_group_sets':
+      return (appData.groupSets || [])
+        .filter(gs => gs.courseId === activeCourseId)
+        .map(gs => {
+          const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gs.id);
+          return {
+            id: gs.id, name: gs.name, description: gs.description || '',
+            groupCount: groups.length,
+            groups: groups.map(g => ({ id: g.id, name: g.name, memberCount: (g.members || []).length }))
+          };
+        });
+
+    case 'get_group_set': {
+      const gsId = params.group_set_id || params.groupSetId || params.id;
+      const gs = (appData.groupSets || []).find(s => s.id === gsId && s.courseId === activeCourseId);
+      if (!gs) return { error: 'Group set not found — call list_group_sets first to get the id' };
+      const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gs.id);
+      return {
+        id: gs.id, name: gs.name, description: gs.description || '',
+        groups: groups.map(g => ({
+          id: g.id, name: g.name,
+          members: (g.members || []).map(m => {
+            const u = (appData.users || []).find(u => u.id === m.userId);
+            return { userId: m.userId, name: u?.name || '(unknown)', email: u?.email || '' };
+          })
+        }))
+      };
+    }
 
     case 'get_question_bank': {
       const bankId = params.bank_id || params.bankId || params.id;
@@ -874,6 +907,27 @@ function validateActionPayload(payload) {
     if (!fileId) return 'Missing fileId — call list_files first';
     if (!(appData.files || []).find(f => f.id === fileId && f.courseId === activeCourseId))
       return `File "${fileId}" not found — use list_files`;
+  }
+  if (action === 'delete_group_set') {
+    const gsId = payload.id || payload.groupSetId;
+    if (!gsId) return 'Missing group set id — call list_group_sets first';
+    if (!(appData.groupSets || []).find(gs => gs.id === gsId && gs.courseId === activeCourseId))
+      return `Group set "${gsId}" not found — use list_group_sets`;
+  }
+  if (action === 'auto_assign_groups') {
+    const gsId = payload.groupSetId || payload.id;
+    if (!gsId) return 'Missing groupSetId — call list_group_sets first';
+    if (!(appData.groupSets || []).find(gs => gs.id === gsId && gs.courseId === activeCourseId))
+      return `Group set "${gsId}" not found — use list_group_sets`;
+  }
+  if (action === 'send_message') {
+    const ids = Array.isArray(payload.recipientIds) ? payload.recipientIds : [];
+    if (ids.length === 0) return 'No recipientIds — call list_people first';
+    if (!payload.message && !payload.content) return 'Missing message content';
+  }
+  if ((action === 'create_assignment' || action === 'update_assignment') && payload.isGroupAssignment && payload.groupSetId) {
+    if (!(appData.groupSets || []).find(gs => gs.id === payload.groupSetId && gs.courseId === activeCourseId))
+      return `Group set "${payload.groupSetId}" not found — use list_group_sets`;
   }
   return null;
 }
@@ -1322,6 +1376,10 @@ function handleAiAction(action) {
         allowResubmission: action.allowResubmission,
         fileIds: action.fileIds || [],
         fileNames: action.fileNames || [],
+        // Group assignment fields
+        isGroupAssignment: !!action.isGroupAssignment,
+        groupSetId: action.groupSetId || null,
+        groupGradingMode: action.groupGradingMode || 'per_group',
         notes: action.notes || ''
       },
       confirmed: false,
@@ -1502,7 +1560,7 @@ function handleAiAction(action) {
         const d = { id: action.id };
         ['title','description','points','dueDate','status','category','assignmentType',
          'gradingType','allowLateSubmissions','lateDeduction','allowResubmission',
-         'submissionAttempts','notes'].forEach(k => { if (k in action) d[k] = action[k]; });
+         'submissionAttempts','isGroupAssignment','groupSetId','groupGradingMode','notes'].forEach(k => { if (k in action) d[k] = action[k]; });
         return d;
       })(),
       confirmed: false,
@@ -1624,6 +1682,53 @@ function handleAiAction(action) {
         eventDate: action.eventDate || action.date || '',
         eventType: action.eventType || action.type || 'Event',
         description: action.description || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'create_group_set') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'group_set_create',
+      data: {
+        name: action.name || '',
+        description: action.description || '',
+        groupCount: action.groupCount || 4,
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete_group_set') {
+    const gsId = action.id || action.groupSetId;
+    const gs = (appData.groupSets || []).find(s => s.id === gsId);
+    aiThread.push({
+      role: 'action',
+      actionType: 'group_set_delete',
+      data: { id: gsId, name: action.name || gs?.name || '', notes: action.notes || '' },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'auto_assign_groups') {
+    const gsId = action.groupSetId || action.id;
+    const gs = (appData.groupSets || []).find(s => s.id === gsId);
+    aiThread.push({
+      role: 'action',
+      actionType: 'group_auto_assign',
+      data: { groupSetId: gsId, groupSetName: action.groupSetName || gs?.name || '', notes: action.notes || '' },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'send_message') {
+    const recipientIds = Array.isArray(action.recipientIds) ? action.recipientIds : (action.recipientId ? [action.recipientId] : []);
+    aiThread.push({
+      role: 'action',
+      actionType: 'send_message',
+      data: {
+        recipientIds,
+        subject: action.subject || '',
+        message: action.message || action.content || '',
         notes: action.notes || ''
       },
       confirmed: false,
@@ -1783,6 +1888,14 @@ function generateActionConfirmation(msg, publish = false) {
       const evDate = d.eventDate ? new Date(d.eventDate).toLocaleString() : '';
       return `Done! Added ${b(d.title)} (${escapeHtml(d.eventType || 'Event')}) to the ${pageLink('calendar', 'Calendar')}${evDate ? ` on ${escapeHtml(evDate)}` : ''}.`;
     }
+    case 'group_set_create':
+      return `Done! Created group set ${b(d.name)} with ${d.groupCount || 4} groups. Manage from ${pageLink('groups', 'Groups')}.`;
+    case 'group_set_delete':
+      return `Done! Group set ${b(d.name || '')} has been permanently deleted.`;
+    case 'group_auto_assign':
+      return `Done! Students have been auto-assigned to groups in ${b(d.groupSetName || '')}. See ${pageLink('groups', 'Groups')}.`;
+    case 'send_message':
+      return `Done! Message sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
     default:
       return `Done! The action was completed successfully.`;
   }
@@ -1972,6 +2085,10 @@ async function executeAiOperation(operation, publish = false) {
       latePenaltyType: resolved.latePenaltyType || 'per_day',
       lateDeduction: resolved.lateDeduction !== undefined ? resolved.lateDeduction : 10,
       allowResubmission: resolved.allowResubmission !== undefined ? !!resolved.allowResubmission : false,
+      // Group assignment fields
+      isGroupAssignment: !!resolved.isGroupAssignment,
+      groupSetId: resolved.groupSetId || null,
+      groupGradingMode: resolved.groupGradingMode || 'per_group',
       createdBy: appData.currentUser?.id
     };
     const result = await supabaseCreateAssignment(newAssignment);
@@ -2145,6 +2262,9 @@ async function executeAiOperation(operation, publish = false) {
     if (resolved.lateDeduction !== undefined) assignment.lateDeduction = resolved.lateDeduction;
     if (resolved.allowResubmission !== undefined) assignment.allowResubmission = !!resolved.allowResubmission;
     if (resolved.submissionAttempts !== undefined) assignment.submissionAttempts = resolved.submissionAttempts;
+    if (resolved.isGroupAssignment !== undefined) assignment.isGroupAssignment = !!resolved.isGroupAssignment;
+    if (resolved.groupSetId !== undefined) assignment.groupSetId = resolved.groupSetId;
+    if (resolved.groupGradingMode !== undefined) assignment.groupGradingMode = resolved.groupGradingMode;
     const result = await supabaseUpdateAssignment(assignment);
     if (!result) { showToast('Failed to update assignment', 'error'); return false; }
     if (renderAssignmentsCallback) renderAssignmentsCallback();
@@ -2316,6 +2436,101 @@ async function executeAiOperation(operation, publish = false) {
     appData.calendarEvents.push(ev);
     if (window.renderCalendar) window.renderCalendar();
     showToast('Calendar event added', 'success');
+    return true;
+  }
+
+  if (action === 'group_set_create') {
+    if (!activeCourseId) { showToast('No active course', 'error'); return false; }
+    if (!resolved.name) { showToast('Group set name is required', 'error'); return false; }
+    const gsId = generateId();
+    const saved = await supabaseCreateGroupSet({ id: gsId, courseId: activeCourseId, name: resolved.name, description: resolved.description || '' });
+    if (!saved) { showToast('Failed to create group set', 'error'); return false; }
+    const gs = { id: gsId, courseId: activeCourseId, name: resolved.name, description: resolved.description || '', createdBy: appData.currentUser?.id, createdAt: new Date().toISOString() };
+    if (!appData.groupSets) appData.groupSets = [];
+    appData.groupSets.push(gs);
+    // Create individual groups
+    const count = resolved.groupCount || 4;
+    for (let i = 1; i <= count; i++) {
+      const gId = generateId();
+      const groupSaved = await supabaseCreateCourseGroup({ id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${i}` });
+      if (groupSaved) {
+        if (!appData.courseGroups) appData.courseGroups = [];
+        appData.courseGroups.push({ id: gId, groupSetId: gsId, courseId: activeCourseId, name: `Group ${i}`, createdAt: new Date().toISOString(), members: [] });
+      }
+    }
+    showToast(`Group set "${resolved.name}" created with ${count} groups!`, 'success');
+    return true;
+  }
+
+  if (action === 'group_set_delete') {
+    const gsId = resolved.id || resolved.groupSetId;
+    if (!gsId) { showToast('Missing group set id', 'error'); return false; }
+    const ok = await supabaseDeleteGroupSet(gsId);
+    if (!ok) { showToast('Failed to delete group set', 'error'); return false; }
+    appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
+    appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
+    showToast('Group set deleted', 'success');
+    return true;
+  }
+
+  if (action === 'group_auto_assign') {
+    const gsId = resolved.groupSetId || resolved.id;
+    if (!gsId) { showToast('Missing group set id', 'error'); return false; }
+    const groups = (appData.courseGroups || []).filter(g => g.groupSetId === gsId);
+    if (groups.length === 0) { showToast('No groups in this set', 'error'); return false; }
+    // Find unassigned students
+    const assignedUserIds = new Set(groups.flatMap(g => (g.members || []).map(m => m.userId)));
+    const students = (appData.enrollments || [])
+      .filter(e => e.courseId === activeCourseId && e.role === 'student' && !assignedUserIds.has(e.userId))
+      .map(e => e.userId);
+    if (students.length === 0) { showToast('All students are already assigned', 'info'); return true; }
+    // Shuffle
+    const shuffled = [...students];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    // Round-robin assign
+    let idx2 = 0;
+    for (const userId of shuffled) {
+      const group = groups[idx2 % groups.length];
+      const saved = await supabaseAddGroupMember(group.id, userId);
+      if (saved) {
+        if (!group.members) group.members = [];
+        group.members.push({ id: saved.id, groupId: group.id, userId, joinedAt: new Date().toISOString() });
+      }
+      idx2++;
+    }
+    showToast(`${shuffled.length} students auto-assigned!`, 'success');
+    return true;
+  }
+
+  if (action === 'send_message') {
+    if (!activeCourseId) { showToast('No active course', 'error'); return false; }
+    const recipientIds = Array.isArray(resolved.recipientIds) ? resolved.recipientIds : [];
+    if (recipientIds.length === 0) { showToast('No recipients specified', 'error'); return false; }
+    if (!resolved.message) { showToast('Message content is required', 'error'); return false; }
+    // Create conversation
+    const convId = generateId();
+    const convResult = await supabaseCreateConversation({ id: convId, courseId: activeCourseId, subject: resolved.subject || null });
+    if (!convResult) { showToast('Failed to create conversation', 'error'); return false; }
+    // Add participants (self + recipients)
+    const allParticipantIds = [appData.currentUser.id, ...recipientIds.filter(id => id !== appData.currentUser.id)];
+    for (const uid of allParticipantIds) {
+      await supabaseAddConversationParticipant(convId, uid);
+    }
+    // Send the message
+    const msgId = generateId();
+    await supabaseCreateMessage({ id: msgId, conversationId: convId, senderId: appData.currentUser.id, content: resolved.message });
+    // Update local state
+    if (!appData.conversations) appData.conversations = [];
+    appData.conversations.push({
+      id: convId, courseId: activeCourseId, subject: resolved.subject || null,
+      createdBy: appData.currentUser.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      participants: allParticipantIds.map(uid => ({ conversationId: convId, userId: uid })),
+      messages: [{ id: msgId, conversationId: convId, senderId: appData.currentUser.id, content: resolved.message, createdAt: new Date().toISOString() }]
+    });
+    showToast('Message sent!', 'success');
     return true;
   }
 
@@ -2612,6 +2827,14 @@ function describeStep(step) {
       return `${step.visible ? 'Show' : 'Hide'} course from students`;
     case 'update_start_here':
       return `Update Start Here page`;
+    case 'create_group_set':
+      return `Create group set: "${title}"${step.groupCount ? ` (${step.groupCount} groups)` : ''}`;
+    case 'delete_group_set':
+      return `Delete group set: "${step.name || title}"`;
+    case 'auto_assign_groups':
+      return `Auto-assign students to: "${step.groupSetName || title}"`;
+    case 'send_message':
+      return `Send message${step.subject ? `: "${step.subject}"` : ''}`;
     default:
       return title ? `${a.replace(/_/g, ' ')}: "${title}"` : a.replace(/_/g, ' ');
   }
@@ -2790,7 +3013,16 @@ function renderActionPreview(msg, idx) {
         field('Submission Attempts (blank = unlimited)', numberInput('submissionAttempts', d.submissionAttempts ?? '', 1, 99), 0)
       )}
       ${lateSection(d.allowLateSubmissions, d.lateDeduction ?? 10)}
-      <div>${checkboxInput('allowResubmission', d.allowResubmission, 'Allow resubmission')}</div>
+      <div style="margin-bottom:12px;">${checkboxInput('allowResubmission', d.allowResubmission, 'Allow resubmission')}</div>
+      <div style="margin-bottom:12px;">${checkboxInput('isGroupAssignment', d.isGroupAssignment, 'Group Assignment')}</div>
+      ${d.isGroupAssignment ? (() => {
+        const groupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
+        const gsOptions = groupSets.map(gs => [gs.id, gs.name]);
+        return `
+          ${field('Group Set', gsOptions.length ? selectInput('groupSetId', d.groupSetId || '', gsOptions) : '<div class="muted">No group sets — create one first</div>')}
+          ${field('Grading Mode', selectInput('groupGradingMode', d.groupGradingMode || 'per_group', [['per_group','One grade per group'],['individual','Individual grades']]))}
+        `;
+      })() : ''}
     `;
   }
 
@@ -2813,6 +3045,15 @@ function renderActionPreview(msg, idx) {
     if ('lateDeduction' in d) html += field('Late penalty (%/day)', numberInput('lateDeduction', d.lateDeduction, 0, 100));
     if ('allowResubmission' in d) html += `<div>${checkboxInput('allowResubmission', d.allowResubmission, 'Allow resubmission')}</div>`;
     if ('submissionAttempts' in d) html += field('Submission Attempts (blank=unlimited)', numberInput('submissionAttempts', d.submissionAttempts, 1, 99));
+    if ('isGroupAssignment' in d) {
+      html += `<div style="margin-bottom:12px;">${checkboxInput('isGroupAssignment', d.isGroupAssignment, 'Group Assignment')}</div>`;
+      if (d.isGroupAssignment) {
+        const groupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
+        const gsOptions = groupSets.map(gs => [gs.id, gs.name]);
+        if ('groupSetId' in d || gsOptions.length) html += field('Group Set', gsOptions.length ? selectInput('groupSetId', d.groupSetId || '', gsOptions) : '<div class="muted">No group sets</div>');
+        if ('groupGradingMode' in d) html += field('Grading Mode', selectInput('groupGradingMode', d.groupGradingMode || 'per_group', [['per_group','One grade per group'],['individual','Individual grades']]));
+      }
+    }
     return html;
   }
 
@@ -3039,6 +3280,51 @@ function renderActionPreview(msg, idx) {
       ${field('Date & Time', dateTimeInputs)}
       ${field('Event Type', selectInput('eventType', d.eventType || 'Event', [['Class','Class'],['Lecture','Special Lecture'],['Office Hours','Office Hours'],['Exam','Exam'],['Event','Other']]))}
       ${field('Description', textarea('description', d.description, 2))}
+    `;
+  }
+
+  // ─── GROUP SET (create) ──────────────────────────────────────────────────
+  if (msg.actionType === 'group_set_create') {
+    return `
+      ${field('Group Set Name', textInput('name', d.name))}
+      ${field('Description', textInput('description', d.description || ''))}
+      ${field('Number of Groups', numberInput('groupCount', d.groupCount || 4, 1, 50))}
+    `;
+  }
+
+  // ─── GROUP SET (delete) ─────────────────────────────────────────────────
+  if (msg.actionType === 'group_set_delete') {
+    const gs = (appData.groupSets || []).find(s => s.id === d.id);
+    const groupCount = (appData.courseGroups || []).filter(g => g.groupSetId === d.id).length;
+    return `
+      <div class="muted" style="font-size:0.9rem;">Delete group set: <strong>${escapeHtml(d.name || gs?.name || d.id || '')}</strong></div>
+      ${groupCount > 0 ? `<div style="margin-top:6px; font-size:0.82rem; color:var(--danger, #c00);">This will permanently delete ${groupCount} group${groupCount !== 1 ? 's' : ''} and all member assignments.</div>` : ''}
+    `;
+  }
+
+  // ─── GROUP AUTO-ASSIGN ──────────────────────────────────────────────────
+  if (msg.actionType === 'group_auto_assign') {
+    const gs = (appData.groupSets || []).find(s => s.id === d.groupSetId);
+    const groups = (appData.courseGroups || []).filter(g => g.groupSetId === d.groupSetId);
+    const assignedUserIds = new Set(groups.flatMap(g => (g.members || []).map(m => m.userId)));
+    const unassignedCount = (appData.enrollments || [])
+      .filter(e => e.courseId === activeCourseId && e.role === 'student' && !assignedUserIds.has(e.userId)).length;
+    return `
+      <div class="muted" style="font-size:0.9rem;">Auto-assign students to: <strong>${escapeHtml(d.groupSetName || gs?.name || '')}</strong></div>
+      <div class="muted" style="font-size:0.85rem; margin-top:6px;">${groups.length} group${groups.length !== 1 ? 's' : ''} · ${unassignedCount} unassigned student${unassignedCount !== 1 ? 's' : ''}</div>
+    `;
+  }
+
+  // ─── SEND MESSAGE ───────────────────────────────────────────────────────
+  if (msg.actionType === 'send_message') {
+    const recipientNames = (d.recipientIds || []).map(uid => {
+      const u = (appData.users || []).find(u => u.id === uid);
+      return u ? escapeHtml(u.name) : uid;
+    }).join(', ');
+    return `
+      <div class="muted" style="font-size:0.85rem; margin-bottom:8px;">To: <strong>${recipientNames || '(none)'}</strong></div>
+      ${d.subject ? field('Subject', textInput('subject', d.subject)) : ''}
+      ${field('Message', textarea('message', d.message, 4))}
     `;
   }
 

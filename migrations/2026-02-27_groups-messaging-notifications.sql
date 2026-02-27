@@ -250,10 +250,15 @@ CREATE POLICY "convo_participants: own update"
 -- Now add RLS policies to conversations (conversation_participants exists)
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 
--- Only participants can see their conversations
+-- Participants (or the creator) can see their conversations
+-- NOTE: created_by check is needed so the creator can see the conversation
+-- immediately after INSERT (before participants are added).
 CREATE POLICY "conversations: participant select"
   ON public.conversations FOR SELECT
-  USING (is_conversation_participant(id));
+  USING (
+    created_by = auth.uid()
+    OR is_conversation_participant(id)
+  );
 
 -- Any enrolled user can create a conversation
 CREATE POLICY "conversations: enrolled insert"
