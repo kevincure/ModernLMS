@@ -231,17 +231,28 @@ export function renderMarkdown(text) {
     return `@@PRESERVED${index}@@`;
   });
 
-  // Convert raw YouTube URLs to embeds (handles watch, youtu.be, Shorts, Live)
+  // Convert raw YouTube URLs to click-to-play placeholders (avoids loading
+  // the YouTube player JS until the user actually wants to watch the video)
   working = working.replace(/https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[^\s<"]*)?/g, (match, videoId) => {
     const index = preservedBlocks.length;
-    preservedBlocks.push(`<div class="video-embed"><iframe src="https://www.youtube.com/embed/${videoId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`);
+    preservedBlocks.push(
+      `<div class="video-embed video-placeholder" data-video-type="youtube" data-video-id="${videoId}" onclick="loadVideoEmbed(this)" style="cursor:pointer;" title="Click to play">` +
+      `<img src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy" alt="Video thumbnail">` +
+      `<div class="video-play-btn"><svg viewBox="0 0 24 24" fill="white" width="36" height="36"><path d="M8 5v14l11-7z"/></svg></div>` +
+      `</div>`
+    );
     return `@@PRESERVED${index}@@`;
   });
 
-  // Convert raw Vimeo URLs to embeds
+  // Convert raw Vimeo URLs to click-to-play placeholders
   working = working.replace(/(?:https?:\/\/)?(?:www\.)?vimeo\.com\/(\d+)/g, (match, videoId) => {
     const index = preservedBlocks.length;
-    preservedBlocks.push(`<div class="video-embed"><iframe src="https://player.vimeo.com/video/${videoId}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe></div>`);
+    preservedBlocks.push(
+      `<div class="video-embed video-placeholder" data-video-type="vimeo" data-video-id="${videoId}" onclick="loadVideoEmbed(this)" style="cursor:pointer;" title="Click to play">` +
+      `<div style="width:100%;height:100%;background:#1a1a2e;display:flex;align-items:center;justify-content:center;">` +
+      `<div class="video-play-btn"><svg viewBox="0 0 24 24" fill="white" width="36" height="36"><path d="M8 5v14l11-7z"/></svg></div></div>` +
+      `</div>`
+    );
     return `@@PRESERVED${index}@@`;
   });
 

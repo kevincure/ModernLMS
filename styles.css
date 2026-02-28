@@ -2068,6 +2068,36 @@ body.style-1 .ai-thread-container {
   border: none;
 }
 
+.video-placeholder img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.video-play-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.72);
+  border-radius: 50%;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  pointer-events: none;
+}
+
+.video-placeholder:hover .video-play-btn {
+  background: rgba(255, 0, 0, 0.85);
+}
+
 /* Responsive video for smaller screens */
 @media (max-width: 768px) {
   .video-embed {
