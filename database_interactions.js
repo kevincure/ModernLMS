@@ -2488,6 +2488,16 @@ export async function supabaseGetCourseRecipients(courseId) {
   }));
 }
 
+export async function supabaseSendReplyMessage(conversationId, content) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.rpc('send_reply_message', {
+    p_conversation_id: conversationId,
+    p_content: content
+  });
+  if (error) { console.error('[Supabase] send_reply_message error:', error); showToast('Failed to send reply', 'error'); return null; }
+  return data;
+}
+
 export async function supabaseMarkConversationRead(conversationId) {
   if (!supabaseClient) return false;
   const { error } = await supabaseClient.from('conversation_participants')

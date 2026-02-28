@@ -91,6 +91,7 @@ import {
   supabaseCreateMessage,
   supabaseMarkConversationRead,
   supabaseSendDirectMessage,
+  supabaseSendReplyMessage,
   supabaseGetCourseRecipients,
   // Notifications
   supabaseCreateNotification,
@@ -964,11 +965,10 @@ function confirmInsertVideo() {
   let embedCode = '';
 
   if (videoId) {
-    // YouTube embed - use iframe syntax that renderMarkdown will handle
-    embedCode = `\n\n<div class="video-embed"><iframe src="https://www.youtube.com/embed/${videoId}" frameborder="0" allowfullscreen></iframe></div>\n\n`;
+    // Store as raw URL so renderMarkdown converts it to a lazy click-to-play placeholder
+    embedCode = `\n\nhttps://www.youtube.com/watch?v=${videoId}\n\n`;
   } else if (url.includes('vimeo.com')) {
-    const vimeoId = url.split('/').pop().split('?')[0];
-    embedCode = `\n\n<div class="video-embed"><iframe src="https://player.vimeo.com/video/${vimeoId}" frameborder="0" allowfullscreen></iframe></div>\n\n`;
+    embedCode = `\n\n${url}\n\n`;
   } else {
     embedCode = `\n\n[Watch Video](${url})\n\n`;
   }
@@ -10598,16 +10598,6 @@ async function sendNewMessage() {
   convo.messages.push(msg);
   convo.updatedAt = new Date().toISOString();
 
-  // Create notification for recipient
-  await supabaseCreateNotification({
-    userId: recipientId,
-    courseId: activeCourseId,
-    type: 'message_received',
-    title: 'New message from ' + (appData.currentUser.name || 'someone'),
-    body: content.slice(0, 100),
-    link: 'inbox'
-  });
-
   closeNewMessageModal();
   openConversation(convoId);
   showToast('Message sent!', 'success');
@@ -10618,29 +10608,15 @@ async function sendReplyMessage(conversationId) {
   const content = input?.value.trim();
   if (!content) { showToast('Message cannot be empty', 'error'); return; }
 
-  const msgId = generateId();
-  const saved = await supabaseCreateMessage({ id: msgId, conversationId, content });
-  if (!saved) return;
+  // Use SECURITY DEFINER RPC: inserts message and notifies other participants
+  const result = await supabaseSendReplyMessage(conversationId, content);
+  if (!result) return;
 
+  const msgId = result.message_id;
   const convo = (appData.conversations || []).find(c => c.id === conversationId);
   if (convo) {
-    const msg = { id: msgId, conversationId, senderId: appData.currentUser.id, content, createdAt: new Date().toISOString() };
-    convo.messages.push(msg);
+    convo.messages.push({ id: msgId, conversationId, senderId: appData.currentUser.id, content, createdAt: new Date().toISOString() });
     convo.updatedAt = new Date().toISOString();
-
-    // Notify other participants
-    for (const p of convo.participants) {
-      if (p.userId !== appData.currentUser.id) {
-        await supabaseCreateNotification({
-          userId: p.userId,
-          courseId: convo.courseId,
-          type: 'message_received',
-          title: 'New message from ' + (appData.currentUser.name || 'someone'),
-          body: content.slice(0, 100),
-          link: 'inbox'
-        });
-      }
-    }
   }
 
   if (input) input.value = '';

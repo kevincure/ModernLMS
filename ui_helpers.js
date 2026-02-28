@@ -224,10 +224,31 @@ export function renderMarkdown(text) {
   const preservedBlocks = [];
   let working = text;
 
-  // Preserve video embeds
+  // Convert legacy <div class="video-embed"><iframe> blocks to click-to-play placeholders.
+  // Old content stored iframe HTML directly; this intercepts it before it can reach the DOM.
   working = working.replace(/<div class="video-embed">[\s\S]*?<\/div>/g, (match) => {
     const index = preservedBlocks.length;
-    preservedBlocks.push(match);
+    const ytMatch = match.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+    const vimeoMatch = match.match(/player\.vimeo\.com\/video\/(\d+)/);
+    if (ytMatch) {
+      const videoId = ytMatch[1];
+      preservedBlocks.push(
+        `<div class="video-embed video-placeholder" data-video-type="youtube" data-video-id="${videoId}" onclick="loadVideoEmbed(this)" style="cursor:pointer;" title="Click to play">` +
+        `<img src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy" alt="Video thumbnail">` +
+        `<div class="video-play-btn"><svg viewBox="0 0 24 24" fill="white" width="36" height="36"><path d="M8 5v14l11-7z"/></svg></div>` +
+        `</div>`
+      );
+    } else if (vimeoMatch) {
+      const videoId = vimeoMatch[1];
+      preservedBlocks.push(
+        `<div class="video-embed video-placeholder" data-video-type="vimeo" data-video-id="${videoId}" onclick="loadVideoEmbed(this)" style="cursor:pointer;" title="Click to play">` +
+        `<div style="width:100%;height:100%;background:#1a1a2e;display:flex;align-items:center;justify-content:center;">` +
+        `<div class="video-play-btn"><svg viewBox="0 0 24 24" fill="white" width="36" height="36"><path d="M8 5v14l11-7z"/></svg></div></div>` +
+        `</div>`
+      );
+    } else {
+      preservedBlocks.push(match); // unknown iframe type, preserve as-is
+    }
     return `@@PRESERVED${index}@@`;
   });
 
