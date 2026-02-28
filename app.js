@@ -10424,7 +10424,7 @@ function renderInbox() {
         <div class="card-header">
           <div style="flex:1;">
             <div class="card-title" style="display:flex; align-items:center; gap:8px;">
-              ${escapeHtml(c.subject || names)}
+              ${escapeHtml(names)}
               ${unreadCount > 0 ? `<span class="notification-badge" style="position:static; font-size:0.7rem;">${unreadCount}</span>` : ''}
             </div>
             <div class="muted" style="font-size:0.85rem;">
@@ -10447,7 +10447,7 @@ function renderConversationThread() {
   const otherParticipants = convo.participants.filter(p => p.userId !== appData.currentUser.id);
   const names = otherParticipants.map(p => { const u = getUserById(p.userId); return u ? escapeHtml(u.name) : 'Unknown'; }).join(', ');
 
-  setText('inboxSubtitle', convo.subject || names);
+  setText('inboxSubtitle', names);
   setHTML('inboxActions', `<button class="btn btn-secondary" onclick="closeConversation()">← All Messages</button>`);
 
   const messagesHtml = convo.messages.map(m => {
@@ -10455,28 +10455,20 @@ function renderConversationThread() {
     const isMe = m.senderId === appData.currentUser.id;
     return `
       <div class="message-bubble ${isMe ? 'message-sent' : 'message-received'}">
-        <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px;">
-          ${escapeHtml(sender?.name || 'Unknown')}
-          <span class="muted" style="font-weight:400; margin-left:8px;">${formatDate(m.createdAt)}</span>
-        </div>
+        ${!isMe ? `<div class="message-sender">${escapeHtml(sender?.name || 'Unknown')}</div>` : ''}
         <div class="markdown-content">${renderMarkdown(m.content)}</div>
+        <div class="message-time">${formatDate(m.createdAt)}</div>
       </div>
     `;
-  }).join('') || '<div class="muted" style="padding:12px 0;">No messages yet.</div>';
+  }).join('') || '<div class="muted" style="padding:20px 0; text-align:center;">No messages yet.</div>';
 
   setHTML('inboxContent', `
-    <div class="card" style="margin-bottom:12px; padding:12px 16px;">
-      <div style="font-weight:600;">${escapeHtml(convo.subject || 'Conversation')}</div>
-      <div class="muted" style="font-size:0.85rem;">With ${names}</div>
-    </div>
     <div class="messages-container" id="messagesContainer">
       ${messagesHtml}
     </div>
-    <div class="card" style="margin-top:12px;">
-      <textarea class="form-textarea" id="replyMessageInput" rows="3" placeholder="Write a reply…"></textarea>
-      <div style="margin-top:8px;">
-        <button class="btn btn-primary" onclick="sendReplyMessage('${convo.id}')">Send</button>
-      </div>
+    <div class="reply-box">
+      <textarea class="form-textarea reply-input" id="replyMessageInput" rows="2" placeholder="Message…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReplyMessage('${convo.id}')}"></textarea>
+      <button class="btn btn-primary" onclick="sendReplyMessage('${convo.id}')">Send</button>
     </div>
   `);
 
@@ -10524,7 +10516,7 @@ async function openNewMessageModal() {
 
   const html = `
     <div class="modal-overlay" id="newMessageModal" style="display:flex;">
-      <div class="modal" style="max-width:550px;">
+      <div class="modal" style="max-width:480px;">
         <div class="modal-header">
           <h2 class="modal-title">New Message</h2>
           <button class="modal-close" onclick="closeNewMessageModal()">&times;</button>
@@ -10538,12 +10530,7 @@ async function openNewMessageModal() {
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Subject</label>
-            <input type="text" class="form-input" id="newMessageSubject" placeholder="Optional subject…">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Message *</label>
-            <textarea class="form-textarea" id="newMessageContent" rows="5" placeholder="Write your message…"></textarea>
+            <textarea class="form-textarea" id="newMessageContent" rows="5" placeholder="Message…"></textarea>
           </div>
         </div>
         <div class="modal-footer">
@@ -10563,14 +10550,13 @@ function closeNewMessageModal() {
 
 async function sendNewMessage() {
   const recipientId = document.getElementById('newMessageRecipient')?.value;
-  const subject = document.getElementById('newMessageSubject')?.value.trim();
   const content = document.getElementById('newMessageContent')?.value.trim();
 
   if (!recipientId) { showToast('Please select a recipient', 'error'); return; }
   if (!content) { showToast('Message cannot be empty', 'error'); return; }
 
   // Use RPC to atomically create conversation + participants + message
-  const result = await supabaseSendDirectMessage(activeCourseId, recipientId, subject, content);
+  const result = await supabaseSendDirectMessage(activeCourseId, recipientId, null, content);
   if (!result) return;
 
   const convoId = result.conversation_id;
@@ -10581,7 +10567,7 @@ async function sendNewMessage() {
   let convo = (appData.conversations || []).find(c => c.id === convoId);
   if (!convo) {
     convo = {
-      id: convoId, courseId: activeCourseId, subject: subject || null,
+      id: convoId, courseId: activeCourseId, subject: null,
       createdBy: appData.currentUser.id, createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       participants: [

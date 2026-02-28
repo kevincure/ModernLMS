@@ -374,7 +374,7 @@ function buildSystemPrompt(isStaff, courseContext) {
 Output ONLY a single valid JSON object. No text before or after.
 - To answer: {"type":"answer","text":"Your response here"}
 - To look up course data: {"type":"tool_call","tool":"tool_name","params":{},"step_label":"📋 Looking up..."}
-- To send a message: {"type":"action","action":"send_message","recipientIds":["<id>"],"subject":"...","message":"..."}
+- To send a message: {"type":"action","action":"send_message","recipientIds":["<id>"],"message":"..."}
 - To reply to a conversation: {"type":"action","action":"reply_message","conversationId":"<id>","message":"..."}
 
 AVAILABLE TOOLS (call these to look up real IDs — never guess IDs):
@@ -974,11 +974,11 @@ function validateActionPayload(payload) {
   if (action === 'send_message') {
     const ids = Array.isArray(payload.recipientIds) ? payload.recipientIds : [];
     if (ids.length === 0) return 'No recipientIds — call list_people first';
-    if (!payload.message && !payload.content) return 'Missing message content';
+    if (!payload.message && !payload.content && !payload.messageContent) return 'Missing message content';
   }
   if (action === 'reply_message') {
     if (!payload.conversationId) return 'Missing conversationId — call list_conversations first';
-    if (!payload.message && !payload.content) return 'Missing message content';
+    if (!payload.message && !payload.content && !payload.messageContent) return 'Missing message content';
   }
   if ((action === 'create_assignment' || action === 'update_assignment') && payload.isGroupAssignment && payload.groupSetId) {
     if (!(appData.groupSets || []).find(gs => gs.id === payload.groupSetId && gs.courseId === activeCourseId))
@@ -1782,8 +1782,7 @@ function handleAiAction(action) {
       actionType: 'send_message',
       data: {
         recipientIds,
-        subject: action.subject || '',
-        message: action.message || action.content || '',
+        message: action.message || action.content || action.messageContent || '',
         notes: action.notes || ''
       },
       confirmed: false,
@@ -2578,18 +2577,18 @@ async function executeAiOperation(operation, publish = false) {
     if (!activeCourseId) { showToast('No active course', 'error'); return false; }
     const recipientIds = Array.isArray(resolved.recipientIds) ? resolved.recipientIds : [];
     if (recipientIds.length === 0) { showToast('No recipients specified', 'error'); return false; }
-    const msgContent = resolved.message || resolved.content;
+    const msgContent = resolved.message || resolved.content || resolved.messageContent;
     if (!msgContent) { showToast('Message content is required', 'error'); return false; }
     // Send one conversation per recipient using the SECURITY DEFINER RPC
     for (const recipientId of recipientIds) {
-      const result = await supabaseSendDirectMessage(activeCourseId, recipientId, resolved.subject || null, msgContent);
+      const result = await supabaseSendDirectMessage(activeCourseId, recipientId, null, msgContent);
       if (!result) continue;
       const convoId = result.conversation_id;
       const msgId = result.message_id;
       let convo = (appData.conversations || []).find(c => c.id === convoId);
       if (!convo) {
         convo = {
-          id: convoId, courseId: activeCourseId, subject: resolved.subject || null,
+          id: convoId, courseId: activeCourseId, subject: null,
           createdBy: appData.currentUser.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
           participants: [
             { conversationId: convoId, userId: appData.currentUser.id },
@@ -2609,8 +2608,8 @@ async function executeAiOperation(operation, publish = false) {
 
   if (action === 'reply_message') {
     if (!activeCourseId) { showToast('No active course', 'error'); return false; }
-    const { conversationId, message, content } = resolved;
-    const msgContent = message || content;
+    const { conversationId, message, content, messageContent } = resolved;
+    const msgContent = message || content || messageContent;
     if (!conversationId) { showToast('No conversationId — call list_conversations first', 'error'); return false; }
     if (!msgContent) { showToast('Message content is required', 'error'); return false; }
     // Use SECURITY DEFINER RPC: inserts message and notifies other participants
@@ -2926,7 +2925,7 @@ function describeStep(step) {
     case 'auto_assign_groups':
       return `Auto-assign students to: "${step.groupSetName || title}"`;
     case 'send_message':
-      return `Send message${step.subject ? `: "${step.subject}"` : ''}`;
+      return `Send message`;
     case 'reply_message':
       return `Reply to conversation`;
     default:
@@ -3417,7 +3416,6 @@ function renderActionPreview(msg, idx) {
     }).join(', ');
     return `
       <div class="muted" style="font-size:0.85rem; margin-bottom:8px;">To: <strong>${recipientNames || '(none)'}</strong></div>
-      ${d.subject ? field('Subject', textInput('subject', d.subject)) : ''}
       ${field('Message', textarea('message', d.message, 4))}
     `;
   }
