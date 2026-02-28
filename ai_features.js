@@ -24,6 +24,7 @@ import {
   supabaseAddGroupMember,
   supabaseCreateMessage,
   supabaseSendDirectMessage,
+  supabaseSendReplyMessage,
   supabaseGetCourseRecipients
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
@@ -36,7 +37,7 @@ const STUDENT_TOOLS = [
   'list_announcements', 'list_discussion_threads', 'get_assignment',
   'get_file_content', 'get_grade_categories', 'get_grade_settings',
   'list_group_sets', 'get_group_set',
-  'list_conversations'
+  'list_people', 'list_conversations'
 ];
 
 // Actions students are allowed to perform (messaging only)
@@ -363,17 +364,30 @@ function buildSystemPrompt(isStaff, courseContext) {
       const paramStr = t.params ? `(${Object.entries(t.params).map(([k, v]) => `${k}: ${v}`).join(', ')})` : '';
       return `  - ${t.name}${paramStr}: ${t.description}`;
     }).filter(Boolean).join('\n');
-    return `You are an AI assistant for an LMS helping a STUDENT. Help with course questions, explain concepts, and provide guidance.
+    const messagingActionList = AI_TOOL_REGISTRY.action_types
+      .filter(t => STUDENT_ACTIONS.includes(t.name))
+      .map(t => `  - ${t.name}: ${t.description}`)
+      .join('\n');
+    return `You are an AI assistant for an LMS helping a STUDENT. Help with course questions, explain concepts, provide guidance, and help send or reply to messages.
 
 ⚠️ OUTPUT FORMAT — CRITICAL:
 Output ONLY a single valid JSON object. No text before or after.
 - To answer: {"type":"answer","text":"Your response here"}
 - To look up course data: {"type":"tool_call","tool":"tool_name","params":{},"step_label":"📋 Looking up..."}
+- To send a message: {"type":"action","action":"send_message","recipientIds":["<id>"],"subject":"...","message":"..."}
+- To reply to a conversation: {"type":"action","action":"reply_message","conversationId":"<id>","message":"..."}
 
-AVAILABLE READ-ONLY TOOLS (you may ONLY call these):
+AVAILABLE TOOLS (call these to look up real IDs — never guess IDs):
 ${studentToolList}
 
-You may NOT create, update, or delete any content. If asked, explain only instructors can modify content.
+AVAILABLE MESSAGING ACTIONS:
+${messagingActionList}
+
+⚠️ MESSAGING RULES:
+- ALWAYS use send_message by default unless the user explicitly says "reply" or references a specific existing conversation.
+- Before send_message: call list_people to find the recipient's user ID by name.
+- Before reply_message: call list_conversations to find the conversationId.
+- You may send messages and reply to messages. You may NOT create or modify any other content (assignments, quizzes, grades, etc.).
 NEVER include raw UUIDs in answer text — refer to things by name/title only.
 
 ${courseContext}`;
@@ -456,6 +470,11 @@ OUT-OF-SCOPE REQUESTS — respond with an answer, do NOT use an action:
 VIEWING ANALYTICS AND GRADES — use tools then answer, no action needed:
 - To show analytics for an assignment: call get_assignment_analytics(assignment_id) → then answer with the stats
 - To show a student's grades: call list_people → get the userId → call get_student_grades(user_id) → then answer with their grades. Never emit an action for viewing read-only data.
+
+MESSAGING RULES:
+- ALWAYS use send_message by default unless the user explicitly says "reply" or references a specific existing conversation.
+- Before send_message: call list_people to find the recipient's user ID by name.
+- Before reply_message: call list_conversations to find the conversationId.
 
 QUESTION BANK QUESTION TYPES (7 supported types for create_question_bank / add_questions_to_bank):
 - multiple_choice: options array + correctAnswer (index or value)
@@ -2594,9 +2613,10 @@ async function executeAiOperation(operation, publish = false) {
     const msgContent = message || content;
     if (!conversationId) { showToast('No conversationId — call list_conversations first', 'error'); return false; }
     if (!msgContent) { showToast('Message content is required', 'error'); return false; }
-    const msgId = generateId();
-    const saved = await supabaseCreateMessage({ id: msgId, conversationId, content: msgContent });
-    if (!saved) return false;
+    // Use SECURITY DEFINER RPC: inserts message and notifies other participants
+    const result = await supabaseSendReplyMessage(conversationId, msgContent);
+    if (!result) return false;
+    const msgId = result.message_id;
     const convo = (appData.conversations || []).find(c => c.id === conversationId);
     if (convo) {
       convo.messages.push({ id: msgId, conversationId, senderId: appData.currentUser.id, content: msgContent, createdAt: new Date().toISOString() });
