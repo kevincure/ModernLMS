@@ -22,7 +22,9 @@ import {
   supabaseDownloadFileBlob,
   supabaseCreateGroupSet, supabaseCreateCourseGroup, supabaseDeleteGroupSet,
   supabaseAddGroupMember,
-  supabaseCreateConversation, supabaseAddConversationParticipant, supabaseCreateMessage
+  supabaseCreateMessage,
+  supabaseSendDirectMessage,
+  supabaseGetCourseRecipients
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 
@@ -33,8 +35,12 @@ const STUDENT_TOOLS = [
   'list_assignments', 'list_quizzes', 'list_files', 'list_modules',
   'list_announcements', 'list_discussion_threads', 'get_assignment',
   'get_file_content', 'get_grade_categories', 'get_grade_settings',
-  'list_group_sets', 'get_group_set'
+  'list_group_sets', 'get_group_set',
+  'list_conversations'
 ];
+
+// Actions students are allowed to perform (messaging only)
+const STUDENT_ACTIONS = ['send_message', 'reply_message'];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODULE STATE
@@ -157,6 +163,11 @@ export function buildAiContext() {
       context += `- modules: ${modules.length}\n`;
       context += `- announcements: ${announcements.length}\n`;
       context += `- enrolled users: ${enrolled.length}${invites.length ? `, ${invites.length} pending invite${invites.length !== 1 ? 's' : ''}` : ''}\n`;
+
+      const conversations = (appData.conversations || []).filter(c => c.courseId === activeCourseId);
+      if (conversations.length > 0) {
+        context += `- inbox conversations: ${conversations.length} (call list_conversations to read them)\n`;
+      }
     }
   } else {
     context += 'No active course selected.\n';
@@ -838,6 +849,27 @@ async function executeAiTool(toolName, params = {}) {
       return { id: f.id, name: f.name, error: `File type "${mt}" cannot be read by the AI. Supported: PDF, images, text files, docx, and pptx.` };
     }
 
+    case 'list_conversations': {
+      const convos = (appData.conversations || []).filter(c => c.courseId === activeCourseId);
+      return convos.map(c => {
+        const otherParticipants = (c.participants || [])
+          .filter(p => p.userId !== appData.currentUser?.id)
+          .map(p => {
+            const u = (appData.users || []).find(u => u.id === p.userId);
+            return u ? { userId: p.userId, name: u.name, email: u.email } : { userId: p.userId };
+          });
+        const lastMsg = (c.messages || []).slice(-1)[0];
+        return {
+          conversationId: c.id,
+          subject: c.subject || null,
+          participants: otherParticipants,
+          messageCount: (c.messages || []).length,
+          lastMessage: lastMsg ? { from: lastMsg.senderId === appData.currentUser?.id ? 'you' : (appData.users || []).find(u => u.id === lastMsg.senderId)?.name || lastMsg.senderId, content: lastMsg.content.slice(0, 120), sentAt: lastMsg.createdAt } : null,
+          updatedAt: c.updatedAt
+        };
+      });
+    }
+
     default:
       return { error: `Unknown tool: ${toolName}` };
   }
@@ -923,6 +955,10 @@ function validateActionPayload(payload) {
   if (action === 'send_message') {
     const ids = Array.isArray(payload.recipientIds) ? payload.recipientIds : [];
     if (ids.length === 0) return 'No recipientIds — call list_people first';
+    if (!payload.message && !payload.content) return 'Missing message content';
+  }
+  if (action === 'reply_message') {
+    if (!payload.conversationId) return 'Missing conversationId — call list_conversations first';
     if (!payload.message && !payload.content) return 'Missing message content';
   }
   if ((action === 'create_assignment' || action === 'update_assignment') && payload.isGroupAssignment && payload.groupSetId) {
@@ -1034,7 +1070,7 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
         renderAiThread();
         return;
       }
-      const icon = { list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖', list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝', get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊', get_grade_settings:'📊', get_file_content:'📄' }[parsed.tool] || '🔍';
+      const icon = { list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖', list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝', get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊', get_grade_settings:'📊', get_file_content:'📄', list_conversations:'✉️' }[parsed.tool] || '🔍';
       const stepMsg = {
         role: 'tool_step',
         tool: parsed.tool,
@@ -1079,8 +1115,8 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
 
     // ── Action ────────────────────────────────────────────────────────────────
     if (parsed.type === 'action') {
-      // Block all write actions for students — enforced in code, not just prompt
-      if (!isStaffUser) {
+      // Students can only use whitelisted actions (messaging)
+      if (!isStaffUser && !STUDENT_ACTIONS.includes(parsed.action)) {
         aiThread.push({ role: 'assistant', content: 'I can help you look up information, but only instructors can create or modify course content.' });
         renderAiThread();
         return;
@@ -1734,6 +1770,18 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'reply_message') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'reply_message',
+      data: {
+        conversationId: action.conversationId || '',
+        message: action.message || action.content || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else {
     aiThread.push({ role: 'assistant', content: JSON.stringify(action) });
   }
@@ -1896,6 +1944,8 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! Students have been auto-assigned to groups in ${b(d.groupSetName || '')}. See ${pageLink('assignments', 'Assignments')} > Groups.`;
     case 'send_message':
       return `Done! Message sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
+    case 'reply_message':
+      return `Done! Reply sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
     default:
       return `Done! The action was completed successfully.`;
   }
@@ -2509,28 +2559,50 @@ async function executeAiOperation(operation, publish = false) {
     if (!activeCourseId) { showToast('No active course', 'error'); return false; }
     const recipientIds = Array.isArray(resolved.recipientIds) ? resolved.recipientIds : [];
     if (recipientIds.length === 0) { showToast('No recipients specified', 'error'); return false; }
-    if (!resolved.message) { showToast('Message content is required', 'error'); return false; }
-    // Create conversation
-    const convId = generateId();
-    const convResult = await supabaseCreateConversation({ id: convId, courseId: activeCourseId, subject: resolved.subject || null });
-    if (!convResult) { showToast('Failed to create conversation', 'error'); return false; }
-    // Add participants (self + recipients)
-    const allParticipantIds = [appData.currentUser.id, ...recipientIds.filter(id => id !== appData.currentUser.id)];
-    for (const uid of allParticipantIds) {
-      await supabaseAddConversationParticipant(convId, uid);
+    const msgContent = resolved.message || resolved.content;
+    if (!msgContent) { showToast('Message content is required', 'error'); return false; }
+    // Send one conversation per recipient using the SECURITY DEFINER RPC
+    for (const recipientId of recipientIds) {
+      const result = await supabaseSendDirectMessage(activeCourseId, recipientId, resolved.subject || null, msgContent);
+      if (!result) continue;
+      const convoId = result.conversation_id;
+      const msgId = result.message_id;
+      let convo = (appData.conversations || []).find(c => c.id === convoId);
+      if (!convo) {
+        convo = {
+          id: convoId, courseId: activeCourseId, subject: resolved.subject || null,
+          createdBy: appData.currentUser.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          participants: [
+            { conversationId: convoId, userId: appData.currentUser.id },
+            { conversationId: convoId, userId: recipientId }
+          ],
+          messages: []
+        };
+        if (!appData.conversations) appData.conversations = [];
+        appData.conversations.unshift(convo);
+      }
+      convo.messages.push({ id: msgId, conversationId: convoId, senderId: appData.currentUser.id, content: msgContent, createdAt: new Date().toISOString() });
+      convo.updatedAt = new Date().toISOString();
     }
-    // Send the message
-    const msgId = generateId();
-    await supabaseCreateMessage({ id: msgId, conversationId: convId, senderId: appData.currentUser.id, content: resolved.message });
-    // Update local state
-    if (!appData.conversations) appData.conversations = [];
-    appData.conversations.push({
-      id: convId, courseId: activeCourseId, subject: resolved.subject || null,
-      createdBy: appData.currentUser.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      participants: allParticipantIds.map(uid => ({ conversationId: convId, userId: uid })),
-      messages: [{ id: msgId, conversationId: convId, senderId: appData.currentUser.id, content: resolved.message, createdAt: new Date().toISOString() }]
-    });
     showToast('Message sent!', 'success');
+    return true;
+  }
+
+  if (action === 'reply_message') {
+    if (!activeCourseId) { showToast('No active course', 'error'); return false; }
+    const { conversationId, message, content } = resolved;
+    const msgContent = message || content;
+    if (!conversationId) { showToast('No conversationId — call list_conversations first', 'error'); return false; }
+    if (!msgContent) { showToast('Message content is required', 'error'); return false; }
+    const msgId = generateId();
+    const saved = await supabaseCreateMessage({ id: msgId, conversationId, content: msgContent });
+    if (!saved) return false;
+    const convo = (appData.conversations || []).find(c => c.id === conversationId);
+    if (convo) {
+      convo.messages.push({ id: msgId, conversationId, senderId: appData.currentUser.id, content: msgContent, createdAt: new Date().toISOString() });
+      convo.updatedAt = new Date().toISOString();
+    }
+    showToast('Reply sent!', 'success');
     return true;
   }
 
@@ -2835,6 +2907,8 @@ function describeStep(step) {
       return `Auto-assign students to: "${step.groupSetName || title}"`;
     case 'send_message':
       return `Send message${step.subject ? `: "${step.subject}"` : ''}`;
+    case 'reply_message':
+      return `Reply to conversation`;
     default:
       return title ? `${a.replace(/_/g, ' ')}: "${title}"` : a.replace(/_/g, ' ');
   }
@@ -3324,6 +3398,21 @@ function renderActionPreview(msg, idx) {
     return `
       <div class="muted" style="font-size:0.85rem; margin-bottom:8px;">To: <strong>${recipientNames || '(none)'}</strong></div>
       ${d.subject ? field('Subject', textInput('subject', d.subject)) : ''}
+      ${field('Message', textarea('message', d.message, 4))}
+    `;
+  }
+
+  // ─── REPLY MESSAGE ───────────────────────────────────────────────────────
+  if (msg.actionType === 'reply_message') {
+    const convo = (appData.conversations || []).find(c => c.id === d.conversationId);
+    const otherNames = convo
+      ? (convo.participants || []).filter(p => p.userId !== appData.currentUser?.id).map(p => {
+          const u = (appData.users || []).find(u => u.id === p.userId);
+          return u ? escapeHtml(u.name) : p.userId;
+        }).join(', ')
+      : d.conversationId;
+    return `
+      <div class="muted" style="font-size:0.85rem; margin-bottom:8px;">Reply to conversation with: <strong>${otherNames}</strong></div>
       ${field('Message', textarea('message', d.message, 4))}
     `;
   }

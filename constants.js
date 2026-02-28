@@ -272,7 +272,8 @@ export const AI_TOOL_REGISTRY = {
     { name: 'get_file_content',         description: 'Read text content of a file (PDF/doc)', params: { file_id: 'string' } },
     { name: 'get_assignment_analytics', description: 'Submission and grade stats for an assignment (submittedCount, averageScore, ungradedCount, etc.)', params: { assignment_id: 'string' } },
     { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } },
-    { name: 'get_group_set',            description: 'Full group set details including groups and their members', params: { group_set_id: 'string' } }
+    { name: 'get_group_set',            description: 'Full group set details including groups and their members', params: { group_set_id: 'string' } },
+    { name: 'list_conversations',       description: 'All inbox conversations for this course. Returns conversationId, subject, participants, messageCount, and lastMessage. Available to both students and instructors.' }
   ],
 
   // Action types: AI emits one of these → system renders a Take Action Card →
@@ -320,8 +321,9 @@ export const AI_TOOL_REGISTRY = {
     { name: 'create_group_set',        description: 'Create a new group set with N groups. Students can be auto-assigned afterwards.', fields: 'name*, description, groupCount (number of groups to create, default 4)' },
     { name: 'delete_group_set',        description: 'Permanently delete a group set and all its groups', dangerous: true, fields: 'id* (from list_group_sets), name' },
     { name: 'auto_assign_groups',      description: 'Randomly assign all unassigned students to groups in a set (round-robin)', fields: 'groupSetId* (from list_group_sets), groupSetName' },
-    // Messaging
-    { name: 'send_message',            description: 'Send a direct message to one or more users in this course', fields: 'recipientIds* (array of user IDs from list_people), subject, message*' },
+    // Messaging — available to both students and instructors
+    { name: 'send_message',            description: 'Send a direct message to one or more users in this course. Available to students and instructors.', fields: 'recipientIds* (array of user IDs from list_people), subject, message*' },
+    { name: 'reply_message',           description: 'Reply to an existing conversation. Call list_conversations first to get the conversationId. Available to students and instructors.', fields: 'conversationId* (from list_conversations), message*' },
     { name: 'pipeline',                description: 'Execute multiple actions in sequence',                  fields: 'steps (array of action objects)' }
   ]
 };
