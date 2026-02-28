@@ -7845,9 +7845,6 @@ function renderPeopleList() {
             <div style="font-weight:500; font-size:0.95rem;">${escapeHtml(p.name)}</div>
             <div class="muted" style="font-size:0.8rem;">${escapeHtml(p.email)}</div>
           </div>
-          ${effectiveStaff && p.id !== appData.currentUser.id ? `
-            <span class="muted" style="font-size:0.8rem;">Manage in Admin</span>
-          ` : ''}
         </div>
       `;
     }
@@ -8032,7 +8029,6 @@ function renderPeople() {
       <input type="text" class="form-input" id="peopleSearchInput" placeholder="Search people..." value="${escapeHtml(peopleSearch)}" oninput="updatePeopleSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       ${effectiveStaff ? `
         <button class="btn btn-primary btn-sm" onclick="openAddPersonModal()">Add Person</button>
-        <button class="btn btn-secondary btn-sm" onclick="openBulkStudentImportModal()">Import Students</button>
       ` : ''}
     </div>
   `);
@@ -8810,126 +8806,6 @@ function openAddPersonModal() {
   openModal('addPersonModal');
 }
 
-function openBulkStudentImportModal() {
-  if (!isEffectiveStaffForActiveCourse()) {
-    showToast('This action is unavailable in student view.', 'error');
-    return;
-  }
-  ensureModalsRendered();
-  const fileInput = document.getElementById('bulkStudentFile');
-  if (fileInput) fileInput.value = '';
-  const roleSelect = document.getElementById('bulkStudentRole');
-  if (roleSelect) roleSelect.value = 'student';
-  openModal('bulkStudentImportModal');
-}
-
-function processBulkStudentImport() {
-  if (!isEffectiveStaffForActiveCourse()) {
-    showToast('This action is unavailable in student view.', 'error');
-    return;
-  }
-  const fileInput = document.getElementById('bulkStudentFile');
-  const defaultRole = document.getElementById('bulkStudentRole').value;
-
-  if (!activeCourseId) {
-    showToast('No active course', 'error');
-    return;
-  }
-
-  if (!fileInput || !fileInput.files[0]) {
-    showToast('Please upload a CSV file', 'error');
-    return;
-  }
-
-  const file = fileInput.files[0];
-  const reader = new FileReader();
-
-  reader.onload = async function(event) {
-    const text = event.target.result;
-
-    // Support both comma-delimited and row-delimited formats
-    // Split by newlines first, then by commas within each line
-    const rawLines = text.split('\n').map(line => line.trim()).filter(line => line);
-
-    // Extract all emails from the file (handles both formats)
-    const emails = [];
-    rawLines.forEach((line, index) => {
-      // Skip header row if it looks like a header
-      if (index === 0 && line.toLowerCase().includes('email')) {
-        return;
-      }
-      // Split each line by comma to handle comma-delimited emails
-      const parts = line.split(',').map(part => part.trim()).filter(part => part);
-      parts.forEach(part => {
-        // Only add if it looks like an email
-        if (part.includes('@')) {
-          emails.push(part);
-        }
-      });
-    });
-
-    if (!emails.length) {
-      showToast('No valid email addresses found', 'error');
-      return;
-    }
-
-    let added = 0;
-    let invited = 0;
-    let errors = 0;
-
-    for (const email of emails) {
-      if (!email || !email.includes('@')) {
-        errors += 1;
-        continue;
-      }
-
-      let user = appData.users.find(u => u.email === email);
-      if (user) {
-        const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === activeCourseId);
-        if (existing) {
-          await supabaseUpdateEnrollment(user.id, activeCourseId, defaultRole);
-          existing.role = defaultRole;
-        } else {
-          const enrollment = {
-            userId: user.id,
-            courseId: activeCourseId,
-            role: defaultRole
-          };
-          const result = await supabaseCreateEnrollment(enrollment);
-          if (result) {
-            appData.enrollments.push(enrollment);
-          }
-        }
-        added += 1;
-        continue;
-      }
-
-      if (!appData.invites) appData.invites = [];
-      const invite = {
-        courseId: activeCourseId,
-        email: email,
-        role: defaultRole,
-        status: 'pending',
-        sentAt: new Date().toISOString()
-      };
-      const result = await supabaseCreateInvite(invite);
-      if (result) {
-        appData.invites.push({ ...invite, id: result.id });
-      }
-      invited += 1;
-    }
-
-    closeModal('bulkStudentImportModal');
-    renderPeople();
-    showToast(`Imported ${added} students, invited ${invited}. ${errors} errors.`, errors ? 'error' : 'success');
-  };
-
-  reader.onerror = function() {
-    showToast('Failed to read CSV file', 'error');
-  };
-
-  reader.readAsText(file);
-}
 
 async function addPersonToCourse() {
   if (!isEffectiveStaffForActiveCourse()) {
@@ -11721,8 +11597,6 @@ window.updateTotalWeight = updateTotalWeight;
 window.saveCategoryWeights = saveCategoryWeights;
 
 // Bulk operations
-window.openBulkStudentImportModal = openBulkStudentImportModal;
-window.processBulkStudentImport = processBulkStudentImport;
 window.openBulkGradeModal = openBulkGradeModal;
 window.processBulkGrades = processBulkGrades;
 window.bulkReleaseGrades = bulkReleaseGrades;

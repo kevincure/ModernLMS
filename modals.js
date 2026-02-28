@@ -557,44 +557,12 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             <select class="form-select" id="addPersonRole">
               <option value="student">Student</option>
               <option value="ta">Teaching Assistant</option>
-              <option value="instructor">Instructor</option>
             </select>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal('addPersonModal')">Cancel</button>
           <button class="btn btn-primary" onclick="addPersonToCourse()">Add Person</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Bulk Student Import Modal -->
-    <div class="modal-overlay" id="bulkStudentImportModal">
-      <div class="modal">
-        <div class="modal-header">
-          <h2 class="modal-title">Import Students</h2>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('bulkStudentImportModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="hint" style="margin-bottom:12px;">
-            Upload a file with email addresses (comma-delimited or one per row).
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="bulkStudentFile">CSV File</label>
-            <input type="file" class="form-input" id="bulkStudentFile" accept=".csv,text/csv">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="bulkStudentRole">Role</label>
-            <select class="form-select" id="bulkStudentRole">
-              <option value="student" selected>Student</option>
-              <option value="ta">Teaching Assistant</option>
-              <option value="instructor">Instructor</option>
-            </select>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('bulkStudentImportModal')">Cancel</button>
-          <button class="btn btn-primary" onclick="processBulkStudentImport()">Import</button>
         </div>
       </div>
     </div>
