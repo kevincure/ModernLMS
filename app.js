@@ -90,6 +90,8 @@ import {
   supabaseAddConversationParticipant,
   supabaseCreateMessage,
   supabaseMarkConversationRead,
+  supabaseSendDirectMessage,
+  supabaseGetCourseRecipients,
   // Notifications
   supabaseCreateNotification,
   supabaseNotifyCourseStudents,
@@ -10485,20 +10487,19 @@ function closeConversation() {
   renderInbox();
 }
 
-function openNewMessageModal() {
+async function openNewMessageModal() {
   if (!activeCourseId) return;
   const existing = document.getElementById('newMessageModal');
   if (existing) existing.remove();
 
-  // Get all enrolled users in this course except self
-  const courseUsers = (appData.enrollments || [])
-    .filter(e => e.courseId === activeCourseId && e.userId !== appData.currentUser.id)
-    .map(e => {
-      const user = getUserById(e.userId);
-      const role = e.role === 'instructor' ? 'Instructor' : e.role === 'ta' ? 'TA' : 'Student';
-      return user ? { id: user.id, name: user.name, role } : null;
-    })
-    .filter(Boolean)
+  // Fetch all enrolled users via RPC (bypasses enrollment/profile RLS)
+  const recipients = await supabaseGetCourseRecipients(activeCourseId);
+  const courseUsers = recipients
+    .map(u => ({
+      id: u.id,
+      name: u.name || u.email,
+      role: u.role === 'instructor' ? 'Instructor' : u.role === 'ta' ? 'TA' : 'Student'
+    }))
     .sort((a, b) => {
       const roleOrder = { Instructor: 0, TA: 1, Student: 2 };
       return (roleOrder[a.role] || 9) - (roleOrder[b.role] || 9) || a.name.localeCompare(b.name);
@@ -10553,23 +10554,17 @@ async function sendNewMessage() {
   if (!recipientId) { showToast('Please select a recipient', 'error'); return; }
   if (!content) { showToast('Message cannot be empty', 'error'); return; }
 
-  // Check for existing conversation with this person
-  let convo = (appData.conversations || []).find(c =>
-    c.courseId === activeCourseId &&
-    c.participants.length === 2 &&
-    c.participants.some(p => p.userId === recipientId) &&
-    c.participants.some(p => p.userId === appData.currentUser.id)
-  );
+  // Use RPC to atomically create conversation + participants + message
+  const result = await supabaseSendDirectMessage(activeCourseId, recipientId, subject, content);
+  if (!result) return;
 
+  const convoId = result.conversation_id;
+  const msgId = result.message_id;
+  const isNew = result.is_new;
+
+  // Update local state
+  let convo = (appData.conversations || []).find(c => c.id === convoId);
   if (!convo) {
-    const convoId = generateId();
-    const saved = await supabaseCreateConversation({ id: convoId, courseId: activeCourseId, subject: subject || null });
-    if (!saved) return;
-
-    // Add both participants
-    await supabaseAddConversationParticipant(convoId, appData.currentUser.id);
-    await supabaseAddConversationParticipant(convoId, recipientId);
-
     convo = {
       id: convoId, courseId: activeCourseId, subject: subject || null,
       createdBy: appData.currentUser.id, createdAt: new Date().toISOString(),
@@ -10584,17 +10579,11 @@ async function sendNewMessage() {
     appData.conversations.unshift(convo);
   }
 
-  // Send message
-  const msgId = generateId();
-  const msgSaved = await supabaseCreateMessage({ id: msgId, conversationId: convo.id, content });
-  if (!msgSaved) return;
-
-  const msg = { id: msgId, conversationId: convo.id, senderId: appData.currentUser.id, content, createdAt: new Date().toISOString() };
+  const msg = { id: msgId, conversationId: convoId, senderId: appData.currentUser.id, content, createdAt: new Date().toISOString() };
   convo.messages.push(msg);
   convo.updatedAt = new Date().toISOString();
 
   // Create notification for recipient
-  const recipientUser = getUserById(recipientId);
   await supabaseCreateNotification({
     userId: recipientId,
     courseId: activeCourseId,
@@ -10605,7 +10594,7 @@ async function sendNewMessage() {
   });
 
   closeNewMessageModal();
-  openConversation(convo.id);
+  openConversation(convoId);
   showToast('Message sent!', 'success');
 }
 

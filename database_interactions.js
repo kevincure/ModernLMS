@@ -2461,6 +2461,33 @@ export async function supabaseCreateMessage(msg) {
   return data;
 }
 
+export async function supabaseSendDirectMessage(courseId, recipientId, subject, content) {
+  if (!supabaseClient) return null;
+  const { data, error } = await supabaseClient.rpc('send_direct_message', {
+    p_course_id: courseId,
+    p_recipient_id: recipientId,
+    p_subject: subject || null,
+    p_content: content
+  });
+  if (error) { console.error('[Supabase] send_direct_message error:', error); showToast('Failed to send message', 'error'); return null; }
+  return data;
+}
+
+export async function supabaseGetCourseRecipients(courseId) {
+  if (!supabaseClient) return [];
+  const { data, error } = await supabaseClient.rpc('get_course_recipients', {
+    p_course_id: courseId
+  });
+  if (error) { console.error('[Supabase] get_course_recipients error:', error); return []; }
+  return (data || []).map(r => ({
+    id: r.user_id,
+    name: r.name,
+    email: r.email,
+    role: r.role,
+    avatar: r.avatar
+  }));
+}
+
 export async function supabaseMarkConversationRead(conversationId) {
   if (!supabaseClient) return false;
   const { error } = await supabaseClient.from('conversation_participants')
