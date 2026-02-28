@@ -913,6 +913,21 @@ function previewInsertVideo() {
   }
 }
 
+function loadVideoEmbed(el) {
+  const type = el.dataset.videoType;
+  const id = el.dataset.videoId;
+  let src = '';
+  if (type === 'youtube') {
+    src = `https://www.youtube.com/embed/${id}?autoplay=1`;
+  } else if (type === 'vimeo') {
+    src = `https://player.vimeo.com/video/${id}?autoplay=1`;
+  }
+  if (!src) return;
+  el.style.cursor = 'default';
+  el.onclick = null;
+  el.innerHTML = `<iframe src="${src}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;"></iframe>`;
+}
+
 function extractYouTubeId(url) {
   if (!url) return null;
   // Standard watch URL: youtube.com/watch?v=ID
@@ -11617,6 +11632,7 @@ window.openInsertLinkModal = openInsertLinkModal;
 window.confirmInsertLink = confirmInsertLink;
 window.openInsertVideoModal = openInsertVideoModal;
 window.previewInsertVideo = previewInsertVideo;
+window.loadVideoEmbed = loadVideoEmbed;
 window.confirmInsertVideo = confirmInsertVideo;
 window.openInsertFileModal = openInsertFileModal;
 window.selectFileForInsert = selectFileForInsert;
