@@ -322,7 +322,7 @@ export const AI_TOOL_REGISTRY = {
     { name: 'delete_group_set',        description: 'Permanently delete a group set and all its groups', dangerous: true, fields: 'id* (from list_group_sets), name' },
     { name: 'auto_assign_groups',      description: 'Randomly assign all unassigned students to groups in a set (round-robin)', fields: 'groupSetId* (from list_group_sets), groupSetName' },
     // Messaging — available to both students and instructors
-    { name: 'send_message',            description: 'Send a direct message to one or more users in this course. Available to students and instructors.', fields: 'recipientIds* (array of user IDs from list_people), subject, message*' },
+    { name: 'send_message',            description: 'Send a direct message to one or more users in this course. Available to students and instructors.', fields: 'recipientIds* (array of user IDs from list_people), message*' },
     { name: 'reply_message',           description: 'Reply to an existing conversation. Call list_conversations first to get the conversationId. Available to students and instructors.', fields: 'conversationId* (from list_conversations), message*' },
     { name: 'pipeline',                description: 'Execute multiple actions in sequence',                  fields: 'steps (array of action objects)' }
   ]
