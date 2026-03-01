@@ -298,7 +298,9 @@ function initModules() {
     renderModules,
     renderGradebook,
     renderPeople,
-    renderCalendar
+    renderCalendar,
+    renderDiscussion,
+    renderFiles
   });
 
   // Initialize quiz module
@@ -2442,7 +2444,8 @@ function renderUpdates() {
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <input type="text" class="form-input" id="announcementsSearchInput" placeholder="Search announcements..." value="${escapeHtml(announcementsSearch)}" oninput="updateAnnouncementsSearch(this.value)" style="width:220px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
         <select class="form-select" onchange="updateAnnouncementsSort(this.value)" style="width:auto;" title="Sort announcements">
-          <option value="" ${announcementsSort === '' ? 'selected' : ''}>Default order</option>
+          <option value="" ${announcementsSort === '' ? 'selected' : ''}>Newest First</option>
+          <option value="oldest" ${announcementsSort === 'oldest' ? 'selected' : ''}>Oldest First</option>
           <option value="az" ${announcementsSort === 'az' ? 'selected' : ''}>A → Z</option>
           <option value="za" ${announcementsSort === 'za' ? 'selected' : ''}>Z → A</option>
         </select>
@@ -2460,6 +2463,7 @@ function renderUpdates() {
       if (!a.pinned && b.pinned) return 1;
       if (announcementsSort === 'az') return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
       if (announcementsSort === 'za') return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
+      if (announcementsSort === 'oldest') return new Date(a.createdAt) - new Date(b.createdAt);
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 

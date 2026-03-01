@@ -25,7 +25,11 @@ import {
   supabaseCreateMessage,
   supabaseSendDirectMessage,
   supabaseSendReplyMessage,
-  supabaseGetCourseRecipients
+  supabaseGetCourseRecipients,
+  supabaseCreateDiscussionThread,
+  supabaseUpdateDiscussionThread,
+  supabaseDeleteDiscussionThread,
+  supabaseCreateDiscussionReply
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 
@@ -37,7 +41,7 @@ const STUDENT_TOOLS = [
   'list_announcements', 'list_discussion_threads', 'get_assignment',
   'get_file_content', 'get_grade_categories', 'get_grade_settings',
   'list_group_sets', 'get_group_set',
-  'list_people', 'list_conversations'
+  'list_people', 'list_conversations', 'get_start_here'
 ];
 
 // Actions students are allowed to perform (messaging only)
@@ -70,6 +74,8 @@ let renderModulesCallback = null;
 let renderGradebookCallback = null;
 let renderPeopleCallback = null;
 let renderCalendarCallback = null;
+let renderDiscussionCallback = null;
+let renderFilesCallback = null;
 let isStaffCallback = null;
 let getCourseByIdCallback = null;
 let getUserByIdCallback = null;
@@ -86,6 +92,8 @@ export function initAiModule(deps) {
   renderGradebookCallback = deps.renderGradebook;
   renderPeopleCallback = deps.renderPeople;
   renderCalendarCallback = deps.renderCalendar;
+  renderDiscussionCallback = deps.renderDiscussion;
+  renderFilesCallback = deps.renderFiles;
   isStaffCallback = deps.isStaff;
   getCourseByIdCallback = deps.getCourseById;
   getUserByIdCallback = deps.getUserById;
@@ -227,7 +235,12 @@ function normalizeAiOperationAction(action) {
     create_invite: 'invite_create',
     revoke_invite: 'invite_revoke',
     set_course_visibility: 'course_visibility',
-    create_calendar_event: 'calendar_event_create'
+    create_calendar_event: 'calendar_event_create',
+    create_discussion_thread: 'discussion_thread_create',
+    update_discussion_thread: 'discussion_thread_update',
+    delete_discussion_thread: 'discussion_thread_delete',
+    pin_discussion_thread: 'discussion_thread_pin',
+    reply_discussion_thread: 'discussion_thread_reply'
   };
   return map[action] || action;
 }
@@ -383,10 +396,15 @@ ${studentToolList}
 AVAILABLE MESSAGING ACTIONS:
 ${messagingActionList}
 
-⚠️ MESSAGING RULES:
-- ALWAYS use send_message by default unless the user explicitly says "reply" or references a specific existing conversation.
+⚠️ COMMUNICATION CHANNEL RULES:
+- When the user asks to "message all students", "notify everyone", or "send to the class": use create_announcement (announcements are the default for reaching all students).
+- When the user asks to "message" one or a few specific students by name: use send_message (direct message).
+- When the user asks to "post to the discussion board", "start a discussion", or "create a thread": use create_discussion_thread.
+- When the user asks to "reply to a discussion": use reply_discussion_thread.
+- ALWAYS use send_message by default for individual communication unless the user explicitly says "reply" or references a specific existing conversation.
 - Before send_message: call list_people to find the recipient's user ID by name.
 - Before reply_message: call list_conversations to find the conversationId.
+- Before update/delete/pin/reply discussion threads: call list_discussion_threads to get the thread ID.
 - You may send messages and reply to messages. You may NOT create or modify any other content (assignments, quizzes, grades, etc.).
 NEVER include raw UUIDs in answer text — refer to things by name/title only.
 
@@ -471,10 +489,15 @@ VIEWING ANALYTICS AND GRADES — use tools then answer, no action needed:
 - To show analytics for an assignment: call get_assignment_analytics(assignment_id) → then answer with the stats
 - To show a student's grades: call list_people → get the userId → call get_student_grades(user_id) → then answer with their grades. Never emit an action for viewing read-only data.
 
-MESSAGING RULES:
-- ALWAYS use send_message by default unless the user explicitly says "reply" or references a specific existing conversation.
+COMMUNICATION CHANNEL RULES:
+- When the user asks to "message all students", "notify everyone", or "send to the class": use create_announcement (announcements are the default for reaching all students).
+- When the user asks to "message" one or a few specific students by name: use send_message (direct message).
+- When the user asks to "post to the discussion board", "start a discussion", or "create a thread": use create_discussion_thread.
+- When the user asks to "reply to a discussion": use reply_discussion_thread.
+- ALWAYS use send_message by default for individual communication unless the user explicitly says "reply" or references a specific existing conversation.
 - Before send_message: call list_people to find the recipient's user ID by name.
 - Before reply_message: call list_conversations to find the conversationId.
+- Before update/delete/pin/reply discussion threads: call list_discussion_threads to get the thread ID.
 
 QUESTION BANK QUESTION TYPES (7 supported types for create_question_bank / add_questions_to_bank):
 - multiple_choice: options array + correctAnswer (index or value)
@@ -868,6 +891,15 @@ async function executeAiTool(toolName, params = {}) {
       return { id: f.id, name: f.name, error: `File type "${mt}" cannot be read by the AI. Supported: PDF, images, text files, docx, and pptx.` };
     }
 
+    case 'get_start_here': {
+      const course = getCourseByIdCallback ? getCourseByIdCallback(activeCourseId) : null;
+      if (!course) return { error: 'Course not found' };
+      return {
+        title: course.startHereTitle || 'Start Here',
+        content: course.startHereContent || ''
+      };
+    }
+
     case 'list_conversations': {
       const convos = (appData.conversations || []).filter(c => c.courseId === activeCourseId);
       return convos.map(c => {
@@ -895,10 +927,89 @@ async function executeAiTool(toolName, params = {}) {
 }
 
 /**
+ * Try to auto-correct a mistyped UUID by finding the closest match in a list.
+ * Returns the corrected ID if a close match is found (Levenshtein distance <= 3), else null.
+ */
+function fuzzyMatchId(givenId, validIds) {
+  if (!givenId || !validIds.length) return null;
+  // Exact match — no correction needed
+  if (validIds.includes(givenId)) return givenId;
+  // Simple character-by-character distance for UUIDs (fast, good enough for 1-2 digit errors)
+  let bestId = null, bestDist = 4; // max tolerance
+  for (const vid of validIds) {
+    if (vid.length !== givenId.length) continue;
+    let dist = 0;
+    for (let i = 0; i < vid.length && dist < bestDist; i++) {
+      if (vid[i] !== givenId[i]) dist++;
+    }
+    if (dist < bestDist) { bestDist = dist; bestId = vid; }
+  }
+  return bestId;
+}
+
+/**
+ * Auto-correct UUID fields in an action payload before validation.
+ * If the AI got a UUID slightly wrong (1-2 chars off), fix it silently.
+ */
+function autoCorrectActionIds(payload) {
+  if (!activeCourseId) return;
+  const { action } = payload;
+
+  const correctField = (field, items) => {
+    if (!payload[field]) return;
+    const validIds = items.map(i => i.id);
+    if (validIds.includes(payload[field])) return;
+    const corrected = fuzzyMatchId(payload[field], validIds);
+    if (corrected) payload[field] = corrected;
+  };
+
+  const courseAnnouncements = (appData.announcements || []).filter(a => a.courseId === activeCourseId);
+  const courseAssignments = (appData.assignments || []).filter(a => a.courseId === activeCourseId);
+  const courseModules = (appData.modules || []).filter(m => m.courseId === activeCourseId);
+  const courseFiles = (appData.files || []).filter(f => f.courseId === activeCourseId);
+  const courseBanks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
+  const courseGroupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
+
+  if (['update_announcement','delete_announcement','publish_announcement','pin_announcement'].includes(action)) {
+    correctField('id', courseAnnouncements);
+  }
+  if (['update_assignment','delete_assignment'].includes(action)) {
+    correctField('id', courseAssignments);
+  }
+  if (['update_module','set_module_visibility'].includes(action)) {
+    if (payload.moduleId) correctField('moduleId', courseModules);
+    else correctField('id', courseModules);
+  }
+  if (['rename_file','set_file_visibility','set_file_folder'].includes(action)) {
+    if (payload.fileId) correctField('fileId', courseFiles);
+    else correctField('id', courseFiles);
+  }
+  if (['update_question_bank','add_questions_to_bank','delete_question_bank'].includes(action)) {
+    if (payload.bankId) correctField('bankId', courseBanks);
+    else correctField('id', courseBanks);
+  }
+  if (action === 'delete_group_set' || action === 'auto_assign_groups') {
+    if (payload.groupSetId) correctField('groupSetId', courseGroupSets);
+    else correctField('id', courseGroupSets);
+  }
+
+  const courseThreads = (appData.discussionThreads || []).filter(t => t.courseId === activeCourseId);
+  if (['update_discussion_thread','delete_discussion_thread','pin_discussion_thread'].includes(action)) {
+    correctField('id', courseThreads);
+  }
+  if (action === 'reply_discussion_thread') {
+    if (payload.threadId) correctField('threadId', courseThreads);
+    else correctField('id', courseThreads);
+  }
+}
+
+/**
  * Validate an action payload before creating the Take Action Card.
  * Returns an error string if invalid, null if valid.
  */
 function validateActionPayload(payload) {
+  // Auto-correct slightly wrong UUIDs before validation
+  autoCorrectActionIds(payload);
   if (!activeCourseId) return 'No active course selected';
   const { action } = payload;
 
@@ -980,6 +1091,18 @@ function validateActionPayload(payload) {
     if (!payload.conversationId) return 'Missing conversationId — call list_conversations first';
     if (!payload.message && !payload.content && !payload.messageContent) return 'Missing message content';
   }
+  if (['update_discussion_thread','delete_discussion_thread','pin_discussion_thread'].includes(action)) {
+    if (!payload.id) return 'Missing discussion thread id — call list_discussion_threads first';
+    if (!(appData.discussionThreads || []).find(t => t.id === payload.id && t.courseId === activeCourseId))
+      return `Discussion thread "${payload.id}" not found — use list_discussion_threads`;
+  }
+  if (action === 'reply_discussion_thread') {
+    const threadId = payload.threadId || payload.id;
+    if (!threadId) return 'Missing threadId — call list_discussion_threads first';
+    if (!(appData.discussionThreads || []).find(t => t.id === threadId && t.courseId === activeCourseId))
+      return `Discussion thread "${threadId}" not found — use list_discussion_threads`;
+    if (!payload.content && !payload.message) return 'Missing reply content';
+  }
   if ((action === 'create_assignment' || action === 'update_assignment') && payload.isGroupAssignment && payload.groupSetId) {
     if (!(appData.groupSets || []).find(gs => gs.id === payload.groupSetId && gs.courseId === activeCourseId))
       return `Group set "${payload.groupSetId}" not found — use list_group_sets`;
@@ -1050,7 +1173,9 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
     // {"type":"tool_call","tool":"get_file_content","params":{...}}
     const KNOWN_TOOLS = ['list_assignments','list_quizzes','list_files','list_modules','list_people',
       'list_question_banks','list_announcements','list_discussion_threads','get_grade_categories',
-      'get_grade_settings','get_question_bank','get_assignment','get_quiz','get_file_content'];
+      'get_grade_settings','get_question_bank','get_assignment','get_quiz','get_file_content',
+      'get_start_here','list_conversations','get_assignment_analytics','get_student_grades',
+      'list_group_sets','get_group_set'];
     if (parsed.type && !['tool_call','action','ask_user','answer'].includes(parsed.type) && KNOWN_TOOLS.includes(parsed.type)) {
       parsed = { type: 'tool_call', tool: parsed.type, params: parsed.params || {}, step_label: parsed.step_label || '' };
     }
@@ -1140,11 +1265,35 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
         renderAiThread();
         return;
       }
+
+      // Hard check: verify action exists in the registry (or is a known internal action)
+      const KNOWN_ACTIONS = new Set([
+        ...(AI_TOOL_REGISTRY.action_types || []).map(a => a.name),
+        'edit_pending_action', 'pipeline'
+      ]);
+      const normalizedActionName = parsed.action;
+      if (!KNOWN_ACTIONS.has(normalizedActionName)) {
+        // Feed error back to AI so it can reconsider
+        const availableActions = [...KNOWN_ACTIONS].filter(a => a !== 'edit_pending_action').join(', ');
+        const errorMsg = `SYSTEM_ERROR: The action "${normalizedActionName}" does not exist. Available actions are: ${availableActions}. Please check if this can actually be done with one of the available actions, or inform the user that this action is not supported.`;
+        contents = [
+          ...contents,
+          { role: 'model', parts: [{ text: rawReply }] },
+          { role: 'user', parts: [{ text: errorMsg }] }
+        ];
+        continue;
+      }
+
       const validationError = validateActionPayload(parsed);
       if (validationError) {
-        aiThread.push({ role: 'assistant', content: `I couldn't set up that action: ${validationError}` });
-        renderAiThread();
-        return;
+        // Feed validation errors back to AI so it can fix the payload
+        const errorFeedback = `SYSTEM_ERROR: Action validation failed — ${validationError}. Please fix and retry.`;
+        contents = [
+          ...contents,
+          { role: 'model', parts: [{ text: rawReply }] },
+          { role: 'user', parts: [{ text: errorFeedback }] }
+        ];
+        continue;
       }
       handleAiAction(parsed);
       renderAiThread();
@@ -1554,12 +1703,14 @@ function handleAiAction(action) {
     });
   } else if (action.action === 'rename_file') {
     const fileId = action.fileId || action.id;
+    const file = (appData.files || []).find(f => f.id === fileId);
     aiThread.push({
       role: 'action',
       actionType: 'file_rename',
       data: {
         fileId,
-        oldName: action.oldName || '',
+        oldName: action.oldName || action.fileName || file?.name || '',
+        fileName: action.fileName || file?.name || '',
         newName: action.newName || '',
         notes: action.notes || ''
       },
@@ -1800,7 +1951,56 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'create_discussion_thread') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'discussion_thread_create',
+      data: {
+        title: action.title || '',
+        content: action.content || '',
+        pinned: !!action.pinned,
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'update_discussion_thread') {
+    const d = { id: action.id };
+    if ('title' in action) d.title = action.title;
+    if ('content' in action) d.content = action.content;
+    d.threadTitle = action.threadTitle || '';
+    aiThread.push({ role: 'action', actionType: 'discussion_thread_update', data: d, confirmed: false, rejected: false });
+  } else if (action.action === 'delete_discussion_thread') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'discussion_thread_delete',
+      data: { id: action.id, threadTitle: action.threadTitle || '', notes: action.notes || '' },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'pin_discussion_thread') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'discussion_thread_pin',
+      data: { id: action.id, threadTitle: action.threadTitle || '', pinned: action.pinned !== false, notes: action.notes || '' },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'reply_discussion_thread') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'discussion_thread_reply',
+      data: {
+        threadId: action.threadId || action.id || '',
+        threadTitle: action.threadTitle || '',
+        content: action.content || action.message || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else {
+    // Unknown action — this is handled by the hard check in sendAiMessage
     aiThread.push({ role: 'assistant', content: JSON.stringify(action) });
   }
 
@@ -1914,6 +2114,16 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! File ${b(d.fileName || '')} is now <strong>${d.hidden ? 'hidden from' : 'visible to'}</strong> students.`;
     case 'file_folder':
       return `Done! File ${b(d.fileName || '')} ${d.folder ? `moved to folder ${b(d.folder)}` : 'removed from folder'}.`;
+    case 'discussion_thread_create':
+      return `Done! The discussion thread has been created. View it on the ${pageLink('discussion', 'Discussion Board')}.`;
+    case 'discussion_thread_update':
+      return `Done! The discussion thread has been updated. View it on the ${pageLink('discussion', 'Discussion Board')}.`;
+    case 'discussion_thread_delete':
+      return `Done! The discussion thread has been deleted.`;
+    case 'discussion_thread_pin':
+      return `Done! The thread has been ${data.pinned !== false ? 'pinned' : 'unpinned'}. View it on the ${pageLink('discussion', 'Discussion Board')}.`;
+    case 'discussion_thread_reply':
+      return `Done! Your reply has been posted to the discussion thread. View it on the ${pageLink('discussion', 'Discussion Board')}.`;
     case 'start_here_update':
       return `Done! The Start Here message has been updated. View it on the ${pageLink('home', 'Course Home')}.`;
     case 'module_add_item': {
@@ -2277,6 +2487,7 @@ async function executeAiOperation(operation, publish = false) {
     file.name = resolved.newName || file.name;
     const result = await supabaseUpdateFile(file);
     if (!result) { showToast('Failed to rename file', 'error'); return false; }
+    if (renderFilesCallback) renderFilesCallback();
     return true;
   }
 
@@ -2287,6 +2498,7 @@ async function executeAiOperation(operation, publish = false) {
     file.hidden = !!resolved.hidden;
     const result = await supabaseUpdateFile(file);
     if (!result) { showToast('Failed to update file visibility', 'error'); return false; }
+    if (renderFilesCallback) renderFilesCallback();
     return true;
   }
 
@@ -2297,6 +2509,7 @@ async function executeAiOperation(operation, publish = false) {
     file.folder = resolved.folder || null;
     const result = await supabaseUpdateFile(file);
     if (!result) { showToast('Failed to update file folder', 'error'); return false; }
+    if (renderFilesCallback) renderFilesCallback();
     return true;
   }
 
@@ -2625,6 +2838,80 @@ async function executeAiOperation(operation, publish = false) {
     return true;
   }
 
+  if (action === 'discussion_thread_create') {
+    const thread = {
+      id: generateId(),
+      courseId: activeCourseId,
+      title: resolved.title || 'Untitled Thread',
+      content: resolved.content || null,
+      authorId: appData.currentUser.id,
+      createdAt: new Date().toISOString(),
+      pinned: !!resolved.pinned,
+      hidden: false,
+      replies: []
+    };
+    const saved = await supabaseCreateDiscussionThread(thread);
+    if (!saved) { showToast('Failed to create discussion thread', 'error'); return false; }
+    if (!appData.discussionThreads) appData.discussionThreads = [];
+    appData.discussionThreads.unshift(thread);
+    if (renderDiscussionCallback) renderDiscussionCallback();
+    showToast('Discussion thread created!', 'success');
+    return true;
+  }
+
+  if (action === 'discussion_thread_update') {
+    const thread = (appData.discussionThreads || []).find(t => t.id === resolved.id && t.courseId === activeCourseId);
+    if (!thread) { showToast('Discussion thread not found', 'error'); return false; }
+    if (resolved.title !== undefined) thread.title = resolved.title;
+    if (resolved.content !== undefined) thread.content = resolved.content;
+    const ok = await supabaseUpdateDiscussionThread(thread);
+    if (!ok) { showToast('Failed to update discussion thread', 'error'); return false; }
+    if (renderDiscussionCallback) renderDiscussionCallback();
+    showToast('Discussion thread updated!', 'success');
+    return true;
+  }
+
+  if (action === 'discussion_thread_delete') {
+    const deleted = await supabaseDeleteDiscussionThread(resolved.id);
+    if (!deleted) { showToast('Failed to delete discussion thread', 'error'); return false; }
+    appData.discussionThreads = (appData.discussionThreads || []).filter(t => t.id !== resolved.id);
+    if (renderDiscussionCallback) renderDiscussionCallback();
+    showToast('Discussion thread deleted', 'success');
+    return true;
+  }
+
+  if (action === 'discussion_thread_pin') {
+    const thread = (appData.discussionThreads || []).find(t => t.id === resolved.id && t.courseId === activeCourseId);
+    if (!thread) { showToast('Discussion thread not found', 'error'); return false; }
+    thread.pinned = resolved.pinned !== false;
+    const ok = await supabaseUpdateDiscussionThread(thread);
+    if (!ok) { showToast('Failed to update thread pin', 'error'); return false; }
+    if (renderDiscussionCallback) renderDiscussionCallback();
+    showToast(thread.pinned ? 'Thread pinned' : 'Thread unpinned', 'success');
+    return true;
+  }
+
+  if (action === 'discussion_thread_reply') {
+    const threadId = resolved.threadId || resolved.id;
+    const thread = (appData.discussionThreads || []).find(t => t.id === threadId && t.courseId === activeCourseId);
+    if (!thread) { showToast('Discussion thread not found', 'error'); return false; }
+    const reply = {
+      id: generateId(),
+      threadId,
+      content: resolved.content || resolved.message || '',
+      authorId: appData.currentUser.id,
+      isAi: false,
+      createdAt: new Date().toISOString()
+    };
+    const saved = await supabaseCreateDiscussionReply(reply);
+    if (!saved) { showToast('Failed to post reply', 'error'); return false; }
+    if (!thread.replies) thread.replies = [];
+    thread.replies.push(reply);
+    if (renderDiscussionCallback) renderDiscussionCallback();
+    showToast('Reply posted to discussion!', 'success');
+    return true;
+  }
+
   showToast(`Unsupported AI action: ${action}`, 'error');
   return false;
 }
@@ -2793,12 +3080,26 @@ export function renderAiThread() {
         'person_remove': 'Person',
         'course_visibility': 'Course Visibility',
         'calendar_event_create': 'Calendar Event',
+        'discussion_thread_create': 'Discussion Thread',
+        'discussion_thread_update': 'Discussion Thread',
+        'discussion_thread_delete': 'Discussion Thread',
+        'discussion_thread_pin': 'Discussion Thread',
+        'discussion_thread_reply': 'Discussion Reply',
         'pipeline': 'Automation Pipeline'
       }[msg.actionType] || 'Content';
 
+      // Determine the right verb for announcement_update based on what's being changed
+      const getAnnouncementUpdateVerb = (data) => {
+        if (!data) return 'Update';
+        const hasContentChange = 'title' in data || 'content' in data;
+        const hasHiddenChange = 'hidden' in data;
+        if (hasHiddenChange && !hasContentChange) return data.hidden ? 'Hide' : 'Show';
+        return 'Update';
+      };
+
       const actionVerb = {
         'announcement': 'Create',
-        'announcement_update': 'Update',
+        'announcement_update': getAnnouncementUpdateVerb(msg.data),
         'announcement_delete': 'Delete',
         'announcement_publish': 'Publish',
         'announcement_pin': msg.data?.pinned === false ? 'Unpin' : 'Pin',
@@ -2829,6 +3130,11 @@ export function renderAiThread() {
         'person_remove': 'Remove',
         'course_visibility': msg.data?.visible === false ? 'Hide' : 'Show',
         'calendar_event_create': 'Add',
+        'discussion_thread_create': 'Create',
+        'discussion_thread_update': 'Update',
+        'discussion_thread_delete': 'Delete',
+        'discussion_thread_pin': msg.data?.pinned === false ? 'Unpin' : 'Pin',
+        'discussion_thread_reply': 'Post',
         'pipeline': 'Run'
       }[msg.actionType] || 'Run';
 
@@ -2846,7 +3152,7 @@ export function renderAiThread() {
             ` : isLatest ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
                 <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, false)">${actionVerb}${['Create','Update'].includes(actionVerb) ? ' (Draft)' : ''}</button>
-                ${['announcement', 'assignment', 'quiz', 'quiz_from_bank', 'question_bank_create'].includes(msg.actionType) ? `
+                ${['announcement', 'assignment', 'quiz', 'quiz_from_bank', 'question_bank_create'].includes(msg.actionType) && ['Create','Update'].includes(actionVerb) ? `
                   <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, true)">${actionVerb === 'Create' ? 'Create and Publish' : 'Save and Publish'}</button>
                 ` : ''}
                 <button class="btn btn-secondary btn-sm" onclick="window.rejectAiAction(${idx})">Cancel</button>
@@ -2928,6 +3234,16 @@ function describeStep(step) {
       return `Send message`;
     case 'reply_message':
       return `Reply to conversation`;
+    case 'create_discussion_thread':
+      return `Create discussion thread: "${title}"`;
+    case 'update_discussion_thread':
+      return `Update discussion thread: "${title}"`;
+    case 'delete_discussion_thread':
+      return `Delete discussion thread: "${title}"`;
+    case 'pin_discussion_thread':
+      return `${step.pinned === false ? 'Unpin' : 'Pin'} discussion thread: "${title}"`;
+    case 'reply_discussion_thread':
+      return `Reply to discussion thread: "${title}"`;
     default:
       return title ? `${a.replace(/_/g, ' ')}: "${title}"` : a.replace(/_/g, ' ');
   }
@@ -3007,11 +3323,15 @@ function renderActionPreview(msg, idx) {
   // ─── ANNOUNCEMENT (update) — only show fields the AI actually changed ────
   if (msg.actionType === 'announcement_update') {
     const ann = (appData.announcements || []).find(a => a.id === d.id);
+    const hasContentChange = 'title' in d || 'content' in d;
     let html = `<div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(ann?.title || d.id || '')}</div>`;
     if ('title' in d) html += field('Title', textInput('title', d.title));
     if ('content' in d) html += field('Content', textarea('content', d.content, 5));
     if ('pinned' in d) html += `<div style="margin-bottom:4px;">${checkboxInput('pinned', d.pinned, 'Pinned')}</div>`;
-    if ('hidden' in d) html += `<div style="margin-top:4px;">${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>`;
+    // Show visibility as a label, not a checkbox — the button verb (Hide/Show) handles it
+    if ('hidden' in d && !hasContentChange) {
+      html += `<div class="muted" style="font-size:0.9rem; margin-top:4px;">This will <strong>${d.hidden ? 'hide' : 'show'}</strong> the announcement ${d.hidden ? 'from' : 'to'} students.</div>`;
+    }
     return html;
   }
 
@@ -3244,7 +3564,7 @@ function renderActionPreview(msg, idx) {
     const course = (appData.courses || []).find(c => c.id === (d.courseId || activeCourseId));
     return `
       <div class="muted" style="font-size:0.9rem; margin-bottom:12px;">Course: <strong>${escapeHtml(course?.name || '')}</strong></div>
-      <div>${checkboxInput('visible', d.visible !== false, 'Visible to students')}</div>
+      <div class="muted" style="font-size:0.9rem;">This will <strong>${d.visible !== false ? 'show' : 'hide'}</strong> the course ${d.visible !== false ? 'to' : 'from'} students.</div>
     `;
   }
 
@@ -3320,14 +3640,17 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'module_visibility') {
     return `
       <div class="muted" style="font-size:0.9rem; margin-bottom:10px;">Module: <strong>${escapeHtml(d.moduleName || d.moduleId || '')}</strong></div>
-      <div>${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>
+      <div class="muted" style="font-size:0.9rem;">This will <strong>${d.hidden ? 'hide' : 'show'}</strong> the module ${d.hidden ? 'from' : 'to'} students.</div>
     `;
   }
 
   // ─── FILE RENAME ─────────────────────────────────────────────────────────
   if (msg.actionType === 'file_rename') {
+    const fileId = d.fileId || d.id;
+    const file = (appData.files || []).find(f => f.id === fileId);
+    const currentName = d.oldName || d.fileName || file?.name || '';
     return `
-      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Current name: <em>${escapeHtml(d.oldName || '')}</em></div>
+      <div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Current name: <em>${escapeHtml(currentName)}</em></div>
       ${field('New Name', textInput('newName', d.newName), 0)}
     `;
   }
@@ -3336,7 +3659,7 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'file_visibility') {
     return `
       <div class="muted" style="font-size:0.9rem; margin-bottom:10px;">File: <strong>${escapeHtml(d.fileName || d.fileId || '')}</strong></div>
-      <div>${checkboxInput('hidden', d.hidden, 'Hidden from students')}</div>
+      <div class="muted" style="font-size:0.9rem;">This will <strong>${d.hidden ? 'hide' : 'show'}</strong> the file ${d.hidden ? 'from' : 'to'} students.</div>
     `;
   }
 
@@ -3432,6 +3755,46 @@ function renderActionPreview(msg, idx) {
     return `
       <div class="muted" style="font-size:0.85rem; margin-bottom:8px;">Reply to conversation with: <strong>${otherNames}</strong></div>
       ${field('Message', textarea('message', d.message, 4))}
+    `;
+  }
+
+  // ─── DISCUSSION THREAD (create) ──────────────────────────────────────────
+  if (msg.actionType === 'discussion_thread_create') {
+    return `
+      ${field('Title', textInput('title', d.title))}
+      ${field('Content', textarea('content', d.content, 4))}
+      <div style="margin-bottom:4px;">${checkboxInput('pinned', d.pinned, 'Pin thread')}</div>
+    `;
+  }
+
+  // ─── DISCUSSION THREAD (update) ─────────────────────────────────────────
+  if (msg.actionType === 'discussion_thread_update') {
+    const thread = (appData.discussionThreads || []).find(t => t.id === d.id);
+    let html = `<div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(thread?.title || d.threadTitle || d.id || '')}</div>`;
+    if ('title' in d) html += field('Title', textInput('title', d.title));
+    if ('content' in d) html += field('Content', textarea('content', d.content, 4));
+    return html;
+  }
+
+  // ─── DISCUSSION THREAD (delete) ─────────────────────────────────────────
+  if (msg.actionType === 'discussion_thread_delete') {
+    const thread = (appData.discussionThreads || []).find(t => t.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">Delete discussion thread: <strong>${escapeHtml(thread?.title || d.threadTitle || d.id || '')}</strong></div>
+      <div style="margin-top:6px; font-size:0.82rem; color:var(--danger, #c00);">This will permanently delete the thread and all its replies.</div>`;
+  }
+
+  // ─── DISCUSSION THREAD (pin/unpin) ──────────────────────────────────────
+  if (msg.actionType === 'discussion_thread_pin') {
+    const thread = (appData.discussionThreads || []).find(t => t.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">${d.pinned !== false ? 'Pin' : 'Unpin'} discussion thread: <strong>${escapeHtml(thread?.title || d.threadTitle || d.id || '')}</strong></div>`;
+  }
+
+  // ─── DISCUSSION THREAD (reply) ──────────────────────────────────────────
+  if (msg.actionType === 'discussion_thread_reply') {
+    const thread = (appData.discussionThreads || []).find(t => t.id === d.threadId);
+    return `
+      <div class="muted" style="font-size:0.85rem; margin-bottom:8px;">Reply to: <strong>${escapeHtml(thread?.title || d.threadTitle || '')}</strong></div>
+      ${field('Reply', textarea('content', d.content, 4))}
     `;
   }
 
@@ -3860,4 +4223,8 @@ if (typeof window !== 'undefined') {
   window.applyAiDraft = applyAiDraft;
   window.updateAiCreateType = updateAiCreateType;
   window.openAiCreateModal = openAiCreateModal;
+  window.clearAiHistory = function() {
+    clearAiThread();
+    renderAiThread();
+  };
 }

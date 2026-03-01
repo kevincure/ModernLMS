@@ -435,7 +435,10 @@
         <div>
         <div id="aiPanelTitle" style="font-weight:600; font-size:1rem;">AI Assistant</div>
         </div>
-        <button class="btn btn-secondary btn-sm" id="aiCloseBtn" onclick="toggleAiOverlay()" style="padding:4px 10px;" aria-label="Close AI Assistant">Close</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="window.clearAiHistory()" style="padding:4px 10px;" aria-label="Clear AI history" title="Clear conversation">Clear</button>
+          <button class="btn btn-secondary btn-sm" id="aiCloseBtn" onclick="toggleAiOverlay()" style="padding:4px 10px;" aria-label="Close AI Assistant">Close</button>
+        </div>
       </div>
       <!-- Thread -->
       <div style="flex:1; overflow-y:auto; padding:16px;">

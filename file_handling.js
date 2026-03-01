@@ -981,8 +981,10 @@ function renderFilesList() {
       return filesSort === 'folder-asc' ? a.localeCompare(b) : b.localeCompare(a);
     });
     folderNames.forEach(folder => {
+      const isRealFolder = folder !== '(No folder)';
       html += `<div style="margin-bottom:24px;">
-        <h3 style="font-family:var(--font-serif); font-size:1rem; margin-bottom:8px; color:var(--text-secondary); display:flex; align-items:center; gap:8px;">
+        <h3 style="font-family:var(--font-serif); font-size:1rem; margin-bottom:8px; color:var(--text-secondary); display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:var(--radius); transition:background 0.2s;"
+            ${effectiveStaff && isRealFolder ? `ondragover="event.preventDefault(); this.style.background='var(--primary-light)'" ondragleave="this.style.background=''" ondrop="this.style.background=''; window._handleFolderFileDrop(event, '${escapeHtml(folder)}')"` : ''}>
           <span style="font-size:1.1rem;">📁</span> ${escapeHtml(folder)} <span class="muted" style="font-size:0.8rem; font-weight:400;">(${grouped[folder].length})</span>
         </h3>
         ${grouped[folder].map(f => renderFileCard(f, effectiveStaff)).join('')}
@@ -1024,6 +1026,7 @@ function renderFileCard(f, effectiveStaff) {
   return `
     <div class="card"
          style="${isPlaceholder ? 'border-style:dashed; opacity:0.9;' : ''} ${isHidden ? 'opacity:0.7;' : ''}"
+         ${effectiveStaff && !isPlaceholder ? `draggable="true" ondragstart="event.dataTransfer.setData('text/plain', '${f.id}')"` : ''}
          ${isPlaceholder && effectiveStaff ? `ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border-color)'" ondrop="handlePlaceholderFileDrop(event, '${f.id}'); this.style.borderColor='var(--border-color)'"` : ''}>
       <div class="card-header">
         <div style="flex:1;">
@@ -1078,7 +1081,8 @@ export function renderFiles() {
         <option value="folder-asc" ${filesSort === 'folder-asc' ? 'selected' : ''}>By folder A-Z</option>
         <option value="folder-desc" ${filesSort === 'folder-desc' ? 'selected' : ''}>By folder Z-A</option>
       </select>
-      ${isStaffUser ? `<button class="btn btn-primary" onclick="openModal('fileUploadModal')">Upload File</button>` : ''}
+      ${isStaffUser ? `<button class="btn btn-secondary" onclick="window._openCreateFolderModal()">Create Folder</button>
+      <button class="btn btn-primary" onclick="openModal('fileUploadModal')">Upload File</button>` : ''}
     </div>
   `);
 
@@ -1131,6 +1135,82 @@ export async function setFileFolder(fileId) {
   document.body.insertAdjacentHTML('beforeend', modalHtml);
   setTimeout(() => document.getElementById('fileFolderInput')?.focus(), 50);
 }
+
+// Create a new folder (empty — just adds a folder name for files to be moved into)
+window._openCreateFolderModal = function() {
+  // Get existing folders for reference
+  const existingFolders = [...new Set(
+    appData.files
+      .filter(f => f.courseId === activeCourseId && f.folder)
+      .map(f => f.folder)
+  )].sort();
+
+  const existingHtml = existingFolders.length > 0
+    ? `<div style="margin-top:8px;"><div class="muted" style="font-size:0.8rem; margin-bottom:4px;">Existing folders:</div><div class="muted" style="font-size:0.85rem;">${existingFolders.map(f => escapeHtml(f)).join(', ')}</div></div>`
+    : '';
+
+  document.getElementById('createFolderModal')?.remove();
+  const modalHtml = `
+    <div class="modal-overlay" id="createFolderModal" style="display:flex; z-index:1100;">
+      <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+          <h2 class="modal-title" style="font-size:1rem;">Create Folder</h2>
+          <button class="modal-close" onclick="document.getElementById('createFolderModal').remove()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Folder Name</label>
+            <input type="text" class="form-input" id="newFolderNameInput" placeholder="e.g. Lecture Notes or Week 1/Readings">
+          </div>
+          ${existingHtml}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="document.getElementById('createFolderModal').remove()">Cancel</button>
+          <button class="btn btn-primary" onclick="window._createFolder()">Create</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  setTimeout(() => document.getElementById('newFolderNameInput')?.focus(), 50);
+};
+
+window._createFolder = function() {
+  const input = document.getElementById('newFolderNameInput');
+  const folderName = input ? input.value.trim() : '';
+  if (!folderName) {
+    showToast('Please enter a folder name', 'error');
+    return;
+  }
+  // Check if folder already exists
+  const exists = appData.files.some(f => f.courseId === activeCourseId && f.folder === folderName);
+  if (exists) {
+    showToast('A folder with this name already exists', 'error');
+    return;
+  }
+  document.getElementById('createFolderModal')?.remove();
+  // Switch to folder view to show it
+  filesSort = 'folder-asc';
+  renderFiles();
+  showToast(`Folder "${folderName}" created — move files into it using the file menu`, 'success');
+};
+
+// Drag file card into a folder header
+window._handleFolderFileDrop = async function(e, folderName) {
+  e.preventDefault();
+  const fileId = e.dataTransfer.getData('text/plain');
+  if (!fileId) return;
+  const file = appData.files.find(f => f.id === fileId);
+  if (!file) return;
+  file.folder = folderName || null;
+  const result = await supabaseUpdateFile(file);
+  if (!result) {
+    showToast('Failed to move file to folder', 'error');
+    return;
+  }
+  renderFilesList();
+  showToast(`Moved "${file.name}" to "${folderName}"`, 'success');
+};
 
 window._saveFileFolder = async function(fileId) {
   const input = document.getElementById('fileFolderInput');
