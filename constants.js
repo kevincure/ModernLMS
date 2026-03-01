@@ -273,7 +273,8 @@ export const AI_TOOL_REGISTRY = {
     { name: 'get_assignment_analytics', description: 'Submission and grade stats for an assignment (submittedCount, averageScore, ungradedCount, etc.)', params: { assignment_id: 'string' } },
     { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } },
     { name: 'get_group_set',            description: 'Full group set details including groups and their members', params: { group_set_id: 'string' } },
-    { name: 'list_conversations',       description: 'All inbox conversations for this course. Returns conversationId, subject, participants, messageCount, and lastMessage. Available to both students and instructors.' }
+    { name: 'list_conversations',       description: 'All inbox conversations for this course. Returns conversationId, subject, participants, messageCount, and lastMessage. Available to both students and instructors.' },
+    { name: 'get_start_here',            description: 'Read the Start Here / Welcome message for this course (title and content)' }
   ],
 
   // Action types: AI emits one of these → system renders a Take Action Card →
@@ -306,7 +307,7 @@ export const AI_TOOL_REGISTRY = {
     { name: 'move_to_module',          description: 'Move item between modules',                             fields: 'itemId*, fromModuleId*, toModuleId*' },
     // Files
     { name: 'rename_file',             description: 'Rename a file',                                         fields: 'fileId* (from list_files), oldName, newName' },
-    { name: 'set_file_folder',         description: 'Move a file into a folder (or remove from folder)',      fields: 'fileId* (from list_files), fileName, folder (string or null to remove)' },
+    { name: 'set_file_folder',         description: 'Move a file into a folder (creates the folder if it does not exist yet, or removes from folder when folder is null/blank)',      fields: 'fileId* (from list_files), fileName, folder (string or null to remove)' },
     { name: 'set_file_visibility',     description: 'Show or hide a file from students',                     fields: 'fileId* (from list_files), fileName, hidden (boolean — true=hidden, false=visible)' },
     // People
     { name: 'create_invite',           description: 'Invite people to the course by email',                  fields: 'emails (array), role (student|ta|instructor)' },
@@ -321,6 +322,12 @@ export const AI_TOOL_REGISTRY = {
     { name: 'create_group_set',        description: 'Create a new group set with N groups. Students can be auto-assigned afterwards.', fields: 'name*, description, groupCount (number of groups to create, default 4)' },
     { name: 'delete_group_set',        description: 'Permanently delete a group set and all its groups', dangerous: true, fields: 'id* (from list_group_sets), name' },
     { name: 'auto_assign_groups',      description: 'Randomly assign all unassigned students to groups in a set (round-robin)', fields: 'groupSetId* (from list_group_sets), groupSetName' },
+    // Discussion threads
+    { name: 'create_discussion_thread', description: 'Create a new discussion thread',                    fields: 'title*, content, pinned (boolean)' },
+    { name: 'update_discussion_thread', description: 'Edit a discussion thread title or content',          fields: 'id* (from list_discussion_threads), title, content' },
+    { name: 'delete_discussion_thread', description: 'Permanently delete a discussion thread', dangerous: true, fields: 'id* (from list_discussion_threads), threadTitle' },
+    { name: 'pin_discussion_thread',    description: 'Pin or unpin a discussion thread',                   fields: 'id* (from list_discussion_threads), threadTitle, pinned (boolean)' },
+    { name: 'reply_discussion_thread',  description: 'Post a reply to a discussion thread',                fields: 'threadId* (from list_discussion_threads), threadTitle, content*' },
     // Messaging — available to both students and instructors
     { name: 'send_message',            description: 'Send a direct message to one or more users in this course. Available to students and instructors.', fields: 'recipientIds* (array of user IDs from list_people), message*' },
     { name: 'reply_message',           description: 'Reply to an existing conversation. Call list_conversations first to get the conversationId. Available to students and instructors.', fields: 'conversationId* (from list_conversations), message*' },
