@@ -320,6 +320,29 @@ function resolveOperationReferences(operation) {
   return op;
 }
 
+/**
+ * Resolve ${result_N.field} template references in a pipeline step.
+ * The AI may emit references like "groupSetId": "${result_0.id}" meaning
+ * "use the id from the result of step 0". This function replaces those
+ * template strings with actual values from previous step results.
+ */
+function resolvePipelineStepRefs(step, results) {
+  const resolved = { ...step };
+  for (const key of Object.keys(resolved)) {
+    const val = resolved[key];
+    if (typeof val !== 'string') continue;
+    // Match patterns like ${result_0.id}, ${result_1.name}, etc.
+    resolved[key] = val.replace(/\$\{result_(\d+)\.(\w+)\}/g, (match, idxStr, field) => {
+      const rIdx = parseInt(idxStr, 10);
+      if (rIdx < results.length && results[rIdx] && results[rIdx][field] !== undefined) {
+        return results[rIdx][field];
+      }
+      return match; // leave unresolved if not available
+    });
+  }
+  return resolved;
+}
+
 function appendFileLinksToContent(content, fileIds) {
   if (!Array.isArray(fileIds) || fileIds.length === 0) return content || '';
   const lines = fileIds.map(id => {
@@ -2259,18 +2282,23 @@ export async function confirmAiAction(idx, publish = false) {
   if (!msg || msg.role !== 'action') return;
 
   if (msg.actionType === 'pipeline') {
+    const pipelineResults = []; // collect results from each step
     for (const step of (msg.data.steps || [])) {
-      const missing = getMissingPublishRequirements(step, false);
+      // Resolve ${result_N.field} template references from previous step results
+      const resolvedStep = resolvePipelineStepRefs(step, pipelineResults);
+      const missing = getMissingPublishRequirements(resolvedStep, false);
       if (missing.length) {
-        aiThread.push({ role: 'assistant', content: `Before I can publish this pipeline step (${step.action || 'unknown'}), I still need: ${missing.join(', ')}.` });
+        aiThread.push({ role: 'assistant', content: `Before I can publish this pipeline step (${resolvedStep.action || 'unknown'}), I still need: ${missing.join(', ')}.` });
         renderAiThread();
         return;
       }
-      const ok = await executeAiOperation(step, false);
+      const ok = await executeAiOperation(resolvedStep, false);
       if (!ok) {
-        showToast(`Pipeline stopped on step: ${step.action || 'unknown'}`, 'error');
+        showToast(`Pipeline stopped on step: ${resolvedStep.action || 'unknown'}`, 'error');
         return;
       }
+      // Store result for subsequent steps (ok is true or a result object)
+      pipelineResults.push(typeof ok === 'object' ? ok : {});
     }
     msg.confirmed = true;
     aiThread.push({ role: 'assistant', content: `Done! I completed all ${(msg.data.steps || []).length} steps in the pipeline successfully.` });
@@ -2843,7 +2871,7 @@ async function executeAiOperation(operation, publish = false) {
       }
     }
     showToast(`Group set "${resolved.name}" created with ${count} groups!`, 'success');
-    return true;
+    return { id: gsId, name: resolved.name };
   }
 
   if (action === 'group_set_delete') {
@@ -3349,8 +3377,12 @@ function describeStep(step) {
       return `Create group set: "${title}"${step.groupCount ? ` (${step.groupCount} groups)` : ''}`;
     case 'delete_group_set':
       return `Delete group set: "${step.name || title}"`;
-    case 'auto_assign_groups':
-      return `Auto-assign students to: "${step.groupSetName || title}"`;
+    case 'auto_assign_groups': {
+      let gsLabel = step.groupSetName || title || step.groupSetId || '';
+      // Clean up template refs like ${result_0.id}
+      if (gsLabel.includes('${')) gsLabel = '';
+      return `Auto-assign students to${gsLabel ? `: "${gsLabel}"` : ' groups'}`;
+    }
     case 'send_message':
       return `Send message`;
     case 'reply_message':
