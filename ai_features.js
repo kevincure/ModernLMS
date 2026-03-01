@@ -3264,7 +3264,7 @@ export function renderAiThread() {
               <div style="color:var(--text-muted);">✗ Cancelled</div>
             ` : isLatest ? `
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
-                <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, false)">${actionVerb}${['Create','Update'].includes(actionVerb) ? ' (Draft)' : ''}</button>
+                <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, false)">${actionVerb}${actionVerb === 'Create' ? ' (Draft)' : ''}</button>
                 ${['announcement', 'assignment', 'quiz', 'quiz_from_bank', 'question_bank_create'].includes(msg.actionType) && ['Create','Update'].includes(actionVerb) ? `
                   <button class="btn btn-primary btn-sm" onclick="window.confirmAiAction(${idx}, true)">${actionVerb === 'Create' ? 'Create and Publish' : 'Save and Publish'}</button>
                 ` : ''}

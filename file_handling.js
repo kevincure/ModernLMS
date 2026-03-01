@@ -983,51 +983,34 @@ function renderFilesList() {
 
   let html = '';
 
-  // Folder chips bar at top (if there are folders)
-  if (realFolders.length > 0) {
-    html += `<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; padding:0 2px;">`;
-    realFolders.forEach(folder => {
-      const isExpanded = expandedFolders.has(folder);
-      const count = grouped[folder].length;
-      html += `<button class="btn btn-sm" onclick="window._toggleFolder('${escapeHtml(folder)}')"
-        style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:20px; font-size:0.85rem; font-weight:500;
-          background:${isExpanded ? 'var(--primary-light)' : 'var(--bg-secondary)'}; border:1px solid ${isExpanded ? 'var(--primary)' : 'var(--border-color)'};
-          color:${isExpanded ? 'var(--primary)' : 'var(--text-secondary)'}; cursor:pointer; transition:all 0.15s;"
-        ${effectiveStaff ? `ondragover="event.preventDefault(); this.style.background='var(--primary-light)'; this.style.borderColor='var(--primary)'" ondragleave="this.style.background='${isExpanded ? 'var(--primary-light)' : 'var(--bg-secondary)'}'; this.style.borderColor='${isExpanded ? 'var(--primary)' : 'var(--border-color)'}'" ondrop="event.preventDefault(); window._handleFolderFileDrop(event, '${escapeHtml(folder)}')"` : ''}>
-        <span style="font-size:0.9rem;">${isExpanded ? '📂' : '📁'}</span>
-        ${escapeHtml(folder)}
-        <span style="font-size:0.75rem; opacity:0.7;">(${count})</span>
-      </button>`;
-    });
-    html += `</div>`;
-  }
-
-  // Render each folder section
+  // Render each folder section (styled like modules)
   realFolders.forEach(folder => {
     const isExpanded = expandedFolders.has(folder);
-    html += `<div style="margin-bottom:20px;">
-      <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:${isExpanded ? '8' : '0'}px; border-radius:var(--radius); cursor:pointer; transition:background 0.15s; user-select:none; background:var(--bg-secondary);"
+    const count = grouped[folder].length;
+    html += `<div class="module-card" style="margin-bottom:16px;">
+      <div class="module-header" style="cursor:pointer; user-select:none;"
            onclick="window._toggleFolder('${escapeHtml(folder)}')"
-           ${effectiveStaff ? `ondragover="event.preventDefault(); event.stopPropagation(); this.style.background='var(--primary-light)'" ondragleave="this.style.background='var(--bg-secondary)'" ondrop="event.stopPropagation(); this.style.background='var(--bg-secondary)'; window._handleFolderFileDrop(event, '${escapeHtml(folder)}')"` : ''}>
-        <span style="font-size:0.85rem; transition:transform 0.2s; transform:rotate(${isExpanded ? '90' : '0'}deg);">▶</span>
-        <span style="font-size:1rem;">📁</span>
-        <span style="font-weight:600; font-size:0.95rem;">${escapeHtml(folder)}</span>
-        <span class="muted" style="font-size:0.8rem; font-weight:400;">(${grouped[folder].length})</span>
+           ${effectiveStaff ? `ondragover="event.preventDefault(); event.stopPropagation(); this.style.background='var(--primary-light)'" ondragleave="this.style.background=''" ondrop="event.stopPropagation(); this.style.background=''; window._handleFolderFileDrop(event, '${escapeHtml(folder)}')"` : ''}>
+        <h3 class="module-title" style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:0.7rem; transition:transform 0.2s; transform:rotate(${isExpanded ? '90' : '0'}deg); color:var(--text-secondary);">▶</span>
+          ${escapeHtml(folder)}
+          <span class="muted" style="font-size:0.85rem; font-weight:400;">(${count})</span>
+        </h3>
       </div>
-      ${isExpanded ? `<div style="padding-left:8px;">${grouped[folder].map(f => renderFileCard(f, effectiveStaff)).join('')}</div>` : ''}
+      ${isExpanded ? `<div style="padding:8px 12px;">${grouped[folder].map(f => renderFileCard(f, effectiveStaff)).join('')}</div>` : ''}
     </div>`;
   });
 
   // Unfoldered files
   if (unfolderedFiles.length > 0) {
     if (realFolders.length > 0) {
-      html += `<div style="margin-bottom:20px;">
-        <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:8px; color:var(--text-secondary); font-size:0.9rem;">
-          <span style="font-size:1rem;">📄</span>
-          <span style="font-weight:500;">Unfiled</span>
-          <span class="muted" style="font-size:0.8rem; font-weight:400;">(${unfolderedFiles.length})</span>
+      html += `<div class="module-card" style="margin-bottom:16px;">
+        <div class="module-header">
+          <h3 class="module-title">Unfiled <span class="muted" style="font-size:0.85rem; font-weight:400;">(${unfolderedFiles.length})</span></h3>
         </div>
-        ${unfolderedFiles.map(f => renderFileCard(f, effectiveStaff)).join('')}
+        <div style="padding:8px 12px;">
+          ${unfolderedFiles.map(f => renderFileCard(f, effectiveStaff)).join('')}
+        </div>
       </div>`;
     } else {
       html += unfolderedFiles.map(f => renderFileCard(f, effectiveStaff)).join('');
@@ -1071,7 +1054,7 @@ function renderFileCard(f, effectiveStaff) {
     </div>
   ` : '';
 
-  const folderBadge = f.folder ? `<span style="padding:2px 8px; margin-left:8px; border-radius:4px; background:var(--primary-light); color:var(--primary); font-size:0.75rem; font-weight:500;">📁 ${escapeHtml(f.folder)}</span>` : '';
+  const folderBadge = '';
 
   return `
     <div class="card"

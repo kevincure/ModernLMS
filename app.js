@@ -3040,9 +3040,9 @@ function renderCalendar() {
               ${item.description ? `<div class="muted" style="font-size:0.8rem; margin-top:2px;">${escapeHtml(item.description)}</div>` : ''}
               ${item.status === 'draft' ? '<span class="calendar-badge">Draft</span>' : ''}
             </div>
-            ${item.isEvent && effectiveStaff ? `<div style="display:flex; gap:4px; flex-shrink:0; margin-left:8px;">
-              <button class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="openEditCalendarEventModal('${item.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="deleteCalendarEvent('${item.id}')">Delete</button>
+            ${item.isEvent && effectiveStaff ? `<div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="openEditCalendarEventModal('${item.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" style="color:var(--danger);" onclick="deleteCalendarEvent('${item.id}')">Delete</button>
             </div>` : ''}
           </div>
         `).join('')}
@@ -3203,7 +3203,7 @@ async function saveEditCalendarEvent(eventId) {
   ev.eventType = eventType;
   ev.description = description;
   const result = await supabaseUpdateCalendarEvent(ev);
-  if (!result) { showToast('Failed to update event', 'error'); return; }
+  if (!result) return; // supabaseUpdateCalendarEvent already shows toast
   document.getElementById('editCalEventModal')?.remove();
   renderCalendar();
   showToast('Event updated', 'success');
@@ -10290,15 +10290,14 @@ async function removeStudentFromGroupDetail(groupId, userId, gsId) {
 }
 
 async function deleteGroupFromDetail(gId, gsId) {
-  showConfirmDialog('Delete this group? Members will become unassigned.', async () => {
-    const ok = await supabaseDeleteCourseGroup(gId);
-    if (!ok) return;
-    appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
-    const gs = (appData.groupSets || []).find(s => s.id === gsId);
-    if (gs && gs.groups) gs.groups = gs.groups.filter(g => g.id !== gId);
-    renderGroupsManagerModal();
-    showToast('Group deleted', 'success');
-  });
+  if (!window.confirm('Delete this group? Members will become unassigned.')) return;
+  const ok = await supabaseDeleteCourseGroup(gId);
+  if (!ok) return;
+  appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
+  const gs = (appData.groupSets || []).find(s => s.id === gsId);
+  if (gs && gs.groups) gs.groups = gs.groups.filter(g => g.id !== gId);
+  renderGroupsManagerModal();
+  showToast('Group deleted', 'success');
 }
 
 async function addGroupFromDetail(gsId) {
@@ -10350,15 +10349,14 @@ async function autoAssignFromDetail(gsId) {
 }
 
 async function deleteGroupSetFromModal(gsId) {
-  showConfirmDialog('Delete this entire group set and all its groups?', async () => {
-    const ok = await supabaseDeleteGroupSet(gsId);
-    if (!ok) return;
-    appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
-    appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
-    activeGroupsModalSetId = null;
-    renderGroupsManagerModal();
-    showToast('Group set deleted', 'success');
-  });
+  if (!window.confirm('Delete this entire group set and all its groups?')) return;
+  const ok = await supabaseDeleteGroupSet(gsId);
+  if (!ok) return;
+  appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
+  appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
+  activeGroupsModalSetId = null;
+  renderGroupsManagerModal();
+  showToast('Group set deleted', 'success');
 }
 
 function openCreateGroupSetModal() {
@@ -10779,7 +10777,7 @@ function renderNotifications() {
               </div>
             </div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteNotificationItem('${n.id}')" title="Dismiss">×</button>
+          <button class="btn btn-secondary btn-sm" style="color:var(--danger);" onclick="event.stopPropagation(); deleteNotificationItem('${n.id}')">Delete</button>
         </div>
       </div>
     `;
@@ -10809,7 +10807,14 @@ async function markNotificationRead(id, link) {
     updateNotificationBadge();
   }
   if (link) {
-    navigateTo(link);
+    // Handle 'inbox:<conversationId>' links — navigate to inbox and open conversation
+    if (link.startsWith('inbox:')) {
+      const convoId = link.split(':')[1];
+      navigateTo('inbox');
+      if (convoId) setTimeout(() => openConversation(convoId), 100);
+    } else {
+      navigateTo(link);
+    }
   } else {
     renderNotifications();
   }
