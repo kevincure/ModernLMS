@@ -868,13 +868,7 @@ export async function viewFile(fileId) {
     viewerContent = `<iframe src="${escapeHtml(googleViewerUrl)}" style="width:100%; height:75vh; border:none; border-radius:var(--radius);"></iframe>`;
   } else {
     // Trigger download for unsupported formats
-    const a = document.createElement('a');
-    a.href = fileUrl;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    showToast('Downloading file…', 'info');
+    window._downloadFile(fileUrl, file.name);
     return;
   }
 
@@ -887,7 +881,7 @@ export async function viewFile(fileId) {
         <div class="modal-header" style="flex-shrink:0;">
           <h2 class="modal-title" style="font-size:1rem;">${escapeHtml(file.name)}</h2>
           <div style="display:flex; gap:8px; align-items:center;">
-            <a href="${escapeHtml(fileUrl)}" download="${escapeHtml(file.name)}" class="btn btn-secondary btn-sm">Download</a>
+            <button class="btn btn-secondary btn-sm" onclick="window._downloadFile('${escapeHtml(fileUrl)}', '${escapeHtml(file.name)}')">Download</button>
             <button class="modal-close" onclick="document.getElementById('fileViewerModal').remove()">&times;</button>
           </div>
         </div>
@@ -928,6 +922,10 @@ export function updateFilesSort(value) {
 }
 
 // Renders only the file list (used by search/sort to avoid rebuilding the search input)
+// Track which folders are expanded (all expanded by default)
+let expandedFolders = new Set();
+let foldersInitialized = false;
+
 function renderFilesList() {
   if (!activeCourseId) return;
 
@@ -966,35 +964,87 @@ function renderFilesList() {
     return;
   }
 
-  // Group by folder if sorting by folder, otherwise flat list
-  if (filesSort === 'folder-asc' || filesSort === 'folder-desc') {
-    const grouped = {};
-    files.forEach(f => {
-      const folder = f.folder || '(No folder)';
-      if (!grouped[folder]) grouped[folder] = [];
-      grouped[folder].push(f);
-    });
-    let html = '';
-    const folderNames = Object.keys(grouped).sort((a, b) => {
-      if (a === '(No folder)') return 1;
-      if (b === '(No folder)') return -1;
-      return filesSort === 'folder-asc' ? a.localeCompare(b) : b.localeCompare(a);
-    });
-    folderNames.forEach(folder => {
-      const isRealFolder = folder !== '(No folder)';
-      html += `<div style="margin-bottom:24px;">
-        <h3 style="font-family:var(--font-serif); font-size:1rem; margin-bottom:8px; color:var(--text-secondary); display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:var(--radius); transition:background 0.2s;"
-            ${effectiveStaff && isRealFolder ? `ondragover="event.preventDefault(); this.style.background='var(--primary-light)'" ondragleave="this.style.background=''" ondrop="this.style.background=''; window._handleFolderFileDrop(event, '${escapeHtml(folder)}')"` : ''}>
-          <span style="font-size:1.1rem;">📁</span> ${escapeHtml(folder)} <span class="muted" style="font-size:0.8rem; font-weight:400;">(${grouped[folder].length})</span>
-        </h3>
-        ${grouped[folder].map(f => renderFileCard(f, effectiveStaff)).join('')}
-      </div>`;
-    });
-    setHTML('filesList', html);
-  } else {
-    setHTML('filesList', files.map(f => renderFileCard(f, effectiveStaff)).join(''));
+  // Always group by folder — show folder chips at top, then folder sections
+  const grouped = {};
+  files.forEach(f => {
+    const folder = f.folder || '';
+    if (!grouped[folder]) grouped[folder] = [];
+    grouped[folder].push(f);
+  });
+
+  const realFolders = Object.keys(grouped).filter(f => f !== '').sort();
+  const unfolderedFiles = grouped[''] || [];
+
+  // Initialize all folders as expanded on first render
+  if (!foldersInitialized && realFolders.length > 0) {
+    realFolders.forEach(f => expandedFolders.add(f));
+    foldersInitialized = true;
   }
+
+  let html = '';
+
+  // Folder chips bar at top (if there are folders)
+  if (realFolders.length > 0) {
+    html += `<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; padding:0 2px;">`;
+    realFolders.forEach(folder => {
+      const isExpanded = expandedFolders.has(folder);
+      const count = grouped[folder].length;
+      html += `<button class="btn btn-sm" onclick="window._toggleFolder('${escapeHtml(folder)}')"
+        style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:20px; font-size:0.85rem; font-weight:500;
+          background:${isExpanded ? 'var(--primary-light)' : 'var(--bg-secondary)'}; border:1px solid ${isExpanded ? 'var(--primary)' : 'var(--border-color)'};
+          color:${isExpanded ? 'var(--primary)' : 'var(--text-secondary)'}; cursor:pointer; transition:all 0.15s;"
+        ${effectiveStaff ? `ondragover="event.preventDefault(); this.style.background='var(--primary-light)'; this.style.borderColor='var(--primary)'" ondragleave="this.style.background='${isExpanded ? 'var(--primary-light)' : 'var(--bg-secondary)'}'; this.style.borderColor='${isExpanded ? 'var(--primary)' : 'var(--border-color)'}'" ondrop="event.preventDefault(); window._handleFolderFileDrop(event, '${escapeHtml(folder)}')"` : ''}>
+        <span style="font-size:0.9rem;">${isExpanded ? '📂' : '📁'}</span>
+        ${escapeHtml(folder)}
+        <span style="font-size:0.75rem; opacity:0.7;">(${count})</span>
+      </button>`;
+    });
+    html += `</div>`;
+  }
+
+  // Render each folder section
+  realFolders.forEach(folder => {
+    const isExpanded = expandedFolders.has(folder);
+    html += `<div style="margin-bottom:20px;">
+      <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:${isExpanded ? '8' : '0'}px; border-radius:var(--radius); cursor:pointer; transition:background 0.15s; user-select:none; background:var(--bg-secondary);"
+           onclick="window._toggleFolder('${escapeHtml(folder)}')"
+           ${effectiveStaff ? `ondragover="event.preventDefault(); event.stopPropagation(); this.style.background='var(--primary-light)'" ondragleave="this.style.background='var(--bg-secondary)'" ondrop="event.stopPropagation(); this.style.background='var(--bg-secondary)'; window._handleFolderFileDrop(event, '${escapeHtml(folder)}')"` : ''}>
+        <span style="font-size:0.85rem; transition:transform 0.2s; transform:rotate(${isExpanded ? '90' : '0'}deg);">▶</span>
+        <span style="font-size:1rem;">📁</span>
+        <span style="font-weight:600; font-size:0.95rem;">${escapeHtml(folder)}</span>
+        <span class="muted" style="font-size:0.8rem; font-weight:400;">(${grouped[folder].length})</span>
+      </div>
+      ${isExpanded ? `<div style="padding-left:8px;">${grouped[folder].map(f => renderFileCard(f, effectiveStaff)).join('')}</div>` : ''}
+    </div>`;
+  });
+
+  // Unfoldered files
+  if (unfolderedFiles.length > 0) {
+    if (realFolders.length > 0) {
+      html += `<div style="margin-bottom:20px;">
+        <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:8px; color:var(--text-secondary); font-size:0.9rem;">
+          <span style="font-size:1rem;">📄</span>
+          <span style="font-weight:500;">Unfiled</span>
+          <span class="muted" style="font-size:0.8rem; font-weight:400;">(${unfolderedFiles.length})</span>
+        </div>
+        ${unfolderedFiles.map(f => renderFileCard(f, effectiveStaff)).join('')}
+      </div>`;
+    } else {
+      html += unfolderedFiles.map(f => renderFileCard(f, effectiveStaff)).join('');
+    }
+  }
+
+  setHTML('filesList', html);
 }
+
+window._toggleFolder = function(folderName) {
+  if (expandedFolders.has(folderName)) {
+    expandedFolders.delete(folderName);
+  } else {
+    expandedFolders.add(folderName);
+  }
+  renderFilesList();
+};
 
 // Renders a single file card (shared between renderFiles and renderFilesList)
 function renderFileCard(f, effectiveStaff) {
@@ -1193,6 +1243,26 @@ window._createFolder = function() {
   filesSort = 'folder-asc';
   renderFiles();
   showToast(`Folder "${folderName}" created — move files into it using the file menu`, 'success');
+};
+
+// Download file with proper download dialog (avoids browser opening in-tab for signed URLs)
+window._downloadFile = async function(url, filename) {
+  try {
+    showToast('Downloading...', 'info');
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  } catch {
+    // Fallback: open in new tab
+    window.open(url, '_blank');
+  }
 };
 
 // Drag file card into a folder header

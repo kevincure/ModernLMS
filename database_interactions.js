@@ -2295,6 +2295,18 @@ export async function supabaseCreateCalendarEvent(ev) {
   return data;
 }
 
+export async function supabaseUpdateCalendarEvent(ev) {
+  if (!supabaseClient) return null;
+  const updates = {};
+  if (ev.title !== undefined) updates.title = ev.title;
+  if (ev.eventDate !== undefined) updates.event_date = ev.eventDate;
+  if (ev.eventType !== undefined) updates.event_type = ev.eventType;
+  if (ev.description !== undefined) updates.description = ev.description;
+  const { data, error } = await supabaseClient.from('calendar_events').update(updates).eq('id', ev.id).select().single();
+  if (error) { console.error('[Supabase] Update calendar event error:', error); showToast('Failed to update event', 'error'); return null; }
+  return data;
+}
+
 export async function supabaseDeleteCalendarEvent(eventId) {
   if (!supabaseClient) return false;
   const { error } = await supabaseClient.from('calendar_events').delete().eq('id', eventId);
