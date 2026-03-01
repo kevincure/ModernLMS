@@ -2302,9 +2302,10 @@ export async function supabaseUpdateCalendarEvent(ev) {
   if (ev.eventDate !== undefined) updates.event_date = ev.eventDate;
   if (ev.eventType !== undefined) updates.event_type = ev.eventType;
   if (ev.description !== undefined) updates.description = ev.description;
-  const { data, error } = await supabaseClient.from('calendar_events').update(updates).eq('id', ev.id).select().single();
+  const { data, error } = await supabaseClient.from('calendar_events').update(updates).eq('id', ev.id).select();
   if (error) { console.error('[Supabase] Update calendar event error:', error); showToast('Failed to update event', 'error'); return null; }
-  return data;
+  if (!data || data.length === 0) { console.warn('[Supabase] Update calendar event: no rows matched id', ev.id); showToast('Event not found in database — it may only exist locally', 'warning'); return null; }
+  return data[0];
 }
 
 export async function supabaseDeleteCalendarEvent(eventId) {

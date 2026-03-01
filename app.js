@@ -3040,9 +3040,9 @@ function renderCalendar() {
               ${item.description ? `<div class="muted" style="font-size:0.8rem; margin-top:2px;">${escapeHtml(item.description)}</div>` : ''}
               ${item.status === 'draft' ? '<span class="calendar-badge">Draft</span>' : ''}
             </div>
-            ${item.isEvent && effectiveStaff ? `<div style="display:flex; gap:4px; flex-shrink:0; margin-left:8px;">
-              <button class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="openEditCalendarEventModal('${item.id}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="deleteCalendarEvent('${item.id}')">Delete</button>
+            ${item.isEvent && effectiveStaff ? `<div style="display:flex; gap:6px; flex-shrink:0; margin-left:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="openEditCalendarEventModal('${item.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" style="color:var(--danger);" onclick="deleteCalendarEvent('${item.id}')">Delete</button>
             </div>` : ''}
           </div>
         `).join('')}
@@ -3203,7 +3203,7 @@ async function saveEditCalendarEvent(eventId) {
   ev.eventType = eventType;
   ev.description = description;
   const result = await supabaseUpdateCalendarEvent(ev);
-  if (!result) { showToast('Failed to update event', 'error'); return; }
+  if (!result) return; // supabaseUpdateCalendarEvent already shows toast
   document.getElementById('editCalEventModal')?.remove();
   renderCalendar();
   showToast('Event updated', 'success');
@@ -5407,35 +5407,77 @@ function viewSubmissions(assignmentId) {
             <button class="btn btn-secondary btn-sm" onclick="bulkReleaseGrades('${assignmentId}')">Release All Grades</button>
             <button class="btn btn-secondary btn-sm" onclick="downloadAllSubmissions('${assignmentId}')">Download All (ZIP)</button>
           </div>
-          ${submissions.length === 0 ? '<div class="empty-state-text">No submissions yet</div>' : submissions.map(s => {
-            const student = getUserById(s.userId);
-            const grade = appData.grades.find(g => g.submissionId === s.id);
-            const dueDate = new Date(assignment.dueDate);
-            const submitDate = new Date(s.submittedAt);
-            const isLate = submitDate > dueDate;
-            const lateDeduction = calculateLateDeduction(assignment, s.submittedAt);
-
-            return `
-              <div class="card">
-                <div class="card-header">
-                  <div>
-                    <div class="card-title">${student ? student.name : 'Unknown'}${isLate ? '<span style="margin-left:8px; font-size:0.75rem; background:var(--warning-light); color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">LATE</span>' : ''}</div>
-                    <div class="muted">
-                      Submitted ${formatDate(s.submittedAt)}
-                      ${isLate && lateDeduction > 0 ? ` · ${lateDeduction}% late penalty` : ''}
+          ${submissions.length === 0 ? '<div class="empty-state-text">No submissions yet</div>' : (() => {
+            // For group assignments with per_group grading, group submissions by group
+            if (assignment.isGroupAssignment && assignment.groupGradingMode === 'per_group') {
+              const grouped = {};
+              submissions.forEach(s => {
+                const key = s.groupId || `individual_${s.userId}`;
+                if (!grouped[key]) grouped[key] = [];
+                grouped[key].push(s);
+              });
+              return Object.entries(grouped).map(([gKey, subs]) => {
+                const rep = subs[0]; // representative submission
+                const group = gKey.startsWith('individual_') ? null : (appData.courseGroups || []).find(g => g.id === gKey);
+                const grade = appData.grades.find(g => g.submissionId === rep.id);
+                const dueDate = new Date(assignment.dueDate);
+                const submitDate = new Date(rep.submittedAt);
+                const isLate = submitDate > dueDate;
+                const lateDeduction = calculateLateDeduction(assignment, rep.submittedAt);
+                const submitter = getUserById(rep.userId);
+                const memberNames = group ? (group.members || []).map(m => { const u = getUserById(m.userId); return u ? u.name : 'Unknown'; }).join(', ') : (submitter ? submitter.name : 'Unknown');
+                return `
+                  <div class="card">
+                    <div class="card-header">
+                      <div>
+                        <div class="card-title">${group ? escapeHtml(group.name) : (submitter ? submitter.name : 'Unknown')}${isLate ? '<span style="margin-left:8px; font-size:0.75rem; background:var(--warning-light); color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">LATE</span>' : ''}</div>
+                        <div class="muted">
+                          ${group ? `Members: ${memberNames} · ` : ''}Submitted by ${submitter ? submitter.name : 'Unknown'} ${formatDate(rep.submittedAt)}
+                          ${isLate && lateDeduction > 0 ? ` · ${lateDeduction}% late penalty` : ''}
+                        </div>
+                      </div>
+                      <div style="display:flex; gap:8px; align-items:center;">
+                        ${grade ? `<span class="muted">${grade.score}/${assignment.points}${grade.released ? '' : ' (unreleased)'}</span>` : ''}
+                        <button class="btn btn-primary btn-sm" onclick="gradeSubmission('${rep.id}', '${assignmentId}')">Grade${group ? ' Group' : ''}</button>
+                      </div>
+                    </div>
+                    <div>${rep.text || '<em class="muted">No text submission</em>'}</div>
+                    ${rep.fileName ? `<div class="muted" style="margin-top:8px;">Attachment: ${escapeHtml(rep.fileName)}</div>` : ''}
+                  </div>
+                `;
+              }).join('');
+            }
+            // Default: individual submissions
+            return submissions.map(s => {
+              const student = getUserById(s.userId);
+              const grade = appData.grades.find(g => g.submissionId === s.id);
+              const dueDate = new Date(assignment.dueDate);
+              const submitDate = new Date(s.submittedAt);
+              const isLate = submitDate > dueDate;
+              const lateDeduction = calculateLateDeduction(assignment, s.submittedAt);
+              const groupName = s.groupId ? ((appData.courseGroups || []).find(g => g.id === s.groupId)?.name || '') : '';
+              return `
+                <div class="card">
+                  <div class="card-header">
+                    <div>
+                      <div class="card-title">${student ? student.name : 'Unknown'}${groupName ? ` <span class="muted" style="font-size:0.8rem;">(${escapeHtml(groupName)})</span>` : ''}${isLate ? '<span style="margin-left:8px; font-size:0.75rem; background:var(--warning-light); color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">LATE</span>' : ''}</div>
+                      <div class="muted">
+                        Submitted ${formatDate(s.submittedAt)}
+                        ${isLate && lateDeduction > 0 ? ` · ${lateDeduction}% late penalty` : ''}
+                      </div>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                      ${grade ? `<span class="muted">${grade.score}/${assignment.points}${grade.released ? '' : ' (unreleased)'}</span>` : ''}
+                      <button class="btn btn-secondary btn-sm" onclick="viewSubmissionHistory('${assignmentId}', '${s.userId}')">History</button>
+                      <button class="btn btn-primary btn-sm" onclick="gradeSubmission('${s.id}', '${assignmentId}')">Grade</button>
                     </div>
                   </div>
-                  <div style="display:flex; gap:8px; align-items:center;">
-                    ${grade ? `<span class="muted">${grade.score}/${assignment.points}${grade.released ? '' : ' (unreleased)'}</span>` : ''}
-                    <button class="btn btn-secondary btn-sm" onclick="viewSubmissionHistory('${assignmentId}', '${s.userId}')">History</button>
-                    <button class="btn btn-primary btn-sm" onclick="gradeSubmission('${s.id}', '${assignmentId}')">Grade</button>
-                  </div>
+                  <div>${s.text || '<em class="muted">No text submission</em>'}</div>
+                  ${s.fileName ? `<div class="muted" style="margin-top:8px;">Attachment: ${escapeHtml(s.fileName)}</div>` : ''}
                 </div>
-                <div>${s.text || '<em class="muted">No text submission</em>'}</div>
-                ${s.fileName ? `<div class="muted" style="margin-top:8px;">Attachment: ${escapeHtml(s.fileName)}</div>` : ''}
-              </div>
-            `;
-          }).join('')}
+              `;
+            }).join('');
+          })()}
         </div>
       </div>
     </div>
@@ -5458,6 +5500,18 @@ function gradeSubmission(submissionId, assignmentId) {
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   const student = getUserById(submission.userId);
   const existingGrade = appData.grades.find(g => g.submissionId === submissionId);
+
+  // Group grading banner
+  let groupBanner = '';
+  if (assignment.isGroupAssignment && assignment.groupGradingMode === 'per_group' && submission.groupId) {
+    const group = (appData.courseGroups || []).find(g => g.id === submission.groupId);
+    if (group) {
+      const memberNames = (group.members || []).map(m => { const u = getUserById(m.userId); return u ? u.name : 'Unknown'; }).join(', ');
+      groupBanner = `<div style="padding:10px 14px; background:var(--primary-light); border:1px solid var(--primary); border-radius:var(--radius); margin-bottom:16px; font-size:0.85rem;">
+        <strong>Group grading:</strong> This grade will apply to all members of <strong>${escapeHtml(group.name)}</strong> (${memberNames})
+      </div>`;
+    }
+  }
   
   // Check if assignment has a rubric
   const rubric = appData.rubrics?.find(r => r.assignmentId === assignmentId);
@@ -5493,12 +5547,13 @@ function gradeSubmission(submissionId, assignmentId) {
           <button class="modal-close" onclick="closeModal('gradeModal')">&times;</button>
         </div>
         <div class="modal-body">
+          ${groupBanner}
           <div class="card" style="margin-bottom:16px; background:var(--bg-color);">
             <div style="font-weight:600; margin-bottom:8px;">${assignment.title}</div>
             <div>${submission.text || '<em class="muted">No text submission</em>'}</div>
             ${submission.fileName ? `<div class="muted" style="margin-top:8px;">📎 ${submission.fileName}</div>` : ''}
           </div>
-          
+
           ${rubricHTML}
           
           <div class="form-group">
@@ -5587,6 +5642,46 @@ async function saveGrade(submissionId) {
   const existingIdx = appData.grades.findIndex(g => g.submissionId === submissionId);
   if (existingIdx >= 0) appData.grades[existingIdx] = gradeObj;
   else appData.grades.push(gradeObj);
+
+  // Per-group grading: propagate the same grade to all group members
+  const submission = appData.submissions.find(s => s.id === submissionId);
+  if (submission && submission.groupId) {
+    const assignment = appData.assignments.find(a => a.id === submission.assignmentId);
+    if (assignment && assignment.isGroupAssignment && assignment.groupGradingMode === 'per_group') {
+      const group = (appData.courseGroups || []).find(g => g.id === submission.groupId);
+      if (group && group.members) {
+        for (const member of group.members) {
+          if (member.userId === submission.userId) continue; // skip the one we just graded
+          // Ensure each member has a submission record
+          let memberSub = appData.submissions.find(s => s.assignmentId === assignment.id && s.userId === member.userId);
+          if (!memberSub) {
+            memberSub = {
+              id: generateId(),
+              assignmentId: assignment.id,
+              userId: member.userId,
+              text: submission.text || '',
+              fileName: submission.fileName || null,
+              filePath: submission.filePath || null,
+              submittedAt: submission.submittedAt,
+              groupId: submission.groupId
+            };
+            const saved = await supabaseCreateSubmission(memberSub);
+            if (saved) { memberSub.id = saved.id; appData.submissions.push(memberSub); }
+            else continue;
+          }
+          // Apply the same grade
+          const memberGrade = { ...gradeObj, submissionId: memberSub.id };
+          const savedMG = await supabaseUpsertGrade(memberGrade);
+          if (savedMG) {
+            const mIdx = appData.grades.findIndex(g => g.submissionId === memberSub.id);
+            if (mIdx >= 0) appData.grades[mIdx] = memberGrade;
+            else appData.grades.push(memberGrade);
+          }
+        }
+      }
+    }
+  }
+
   closeModal('gradeModal');
   closeModal('submissionsModal');
   renderGradebook();
@@ -10290,15 +10385,14 @@ async function removeStudentFromGroupDetail(groupId, userId, gsId) {
 }
 
 async function deleteGroupFromDetail(gId, gsId) {
-  showConfirmDialog('Delete this group? Members will become unassigned.', async () => {
-    const ok = await supabaseDeleteCourseGroup(gId);
-    if (!ok) return;
-    appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
-    const gs = (appData.groupSets || []).find(s => s.id === gsId);
-    if (gs && gs.groups) gs.groups = gs.groups.filter(g => g.id !== gId);
-    renderGroupsManagerModal();
-    showToast('Group deleted', 'success');
-  });
+  if (!window.confirm('Delete this group? Members will become unassigned.')) return;
+  const ok = await supabaseDeleteCourseGroup(gId);
+  if (!ok) return;
+  appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
+  const gs = (appData.groupSets || []).find(s => s.id === gsId);
+  if (gs && gs.groups) gs.groups = gs.groups.filter(g => g.id !== gId);
+  renderGroupsManagerModal();
+  showToast('Group deleted', 'success');
 }
 
 async function addGroupFromDetail(gsId) {
@@ -10350,15 +10444,14 @@ async function autoAssignFromDetail(gsId) {
 }
 
 async function deleteGroupSetFromModal(gsId) {
-  showConfirmDialog('Delete this entire group set and all its groups?', async () => {
-    const ok = await supabaseDeleteGroupSet(gsId);
-    if (!ok) return;
-    appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
-    appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
-    activeGroupsModalSetId = null;
-    renderGroupsManagerModal();
-    showToast('Group set deleted', 'success');
-  });
+  if (!window.confirm('Delete this entire group set and all its groups?')) return;
+  const ok = await supabaseDeleteGroupSet(gsId);
+  if (!ok) return;
+  appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
+  appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
+  activeGroupsModalSetId = null;
+  renderGroupsManagerModal();
+  showToast('Group set deleted', 'success');
 }
 
 function openCreateGroupSetModal() {
@@ -10573,14 +10666,38 @@ function renderConversationThread() {
   setText('inboxSubtitle', names);
   setHTML('inboxActions', `<button class="btn btn-secondary" onclick="closeConversation()">← All Messages</button>`);
 
-  const messagesHtml = convo.messages.map(m => {
+  // Compute read status for each participant (for read receipts)
+  const otherReadTimes = otherParticipants.map(p => p.lastReadAt ? new Date(p.lastReadAt) : null);
+
+  const messagesHtml = convo.messages.map((m, mi) => {
     const sender = getUserById(m.senderId);
     const isMe = m.senderId === appData.currentUser.id;
+    // Read receipt: show on the LAST message that each participant has read
+    let readReceipt = '';
+    if (isMe) {
+      const msgTime = new Date(m.createdAt);
+      const nextMyMsg = convo.messages.slice(mi + 1).find(nm => nm.senderId === appData.currentUser.id);
+      const nextMyMsgTime = nextMyMsg ? new Date(nextMyMsg.createdAt) : null;
+      // Check if any other participant has read up to this message (but not past the next one from us)
+      const readers = otherParticipants.filter((p, pi) => {
+        const readAt = otherReadTimes[pi];
+        if (!readAt || readAt < msgTime) return false;
+        if (nextMyMsgTime && readAt >= nextMyMsgTime) return false;
+        return true;
+      });
+      // Show "Read" on the last message that was read
+      const allRead = otherParticipants.every((_, pi) => otherReadTimes[pi] && otherReadTimes[pi] >= msgTime);
+      // Only show on the most recent read message
+      if (allRead && (!nextMyMsg || !otherParticipants.every((_, pi) => otherReadTimes[pi] && otherReadTimes[pi] >= new Date(nextMyMsg.createdAt)))) {
+        readReceipt = `<div style="font-size:0.7rem; text-align:right; opacity:0.6; margin-top:1px;">Read</div>`;
+      }
+    }
     return `
       <div class="message-bubble ${isMe ? 'message-sent' : 'message-received'}">
         ${!isMe ? `<div class="message-sender">${escapeHtml(sender?.name || 'Unknown')}</div>` : ''}
         <div class="markdown-content">${renderMarkdown(m.content)}</div>
         <div class="message-time">${formatDate(m.createdAt)}</div>
+        ${readReceipt}
       </div>
     `;
   }).join('') || '<div class="muted" style="padding:20px 0; text-align:center;">No messages yet.</div>';
@@ -10779,7 +10896,7 @@ function renderNotifications() {
               </div>
             </div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deleteNotificationItem('${n.id}')" title="Dismiss">×</button>
+          <button class="btn btn-secondary btn-sm" style="color:var(--danger);" onclick="event.stopPropagation(); deleteNotificationItem('${n.id}')">Delete</button>
         </div>
       </div>
     `;
@@ -10809,7 +10926,14 @@ async function markNotificationRead(id, link) {
     updateNotificationBadge();
   }
   if (link) {
-    navigateTo(link);
+    // Handle 'inbox:<conversationId>' links — navigate to inbox and open conversation
+    if (link.startsWith('inbox:')) {
+      const convoId = link.split(':')[1];
+      navigateTo('inbox');
+      if (convoId) setTimeout(() => openConversation(convoId), 100);
+    } else {
+      navigateTo(link);
+    }
   } else {
     renderNotifications();
   }
