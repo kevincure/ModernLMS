@@ -18,7 +18,7 @@ import {
   supabaseUpdateCourse,
   supabaseUpdateFile,
   supabaseCreateQuestionBank, supabaseUpdateQuestionBank, supabaseDeleteQuestionBank,
-  supabaseCreateCalendarEvent,
+  supabaseCreateCalendarEvent, supabaseUpdateCalendarEvent, supabaseDeleteCalendarEvent,
   supabaseDownloadFileBlob,
   supabaseCreateGroupSet, supabaseCreateCourseGroup, supabaseDeleteGroupSet,
   supabaseAddGroupMember,
@@ -29,7 +29,8 @@ import {
   supabaseCreateDiscussionThread,
   supabaseUpdateDiscussionThread,
   supabaseDeleteDiscussionThread,
-  supabaseCreateDiscussionReply
+  supabaseCreateDiscussionReply,
+  supabaseNotifyCourseStudents
 } from './database_interactions.js';
 import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 
@@ -236,6 +237,8 @@ function normalizeAiOperationAction(action) {
     revoke_invite: 'invite_revoke',
     set_course_visibility: 'course_visibility',
     create_calendar_event: 'calendar_event_create',
+    update_calendar_event: 'calendar_event_update',
+    delete_calendar_event: 'calendar_event_delete',
     create_discussion_thread: 'discussion_thread_create',
     update_discussion_thread: 'discussion_thread_update',
     delete_discussion_thread: 'discussion_thread_delete',
@@ -929,6 +932,17 @@ async function executeAiTool(toolName, params = {}) {
       });
     }
 
+    case 'list_calendar_events': {
+      const events = (appData.calendarEvents || []).filter(ev => ev.courseId === activeCourseId);
+      return events.map(ev => ({
+        id: ev.id,
+        title: ev.title,
+        eventDate: ev.eventDate,
+        eventType: ev.eventType || 'Event',
+        description: ev.description || ''
+      }));
+    }
+
     default:
       return { error: `Unknown tool: ${toolName}` };
   }
@@ -1115,6 +1129,11 @@ function validateActionPayload(payload) {
     if (!(appData.groupSets || []).find(gs => gs.id === payload.groupSetId && gs.courseId === activeCourseId))
       return `Group set "${payload.groupSetId}" not found — use list_group_sets`;
   }
+  if (action === 'update_calendar_event' || action === 'delete_calendar_event') {
+    if (!payload.id) return 'Missing calendar event id — call list_calendar_events first';
+    if (!(appData.calendarEvents || []).find(ev => ev.id === payload.id && ev.courseId === activeCourseId))
+      return `Calendar event "${payload.id}" not found — use list_calendar_events`;
+  }
   return null;
 }
 
@@ -1183,7 +1202,7 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
       'list_question_banks','list_announcements','list_discussion_threads','get_grade_categories',
       'get_grade_settings','get_question_bank','get_assignment','get_quiz','get_file_content',
       'get_start_here','list_conversations','get_assignment_analytics','get_student_grades',
-      'list_group_sets','get_group_set'];
+      'list_group_sets','get_group_set','list_calendar_events'];
     if (parsed.type && !['tool_call','action','ask_user','answer'].includes(parsed.type) && KNOWN_TOOLS.includes(parsed.type)) {
       parsed = { type: 'tool_call', tool: parsed.type, params: parsed.params || {}, step_label: parsed.step_label || '' };
     }
@@ -1689,7 +1708,7 @@ function handleAiAction(action) {
       data: {
         moduleId,
         moduleName: action.moduleName || '',
-        name: action.name || '',
+        name: action.newName || action.name || '',
         notes: action.notes || ''
       },
       confirmed: false,
@@ -1901,6 +1920,33 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'update_calendar_event') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'calendar_event_update',
+      data: {
+        id: action.id || '',
+        title: action.title,
+        eventDate: action.eventDate || action.date,
+        eventType: action.eventType,
+        description: action.description,
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete_calendar_event') {
+    aiThread.push({
+      role: 'action',
+      actionType: 'calendar_event_delete',
+      data: {
+        id: action.id || '',
+        title: action.title || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else if (action.action === 'create_group_set') {
     aiThread.push({
       role: 'action',
@@ -2052,6 +2098,13 @@ function syncAiActionFromDom(idx) {
       msg.data[fieldName] = el.value;
     }
   });
+  // Sync split date+time inputs for calendar events
+  const dateEl = document.getElementById(`aiCalEvtDate_${idx}`);
+  const timeEl = document.getElementById(`aiCalEvtTime_${idx}`);
+  if (dateEl && dateEl.value) {
+    const t = timeEl ? timeEl.value : '14:00';
+    msg.data.eventDate = new Date(dateEl.value + 'T' + t + ':00').toISOString();
+  }
 }
 
 /**
@@ -2172,6 +2225,10 @@ function generateActionConfirmation(msg, publish = false) {
       const evDate = d.eventDate ? new Date(d.eventDate).toLocaleString() : '';
       return `Done! Added ${b(d.title)} (${escapeHtml(d.eventType || 'Event')}) to the ${pageLink('calendar', 'Calendar')}${evDate ? ` on ${escapeHtml(evDate)}` : ''}.`;
     }
+    case 'calendar_event_update':
+      return `Done! Updated calendar event ${b(d.title || '')}. See the ${pageLink('calendar', 'Calendar')}.`;
+    case 'calendar_event_delete':
+      return `Done! Deleted calendar event ${b(d.title || '')} from the ${pageLink('calendar', 'Calendar')}.`;
     case 'group_set_create':
       return `Done! Created group set ${b(d.name)} with ${d.groupCount || 4} groups. Manage from ${pageLink('assignments', 'Assignments')} > Groups.`;
     case 'group_set_delete':
@@ -2255,6 +2312,10 @@ async function executeAiOperation(operation, publish = false) {
     appData.announcements.push(announcement);
     if (renderUpdatesCallback) renderUpdatesCallback();
     if (renderHomeCallback) renderHomeCallback();
+    // Notify students when published
+    if (publish && !announcement.hidden) {
+      supabaseNotifyCourseStudents(activeCourseId, 'announcement', 'New announcement: ' + announcement.title, (announcement.content || '').slice(0, 100), 'updates', announcement.id);
+    }
     return true;
   }
 
@@ -2384,6 +2445,10 @@ async function executeAiOperation(operation, publish = false) {
     }
     appData.assignments.push(newAssignment);
     if (renderAssignmentsCallback) renderAssignmentsCallback();
+    // Notify students when published
+    if (newAssignment.status === 'published' && !newAssignment.hidden) {
+      supabaseNotifyCourseStudents(activeCourseId, 'assignment', 'New assignment: ' + newAssignment.title, (newAssignment.description || '').slice(0, 100), 'assignments', newAssignment.id);
+    }
     return true;
   }
 
@@ -2723,8 +2788,34 @@ async function executeAiOperation(operation, publish = false) {
     if (!saved) return false;
     if (!appData.calendarEvents) appData.calendarEvents = [];
     appData.calendarEvents.push(ev);
-    if (window.renderCalendar) window.renderCalendar();
+    if (renderCalendarCallback) renderCalendarCallback();
+    if (renderHomeCallback) renderHomeCallback();
     showToast('Calendar event added', 'success');
+    return true;
+  }
+
+  if (action === 'calendar_event_update') {
+    const ev = (appData.calendarEvents || []).find(e => e.id === resolved.id);
+    if (!ev) { showToast('Calendar event not found', 'error'); return false; }
+    if (resolved.title !== undefined) ev.title = resolved.title;
+    if (resolved.eventDate !== undefined) ev.eventDate = resolved.eventDate;
+    if (resolved.eventType !== undefined) ev.eventType = resolved.eventType;
+    if (resolved.description !== undefined) ev.description = resolved.description;
+    const result = await supabaseUpdateCalendarEvent(ev);
+    if (!result) { showToast('Failed to update event', 'error'); return false; }
+    if (renderCalendarCallback) renderCalendarCallback();
+    if (renderHomeCallback) renderHomeCallback();
+    showToast('Calendar event updated', 'success');
+    return true;
+  }
+
+  if (action === 'calendar_event_delete') {
+    const ok = await supabaseDeleteCalendarEvent(resolved.id);
+    if (!ok) { showToast('Failed to delete event', 'error'); return false; }
+    appData.calendarEvents = (appData.calendarEvents || []).filter(ev => ev.id !== resolved.id);
+    if (renderCalendarCallback) renderCalendarCallback();
+    if (renderHomeCallback) renderHomeCallback();
+    showToast('Calendar event deleted', 'success');
     return true;
   }
 
@@ -3088,11 +3179,18 @@ export function renderAiThread() {
         'person_remove': 'Person',
         'course_visibility': 'Course Visibility',
         'calendar_event_create': 'Calendar Event',
+        'calendar_event_update': 'Calendar Event',
+        'calendar_event_delete': 'Calendar Event',
         'discussion_thread_create': 'Discussion Thread',
         'discussion_thread_update': 'Discussion Thread',
         'discussion_thread_delete': 'Discussion Thread',
         'discussion_thread_pin': 'Discussion Thread',
         'discussion_thread_reply': 'Discussion Reply',
+        'send_message': 'Message',
+        'reply_message': 'Message',
+        'group_set_create': 'Group Set',
+        'group_set_delete': 'Group Set',
+        'group_auto_assign': 'Groups',
         'pipeline': 'Automation Pipeline'
       }[msg.actionType] || 'Content';
 
@@ -3101,7 +3199,7 @@ export function renderAiThread() {
         if (!data) return 'Update';
         const hasContentChange = 'title' in data || 'content' in data;
         const hasHiddenChange = 'hidden' in data;
-        if (hasHiddenChange && !hasContentChange) return data.hidden ? 'Hide' : 'Show';
+        if (hasHiddenChange && !hasContentChange) return 'Change Visibility';
         return 'Update';
       };
 
@@ -3138,11 +3236,18 @@ export function renderAiThread() {
         'person_remove': 'Remove',
         'course_visibility': msg.data?.visible === false ? 'Hide' : 'Show',
         'calendar_event_create': 'Add',
+        'calendar_event_update': 'Update',
+        'calendar_event_delete': 'Delete',
         'discussion_thread_create': 'Create',
         'discussion_thread_update': 'Update',
         'discussion_thread_delete': 'Delete',
         'discussion_thread_pin': msg.data?.pinned === false ? 'Unpin' : 'Pin',
         'discussion_thread_reply': 'Post',
+        'send_message': 'Send',
+        'reply_message': 'Reply',
+        'group_set_create': 'Create',
+        'group_set_delete': 'Delete',
+        'group_auto_assign': 'Auto-assign',
         'pipeline': 'Run'
       }[msg.actionType] || 'Run';
 
@@ -3226,6 +3331,10 @@ function describeStep(step) {
       return `Remove person: ${step.name || step.email || title}`;
     case 'create_calendar_event':
       return `Add calendar event: "${title}"${step.eventDate ? ` on ${new Date(step.eventDate).toLocaleDateString()}` : ''}`;
+    case 'update_calendar_event':
+      return `Update calendar event: "${title}"`;
+    case 'delete_calendar_event':
+      return `Delete calendar event: "${title}"`;
     case 'set_assignment_visibility':
       return `${step.hidden ? 'Hide' : 'Show'} assignment: "${step.assignmentTitle || title}"`;
     case 'set_course_visibility':
@@ -3705,6 +3814,33 @@ function renderActionPreview(msg, idx) {
       ${field('Event Type', selectInput('eventType', d.eventType || 'Event', [['Class','Class'],['Lecture','Special Lecture'],['Office Hours','Office Hours'],['Exam','Exam'],['Event','Other']]))}
       ${field('Description', textarea('description', d.description, 2))}
     `;
+  }
+
+  // ─── CALENDAR EVENT (update) ──────────────────────────────────────────────
+  if (msg.actionType === 'calendar_event_update') {
+    const ev = (appData.calendarEvents || []).find(e => e.id === d.id);
+    let html = `<div class="muted" style="font-size:0.8rem; margin-bottom:8px;">Editing: ${escapeHtml(ev?.title || d.title || d.id || '')}</div>`;
+    if (d.title !== undefined) html += field('Title', textInput('title', d.title));
+    if (d.eventDate !== undefined) {
+      const dtLocal = toDatetimeLocal(d.eventDate);
+      const datePart = dtLocal ? dtLocal.slice(0, 10) : '';
+      const timePart = dtLocal ? dtLocal.slice(11, 16) : '14:00';
+      html += field('Date & Time', `<div style="display:flex; gap:8px;">
+        <input type="date" class="form-input" style="flex:1;" id="aiCalEvtDate_${idx}" value="${escapeHtml(datePart)}"
+          onchange="(function(el){const t=document.getElementById('aiCalEvtTime_${idx}');window.updateAiActionField(${idx},'eventDate',new Date(el.value+'T'+(t?t.value:'14:00')+':00').toISOString());})(this)">
+        <input type="time" class="form-input" style="width:130px;" id="aiCalEvtTime_${idx}" value="${escapeHtml(timePart)}" step="1800"
+          onchange="(function(el){const d=document.getElementById('aiCalEvtDate_${idx}');window.updateAiActionField(${idx},'eventDate',new Date((d?d.value:'2000-01-01')+'T'+el.value+':00').toISOString());})(this)">
+      </div>`);
+    }
+    if (d.eventType !== undefined) html += field('Event Type', selectInput('eventType', d.eventType || 'Event', [['Class','Class'],['Lecture','Special Lecture'],['Office Hours','Office Hours'],['Exam','Exam'],['Event','Other']]));
+    if (d.description !== undefined) html += field('Description', textarea('description', d.description, 2));
+    return html;
+  }
+
+  // ─── CALENDAR EVENT (delete) ──────────────────────────────────────────────
+  if (msg.actionType === 'calendar_event_delete') {
+    const ev = (appData.calendarEvents || []).find(e => e.id === d.id);
+    return `<div class="muted" style="font-size:0.9rem;">Delete calendar event: <strong>${escapeHtml(ev?.title || d.title || d.id || '')}</strong></div>`;
   }
 
   // ─── GROUP SET (create) ──────────────────────────────────────────────────

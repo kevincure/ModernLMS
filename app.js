@@ -72,7 +72,7 @@ import {
   supabaseDeleteQuizTimeOverride,
   supabaseUpsertGradeSettings,
   supabaseCreateCalendarEvent,
-  supabaseDeleteCalendarEvent,
+  supabaseDeleteCalendarEvent, supabaseUpdateCalendarEvent,
   supabaseLoadFeatureFlags,
   callGeminiAPI,
   callGeminiAPIWithRetry,
@@ -2134,8 +2134,51 @@ function renderHome() {
   setText('homeSubtitle', ''); // Course name is already in the top bar
 
   renderStartHere(course);
-  
+
   const isStaffOnHome = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+
+  // Check if course is empty (no user-added content) and show import options for faculty
+  if (isStaffOnHome) {
+    const hasFiles = appData.files.some(f => f.courseId === activeCourseId);
+    const hasAnnouncements = appData.announcements.some(a => a.courseId === activeCourseId);
+    const hasAssignments = appData.assignments.some(a => a.courseId === activeCourseId);
+    if (!hasFiles && !hasAnnouncements && !hasAssignments) {
+      setHTML('homeUpcoming', '');
+      setHTML('homeUpdates', '');
+      // Hide upcoming and announcements cards
+      const upcomingCard = document.getElementById('homeUpcoming')?.closest('.card');
+      const updatesCard = document.getElementById('homeUpdates')?.closest('.card');
+      if (upcomingCard) upcomingCard.style.display = 'none';
+      if (updatesCard) updatesCard.style.display = 'none';
+      // Show import prompt
+      const startHereEl = document.getElementById('homeStartHere');
+      if (startHereEl) {
+        startHereEl.insertAdjacentHTML('beforeend', `
+          <div class="card" style="margin-top:16px;">
+            <div class="card-header">
+              <div class="card-title">Get Started</div>
+            </div>
+            <div style="padding:20px;">
+              <p style="margin-bottom:16px; color:var(--text-secondary);">This course doesn't have any content yet. You can get a head start by importing from a syllabus or copying from another course.</p>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+                <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
+                  <div style="font-weight:600; margin-bottom:8px;">Import from Syllabus</div>
+                  <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Upload a PDF or document. The AI will create modules, assignments, quizzes, and a schedule automatically from your syllabus.</p>
+                  <button class="btn btn-primary" onclick="openSyllabusParserModal()">Upload Syllabus</button>
+                </div>
+                <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
+                  <div style="font-weight:600; margin-bottom:8px;">Import from Another Course</div>
+                  <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Copy modules, assignments, files, announcements, and question banks from one of your existing courses.</p>
+                  <button class="btn btn-primary" onclick="openImportCourseModal()">Choose Course</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        `);
+      }
+      return;
+    }
+  }
 
   // Upcoming items: assignments, quizzes, and calendar events.
   // Hidden assignments are never shown here regardless of staff/student view.
@@ -2967,7 +3010,7 @@ function renderCalendar() {
 
   const calendarEventItems = (appData.calendarEvents || [])
     .filter(ev => ev.courseId === activeCourseId)
-    .map(ev => ({ type: ev.eventType || 'Event', title: ev.title, dueDate: ev.eventDate, status: 'event', id: ev.id, isEvent: true }));
+    .map(ev => ({ type: ev.eventType || 'Event', title: ev.title, dueDate: ev.eventDate, status: 'event', id: ev.id, isEvent: true, description: ev.description || '' }));
 
   const items = [...assignmentItems, ...calendarEventItems];
   
@@ -2990,13 +3033,17 @@ function renderCalendar() {
       <div class="calendar-date">${new Date(dateKey).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</div>
       <div class="calendar-items">
         ${grouped[dateKey].map(item => `
-          <div class="calendar-item" style="display:flex; align-items:center; justify-content:space-between;">
-            <div>
+          <div class="calendar-item" style="display:flex; align-items:flex-start; justify-content:space-between;">
+            <div style="flex:1;">
               <div class="calendar-item-type">${escapeHtml(item.type)}</div>
               <div class="calendar-item-title">${escapeHtml(item.title)}</div>
+              ${item.description ? `<div class="muted" style="font-size:0.8rem; margin-top:2px;">${escapeHtml(item.description)}</div>` : ''}
               ${item.status === 'draft' ? '<span class="calendar-badge">Draft</span>' : ''}
             </div>
-            ${item.isEvent && effectiveStaff ? `<button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="deleteCalendarEvent('${item.id}')">×</button>` : ''}
+            ${item.isEvent && effectiveStaff ? `<div style="display:flex; gap:4px; flex-shrink:0; margin-left:8px;">
+              <button class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="openEditCalendarEventModal('${item.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="deleteCalendarEvent('${item.id}')">Delete</button>
+            </div>` : ''}
           </div>
         `).join('')}
       </div>
@@ -3087,6 +3134,79 @@ async function saveCalendarEvent() {
   document.getElementById('calEventModal')?.remove();
   renderCalendar();
   showToast(`Event "${title}" added.`, 'success');
+}
+
+function openEditCalendarEventModal(eventId) {
+  const ev = (appData.calendarEvents || []).find(e => e.id === eventId);
+  if (!ev) return;
+  document.getElementById('editCalEventModal')?.remove();
+  const evDate = ev.eventDate ? new Date(ev.eventDate) : null;
+  const dateVal = evDate ? evDate.toISOString().slice(0, 10) : '';
+  const timeVal = evDate ? `${String(evDate.getHours()).padStart(2,'0')}:${String(evDate.getMinutes()).padStart(2,'0')}` : '14:00';
+  const modal = document.createElement('div');
+  modal.id = 'editCalEventModal';
+  modal.className = 'modal-overlay';
+  modal.style.display = 'flex';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:440px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Edit Calendar Event</h3>
+        <button class="modal-close" onclick="document.getElementById('editCalEventModal').remove()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Title <span style="color:var(--danger)">*</span></label>
+          <input type="text" id="editCalEvtTitle" class="form-input" value="${escapeHtml(ev.title || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date <span style="color:var(--danger)">*</span></label>
+          <input type="date" id="editCalEvtDate" class="form-input" value="${dateVal}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Time</label>
+          <select id="editCalEvtTime" class="form-select">
+            ${generateTimeSelectOptions(timeVal)}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Event Type</label>
+          <select id="editCalEvtType" class="form-select">
+            ${['Class','Lecture','Office Hours','Exam','Event'].map(t => `<option value="${t}" ${ev.eventType === t ? 'selected' : ''}>${t === 'Lecture' ? 'Special Lecture' : t === 'Event' ? 'Other Event' : t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="editCalEvtDesc" class="form-textarea" rows="2">${escapeHtml(ev.description || '')}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('editCalEventModal').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveEditCalendarEvent('${eventId}')">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(() => document.getElementById('editCalEvtTitle')?.focus(), 80);
+}
+
+async function saveEditCalendarEvent(eventId) {
+  const ev = (appData.calendarEvents || []).find(e => e.id === eventId);
+  if (!ev) return;
+  const title = document.getElementById('editCalEvtTitle')?.value.trim();
+  const dateVal = document.getElementById('editCalEvtDate')?.value;
+  const timeVal = document.getElementById('editCalEvtTime')?.value || '14:00';
+  const eventType = document.getElementById('editCalEvtType')?.value || ev.eventType;
+  const description = document.getElementById('editCalEvtDesc')?.value.trim() || '';
+  if (!title) { showToast('Title is required', 'error'); return; }
+  if (!dateVal) { showToast('Date is required', 'error'); return; }
+  ev.title = title;
+  ev.eventDate = new Date(`${dateVal}T${timeVal}:00`).toISOString();
+  ev.eventType = eventType;
+  ev.description = description;
+  const result = await supabaseUpdateCalendarEvent(ev);
+  if (!result) { showToast('Failed to update event', 'error'); return; }
+  document.getElementById('editCalEventModal')?.remove();
+  renderCalendar();
+  showToast('Event updated', 'success');
 }
 
 async function deleteCalendarEvent(eventId) {
@@ -5734,7 +5854,6 @@ function renderModules() {
         <input type="text" class="form-input" id="modulesSearchInput" placeholder="Search modules..." value="${escapeHtml(modulesSearch)}" oninput="updateModulesSearch(this.value)" style="width:200px;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
         ${effectiveStaff ? `
           <button class="btn btn-primary" onclick="openModuleModal()">New Module</button>
-          <button class="btn btn-secondary" onclick="openSyllabusParserModal()">Import from Syllabus</button>
         ` : ''}
       </div>
     `);
@@ -9948,7 +10067,7 @@ function renderGroupsManagerModal() {
     : renderGroupSetsList();
 
   const html = `
-    <div class="modal-overlay" id="groupsManagerModal" style="display:flex;">
+    <div class="modal-overlay" id="groupsManagerModal" style="display:flex; z-index:1000;">
       <div class="modal" style="max-width:${activeGroupsModalSetId ? '950px' : '700px'}; width:95vw;">
         ${innerHtml}
       </div>
@@ -10039,7 +10158,7 @@ function renderGroupDetailView(gsId) {
       <div class="group-column" style="min-width:200px; max-width:240px; flex-shrink:0;">
         <div style="font-weight:600; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
           <span>${escapeHtml(g.name)} (${members.length})</span>
-          <button class="btn btn-danger btn-sm" style="padding:2px 6px; font-size:0.7rem;" onclick="deleteGroupFromDetail('${g.id}', '${gsId}')">x</button>
+          <button class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="event.stopPropagation(); deleteGroupFromDetail('${g.id}', '${gsId}')">Delete</button>
         </div>
         <div class="group-dropzone" data-group-id="${g.id}" style="min-height:60px; background:var(--bg-secondary); border-radius:8px; padding:6px; border:2px dashed transparent; transition:border-color 0.15s;">
           ${members.map(m => {
@@ -11445,6 +11564,7 @@ window.navigateAndClose = navigateAndClose;
 window.openModal = openModal;
 window.closeModal = closeModal;
 window.openImportContentModal = openImportContentModal;
+window.openImportCourseModal = function() { openImportContentModal(activeCourseId); };
 window.executeImportContent = executeImportContent;
 window.openLinkedFile = openLinkedFile;
 
@@ -11589,6 +11709,8 @@ window.exportCalendarICS = exportCalendarICS;
 window.openCreateCalendarEventModal = openCreateCalendarEventModal;
 window.saveCalendarEvent = saveCalendarEvent;
 window.deleteCalendarEvent = deleteCalendarEvent;
+window.openEditCalendarEventModal = openEditCalendarEventModal;
+window.saveEditCalendarEvent = saveEditCalendarEvent;
 
 // Editor toolbar and insert
 window.insertLink = insertLink;

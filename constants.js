@@ -274,7 +274,8 @@ export const AI_TOOL_REGISTRY = {
     { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } },
     { name: 'get_group_set',            description: 'Full group set details including groups and their members', params: { group_set_id: 'string' } },
     { name: 'list_conversations',       description: 'All inbox conversations for this course. Returns conversationId, subject, participants, messageCount, and lastMessage. Available to both students and instructors.' },
-    { name: 'get_start_here',            description: 'Read the Start Here / Welcome message for this course (title and content)' }
+    { name: 'get_start_here',            description: 'Read the Start Here / Welcome message for this course (title and content)' },
+    { name: 'list_calendar_events',     description: 'All custom calendar events in this course (id, title, eventDate, eventType, description). Does not include assignment/quiz due dates.' }
   ],
 
   // Action types: AI emits one of these → system renders a Take Action Card →
@@ -318,6 +319,8 @@ export const AI_TOOL_REGISTRY = {
     { name: 'set_course_visibility',   description: 'Show or hide the entire course from students',          fields: 'visible (boolean)' },
     // Calendar
     { name: 'create_calendar_event',   description: 'Add a non-assignment calendar entry (class, lecture, office hours, etc.)', fields: 'title, eventDate (ISO 8601), eventType (Class|Lecture|Office Hours|Exam|Event), description' },
+    { name: 'update_calendar_event',   description: 'Edit an existing calendar event',                          fields: 'id* (calendar event id), title, eventDate (ISO 8601), eventType, description' },
+    { name: 'delete_calendar_event',   description: 'Delete a calendar event', dangerous: true,                  fields: 'id* (calendar event id), title' },
     // Groups
     { name: 'create_group_set',        description: 'Create a new group set with N groups. Students can be auto-assigned afterwards.', fields: 'name*, description, groupCount (number of groups to create, default 4)' },
     { name: 'delete_group_set',        description: 'Permanently delete a group set and all its groups', dangerous: true, fields: 'id* (from list_group_sets), name' },
