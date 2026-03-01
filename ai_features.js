@@ -302,6 +302,14 @@ function resolveOperationReferences(operation) {
       .map(f => f.id);
   }
 
+  if (op.groupSetId && Array.isArray(appData.groupSets)) {
+    const gs = appData.groupSets.find(g => g.id === op.groupSetId && g.courseId === activeCourseId);
+    if (!gs) {
+      const byName = appData.groupSets.find(g => g.courseId === activeCourseId && g.name?.toLowerCase() === String(op.groupSetId).toLowerCase());
+      if (byName) op.groupSetId = byName.id;
+    }
+  }
+
   return op;
 }
 
