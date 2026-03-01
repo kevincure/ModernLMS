@@ -243,7 +243,11 @@ function normalizeAiOperationAction(action) {
     update_discussion_thread: 'discussion_thread_update',
     delete_discussion_thread: 'discussion_thread_delete',
     pin_discussion_thread: 'discussion_thread_pin',
-    reply_discussion_thread: 'discussion_thread_reply'
+    reply_discussion_thread: 'discussion_thread_reply',
+    create_group_set: 'group_set_create',
+    delete_group_set: 'group_set_delete',
+    auto_assign_groups: 'group_auto_assign',
+    remove_person: 'person_remove'
   };
   return map[action] || action;
 }
