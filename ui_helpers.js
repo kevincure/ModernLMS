@@ -394,7 +394,7 @@ export function closeModal(id) {
 // Confirmation dialog helper
 let confirmCallback = null;
 
-export function confirm(message, onConfirm) {
+export function confirm(message, onConfirm, onCancel) {
   const modal = document.getElementById('confirmModal');
   const msgEl = document.getElementById('confirmMessage');
   const btnEl = document.getElementById('confirmButton');
@@ -406,6 +406,16 @@ export function confirm(message, onConfirm) {
       if (onConfirm) onConfirm();
     };
   }
+
+  // Wire up cancel callback for Cancel button and close × button
+  const cancelBtns = modal ? modal.querySelectorAll('.btn-secondary, .modal-close') : [];
+  cancelBtns.forEach(btn => {
+    const orig = btn.onclick;
+    btn.onclick = (e) => {
+      closeModal('confirmModal');
+      if (onCancel) onCancel();
+    };
+  });
 
   // Elevate above any other open modal (all share z-index:999 by default)
   if (modal) modal.style.zIndex = '1500';

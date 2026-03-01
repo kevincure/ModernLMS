@@ -10385,14 +10385,21 @@ async function removeStudentFromGroupDetail(groupId, userId, gsId) {
 }
 
 async function deleteGroupFromDetail(gId, gsId) {
-  if (!window.confirm('Delete this group? Members will become unassigned.')) return;
-  const ok = await supabaseDeleteCourseGroup(gId);
-  if (!ok) return;
-  appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
-  const gs = (appData.groupSets || []).find(s => s.id === gsId);
-  if (gs && gs.groups) gs.groups = gs.groups.filter(g => g.id !== gId);
-  renderGroupsManagerModal();
-  showToast('Group deleted', 'success');
+  // Close groups modal so the confirm dialog is visible above it
+  const groupsModal = document.getElementById('groupsManagerModal');
+  if (groupsModal) groupsModal.style.display = 'none';
+  showConfirmDialog('Delete this group? Members will become unassigned.', async () => {
+    const ok = await supabaseDeleteCourseGroup(gId);
+    if (!ok) { if (groupsModal) groupsModal.style.display = 'flex'; return; }
+    appData.courseGroups = (appData.courseGroups || []).filter(g => g.id !== gId);
+    const gs = (appData.groupSets || []).find(s => s.id === gsId);
+    if (gs && gs.groups) gs.groups = gs.groups.filter(g => g.id !== gId);
+    renderGroupsManagerModal();
+    showToast('Group deleted', 'success');
+  }, () => {
+    // On cancel: reopen groups modal
+    if (groupsModal) groupsModal.style.display = 'flex';
+  });
 }
 
 async function addGroupFromDetail(gsId) {
@@ -10444,14 +10451,19 @@ async function autoAssignFromDetail(gsId) {
 }
 
 async function deleteGroupSetFromModal(gsId) {
-  if (!window.confirm('Delete this entire group set and all its groups?')) return;
-  const ok = await supabaseDeleteGroupSet(gsId);
-  if (!ok) return;
-  appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
-  appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
-  activeGroupsModalSetId = null;
-  renderGroupsManagerModal();
-  showToast('Group set deleted', 'success');
+  const groupsModal = document.getElementById('groupsManagerModal');
+  if (groupsModal) groupsModal.style.display = 'none';
+  showConfirmDialog('Delete this entire group set and all its groups?', async () => {
+    const ok = await supabaseDeleteGroupSet(gsId);
+    if (!ok) { if (groupsModal) groupsModal.style.display = 'flex'; return; }
+    appData.courseGroups = (appData.courseGroups || []).filter(g => g.groupSetId !== gsId);
+    appData.groupSets = (appData.groupSets || []).filter(gs => gs.id !== gsId);
+    activeGroupsModalSetId = null;
+    renderGroupsManagerModal();
+    showToast('Group set deleted', 'success');
+  }, () => {
+    if (groupsModal) groupsModal.style.display = 'flex';
+  });
 }
 
 function openCreateGroupSetModal() {
