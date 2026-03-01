@@ -197,13 +197,13 @@ student1@university.edu, student2@university.edu" rows="3"></textarea>
             <div class="muted" id="quizTakeMeta"></div>
           </div>
           <div class="quiz-timer" id="quizTimer">No time limit</div>
-          <button class="modal-close" aria-label="Close dialog" onclick="closeModal('quizTakeModal')">&times;</button>
+          <button class="modal-close" aria-label="Close dialog" onclick="window.cancelQuizTaking()">&times;</button>
         </div>
         <div class="modal-body">
           <div id="quizTakeQuestions" class="quiz-take-list"></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('quizTakeModal')">Cancel</button>
+          <button class="btn btn-secondary" onclick="window.cancelQuizTaking()">Cancel</button>
           <button class="btn btn-primary" onclick="submitQuiz()">Submit Quiz</button>
         </div>
       </div>
@@ -828,7 +828,7 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
               <div class="form-group" style="margin-bottom:0;">
                 <label class="form-label" for="questionBankDefaultPoints">Default Points Per Question</label>
-                <input type="number" class="form-input" id="questionBankDefaultPoints" value="1" min="0.5" step="0.5" placeholder="1">
+                <input type="number" class="form-input" id="questionBankDefaultPoints" value="1" min="1" step="1" placeholder="1">
                 <div class="hint">Auto-fills new questions to save time</div>
               </div>
               <div class="form-group" style="margin-bottom:0; padding-top:28px;">

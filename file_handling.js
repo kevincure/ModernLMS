@@ -429,14 +429,14 @@ export function openSyllabusParserModal() {
 
 export async function parseSyllabus() {
   const fileInput = document.getElementById('syllabusFile');
-  const textInput = document.getElementById('syllabusText').value.trim();
+  const textInput = (document.getElementById('syllabusText')?.value || '').trim();
 
   const systemPrompt = AI_PROMPTS.parseSyllabus;
 
   let contents;
 
   // If file uploaded, send as base64 inline data to Gemini
-  if (fileInput.files.length > 0) {
+  if (fileInput && fileInput.files && fileInput.files.length > 0) {
     const file = fileInput.files[0];
     try {
       const base64Data = await fileToBase64(file);
