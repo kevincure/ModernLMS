@@ -349,6 +349,14 @@ function resolvePipelineStepRefs(step, results, allSteps) {
         return match;
       });
     }
+    // Also match $steps[N].field (no braces) — Gemini sometimes uses this format
+    replaced = replaced.replace(/\$steps\[(\d+)\]\.(\w+)/g, (match, idxStr, field) => {
+      const rIdx = parseInt(idxStr, 10);
+      if (rIdx < results.length && results[rIdx] && results[rIdx][field] !== undefined) {
+        return results[rIdx][field];
+      }
+      return match;
+    });
     resolved[key] = replaced;
   }
   return resolved;

@@ -155,6 +155,7 @@ import {
   viewQuizSubmissions,
   saveQuizGrade,
   viewQuizSubmission,
+  renderQuizTakeModal,
   setActiveCourseForQuiz as setQuizActiveCourseId
 } from './quiz_logic.js';
 
@@ -4832,6 +4833,19 @@ async function saveNewAssignment() {
     const result = await supabaseUpdateAssignment(assignment);
     if (!result) { Object.assign(assignment, original); return; }
     await persistExtraCreditFlag(currentNewAssignmentEditId, fields.isExtraCredit);
+
+    // Notify students when an assignment is made visible (status changed to published)
+    if (fields.status === 'published' && original.status !== 'published') {
+      supabaseNotifyCourseStudents(
+        activeCourseId,
+        'assignment_due',
+        'New assignment: ' + fields.title,
+        (fields.description || '').slice(0, 100),
+        'assignments',
+        currentNewAssignmentEditId
+      );
+    }
+
     closeModal('newAssignmentModal');
     clearUnsaved();
     resetNewAssignmentModal();
