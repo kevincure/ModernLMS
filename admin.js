@@ -968,7 +968,7 @@ function removeMember(membershipId, email) {
 
 // ─── CRUD: Create Course ──────────────────────────────────────────────────────
 
-function openCreateCourseModal() {
+async function openCreateCourseModal() {
   document.getElementById('courseNameInput').value  = '';
   document.getElementById('courseCodeInput').value  = '';
   document.getElementById('courseDescInput').value  = '';
@@ -984,6 +984,11 @@ function openCreateCourseModal() {
     opt.textContent = m.profile.email + (m.profile.name ? ` (${m.profile.name})` : '');
     select.appendChild(opt);
   });
+
+  // Ensure departments are loaded before populating dropdown
+  if (admin.departments.length === 0) {
+    await loadDepartments();
+  }
 
   // Populate course group (department) dropdown
   const deptSelect = document.getElementById('courseDeptSelect');

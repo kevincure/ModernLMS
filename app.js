@@ -404,6 +404,13 @@ function closeMenu() {
     const menu = document.getElementById(_openMenuId);
     if (menu) {
       menu.classList.remove('menu-open');
+      // Clean up inline styles added by toggleMenu
+      menu.style.minWidth = '';
+      menu.style.flexWrap = '';
+      menu.style.flexDirection = '';
+      menu.style.maxHeight = '';
+      menu.style.overflowY = '';
+      menu.querySelectorAll('.btn').forEach(btn => { btn.style.flex = ''; });
       // Restore menu to its original DOM position to avoid orphaned body-level elements
       if (_menuOriginalParent) {
         if (document.contains(_menuOriginalParent)) {
@@ -459,12 +466,37 @@ function toggleMenu(event, menuId) {
   menu.style.bottom = 'auto';
   menu.classList.add('menu-open');
 
-  // Vertical: prefer below button; only flip above if truly no room below
+  // If menu has many items, use two columns to reduce height
+  const menuItems = menu.querySelectorAll('.btn');
+  if (menuItems.length > 8) {
+    menu.style.minWidth = '340px';
+    menu.style.flexWrap = 'wrap';
+    menu.style.flexDirection = 'row';
+    menuItems.forEach(btn => { btn.style.flex = '0 0 calc(50% - 2px)'; });
+  }
+
+  // Re-measure after possible layout change
   const menuHeight = menu.offsetHeight || 200;
   const spaceBelow = window.innerHeight - rect.bottom;
   const spaceAbove = rect.top;
+
+  // Recalculate horizontal position with potentially wider menu
+  const actualMenuWidth = menu.offsetWidth || menuWidth;
+  left = rect.left;
+  if (left + actualMenuWidth > window.innerWidth - 8) {
+    left = rect.right - actualMenuWidth;
+  }
+  menu.style.left = `${Math.max(8, left)}px`;
+
+  // Cap menu height and add scrolling if it still doesn't fit
+  const maxAvailableHeight = Math.max(spaceBelow, spaceAbove) - 16;
+  if (menuHeight > maxAvailableHeight) {
+    menu.style.maxHeight = `${maxAvailableHeight}px`;
+    menu.style.overflowY = 'auto';
+  }
+
   if (spaceBelow >= menuHeight + 8 || spaceBelow >= spaceAbove) {
-    // Place below — scroll if needed, but keep it downward
+    // Place below
     menu.style.bottom = 'auto';
     menu.style.top = `${rect.bottom + 4}px`;
   } else {
@@ -1525,21 +1557,20 @@ function renderCourses() {
     const roleLabel = roleLabels[c.role] || c.role;
     const isActiveCourse = c.id === activeCourseId;
     return `
-      <div class="card" style="${isActiveCourse ? 'border:1.5px solid var(--primary);' : ''}${dimmed ? 'opacity:0.65;' : ''}">
+      <div class="card" style="cursor:pointer;${isActiveCourse ? 'border:1.5px solid var(--primary);' : ''}${dimmed ? 'opacity:0.65;' : ''}" onclick="switchCourse('${c.id}')">
         <div class="card-header">
           <div>
             <div class="card-title">
-              ${isActiveCourse
-                ? escapeHtml(c.name)
-                : `<span style="cursor:pointer; color:var(--primary);" onclick="switchCourse('${c.id}')" title="Switch to this course">${escapeHtml(c.name)}</span>`}
+              ${escapeHtml(c.name)}
+              ${isActiveCourse ? ' <span style="font-size:0.7rem; font-weight:600; background:var(--primary-light); color:var(--primary); padding:2px 7px; border-radius:10px; vertical-align:middle;">ACTIVE</span>' : ''}
               ${dimmed ? ' <span style="font-size:0.7rem; font-weight:600; background:var(--border-color); color:var(--text-muted); padding:2px 7px; border-radius:10px; vertical-align:middle;">INACTIVE</span>' : ''}
             </div>
             <div class="muted">${escapeHtml(c.code)} · ${roleLabel}</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             ${c.role === 'instructor' ? `
-              <button class="btn btn-secondary btn-sm" onclick="openImportContentModal('${c.id}')">Import Content</button>
-              <button class="btn btn-secondary btn-sm" onclick="openEditCourseModal('${c.id}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openImportContentModal('${c.id}')">Import Content</button>
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openEditCourseModal('${c.id}')">Edit</button>
             ` : ''}
           </div>
         </div>
@@ -3499,7 +3530,6 @@ function renderQuestionBankQuestions() {
         <div style="font-size:0.9rem; margin-bottom:${preview ? '4px' : '0'};">${escapeHtml((q.prompt || '').substring(0, 120))}${(q.prompt || '').length > 120 ? '…' : ''}</div>
         ${preview ? `<div style="font-size:0.8rem; color:var(--text-secondary);">${preview}</div>` : ''}
         ${q.hint ? `<div style="font-size:0.8rem; color:var(--success); margin-top:2px;">Has hint</div>` : ''}
-        ${(q.curriculumAlignment || []).length > 0 ? `<div style="font-size:0.8rem; color:var(--text-secondary);">Aligned: ${q.curriculumAlignment.join(', ')}</div>` : ''}
       </div>
     `;
   });
@@ -3508,7 +3538,7 @@ function renderQuestionBankQuestions() {
 }
 
 function addQuestionToBankForm() {
-  const defaultPts = parseFloat(document.getElementById('questionBankDefaultPoints')?.value) || 1;
+  const defaultPts = parseInt(document.getElementById('questionBankDefaultPoints')?.value) || 1;
   const newQuestion = {
     id: generateId(),
     type: 'mc_single',
@@ -3522,8 +3552,6 @@ function addQuestionToBankForm() {
     feedbackCorrect: '',
     feedbackIncorrect: '',
     hint: '',
-    altTextRequired: false,
-    curriculumAlignment: [],
     shuffleOptions: false,
     partialCredit: 'all_or_nothing',
     caseSensitive: false,
@@ -3728,7 +3756,7 @@ function openQuestionEditor(index) {
         </div>
         <div class="form-group">
           <label class="form-label">Points *</label>
-          <input type="number" class="form-input" id="questionPoints" value="${parseFloat(q.points) || 1}" min="0" step="0.5">
+          <input type="number" class="form-input" id="questionPoints" value="${parseInt(q.points) || 1}" min="1" step="1">
         </div>
       </div>
 
@@ -3768,26 +3796,6 @@ function openQuestionEditor(index) {
           <div class="form-group" style="margin-top:12px; margin-bottom:0;">
             <label class="form-label" style="font-size:0.85rem;">Hint <span class="muted">(student can reveal before answering)</span></label>
             <textarea class="form-textarea" id="qHint" rows="2">${escapeHtml(q.hint || '')}</textarea>
-          </div>
-        </div>
-      </details>
-
-      <!-- ── Accessibility & Metadata (QTI 3.0) ── -->
-      <details style="margin-top:10px;">
-        <summary style="cursor:pointer; font-weight:600; font-size:0.9rem; margin-bottom:8px;">Accessibility & Curriculum Alignment</summary>
-        <div style="padding:12px 0 0;">
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="qAltTextRequired" ${q.altTextRequired ? 'checked' : ''}>
-              <span style="font-size:0.9rem;">Require Alt-Text on any inserted image</span>
-            </label>
-          </div>
-          <div class="form-group" style="margin-bottom:0;">
-            <label class="form-label" style="font-size:0.85rem;">Curriculum Alignment (CASE GUIDs / State Standards)</label>
-            <input type="text" class="form-input" id="qCurriculumAlignment"
-              value="${escapeHtml((q.curriculumAlignment || []).join(', '))}"
-              placeholder="e.g. CCSS.MATH.6.RP.A.1, TX-TEKS.Math.6.4A">
-            <div class="hint">Comma-separated standard identifiers</div>
           </div>
         </div>
       </details>
@@ -4058,16 +4066,13 @@ function saveQuestionEdit() {
   q.type = type;
   q.prompt = document.getElementById('questionPrompt').value.trim();
   q.title = document.getElementById('questionTitle').value.trim();
-  q.points = parseFloat(document.getElementById('questionPoints').value) || 1;
+  q.points = parseInt(document.getElementById('questionPoints').value) || 1;
 
   // Universal feedback & accessibility
   q.feedbackGeneral = document.getElementById('qFeedbackGeneral')?.value.trim() || '';
   q.feedbackCorrect = document.getElementById('qFeedbackCorrect')?.value.trim() || '';
   q.feedbackIncorrect = document.getElementById('qFeedbackIncorrect')?.value.trim() || '';
   q.hint = document.getElementById('qHint')?.value.trim() || '';
-  q.altTextRequired = document.getElementById('qAltTextRequired')?.checked || false;
-  const alignRaw = document.getElementById('qCurriculumAlignment')?.value.trim() || '';
-  q.curriculumAlignment = alignRaw ? alignRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
   q.timDependent = document.getElementById('qTimeDependent')?.checked || false;
   q.timeLimit = q.timDependent ? (parseInt(document.getElementById('qTimeLimit')?.value) || null) : null;
 
@@ -4154,9 +4159,14 @@ function saveQuestionEdit() {
 }
 
 async function saveQuestionBank() {
+  // Flush any in-progress question editor before saving the bank
+  if (currentEditQuestionIndex !== null) {
+    saveQuestionEdit();
+  }
+
   const name = document.getElementById('questionBankName').value.trim();
   const description = document.getElementById('questionBankDescription').value.trim();
-  const defaultPts = parseFloat(document.getElementById('questionBankDefaultPoints')?.value) || 1;
+  const defaultPts = parseInt(document.getElementById('questionBankDefaultPoints')?.value) || 1;
   const randomize = document.getElementById('questionBankRandomize')?.checked || false;
 
   if (!name) {
@@ -4840,6 +4850,19 @@ async function saveNewAssignment() {
     if (result) {
       appData.assignments.push(newAssignment);
       await persistExtraCreditFlag(newAssignment.id, fields.isExtraCredit);
+
+      // Notify students when a new assignment is published
+      if (fields.status === 'published') {
+        supabaseNotifyCourseStudents(
+          activeCourseId,
+          'assignment_due',
+          'New assignment: ' + title,
+          (description || '').slice(0, 100),
+          'assignments',
+          newAssignment.id
+        );
+      }
+
       closeModal('newAssignmentModal');
       clearUnsaved();
       resetNewAssignmentModal();
@@ -5494,6 +5517,7 @@ function downloadAllSubmissions(assignmentId) {
   showToast('ZIP download would be implemented with JSZip library', 'info');
   // In production: use JSZip to create ZIP of all submissions
 }
+window.downloadAllSubmissions = downloadAllSubmissions;
 
 function gradeSubmission(submissionId, assignmentId) {
   const submission = appData.submissions.find(s => s.id === submissionId);
@@ -5682,6 +5706,21 @@ async function saveGrade(submissionId) {
     }
   }
 
+  // Notify student when grade is released
+  if (released && submission) {
+    const assignment = appData.assignments.find(a => a.id === submission.assignmentId);
+    if (assignment) {
+      supabaseCreateNotification({
+        userId: submission.userId,
+        courseId: assignment.courseId,
+        type: 'grade_released',
+        title: 'Grade posted for ' + assignment.title,
+        body: `You received ${score} points.`,
+        link: 'gradebook'
+      });
+    }
+  }
+
   closeModal('gradeModal');
   closeModal('submissionsModal');
   renderGradebook();
@@ -5818,96 +5857,7 @@ function updateQuizPointsTotal() {
 
 
 
-function renderQuizTakeModal(quiz) {
-  const container = document.getElementById('quizTakeQuestions');
-  if (!container) return;
-  
-  let questions = JSON.parse(JSON.stringify(quiz.questions || []));
-  if (quiz.questionPoolEnabled && quiz.questionSelectCount && quiz.questionSelectCount < questions.length) {
-    questions = shuffleArray(questions).slice(0, quiz.questionSelectCount);
-  }
-  
-  if (quiz.randomizeQuestions) {
-    questions = shuffleArray(questions);
-  }
-  
-  container.dataset.questions = JSON.stringify(questions);
-  container.innerHTML = questions.map((q, index) => {
-    if (q.type === 'multiple_choice') {
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${q.prompt}</div>
-          ${q.options.map((opt, optIndex) => `
-            <label class="quiz-answer-option">
-              <input type="radio" name="quizQuestion${index}" value="${optIndex}">
-              <span>${opt}</span>
-            </label>
-          `).join('')}
-        </div>
-      `;
-    }
-    
-    if (q.type === 'true_false') {
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${q.prompt}</div>
-          ${['True', 'False'].map(option => `
-            <label class="quiz-answer-option">
-              <input type="radio" name="quizQuestion${index}" value="${option}">
-              <span>${option}</span>
-            </label>
-          `).join('')}
-        </div>
-      `;
-    }
-    
-    return `
-      <div class="quiz-question-block">
-        <div class="quiz-question-title">${index + 1}. ${q.prompt}</div>
-        <textarea class="form-textarea" rows="3" id="quizAnswer${index}" placeholder="Your answer..."></textarea>
-      </div>
-    `;
-  }).join('');
-  
-  const points = getQuizPoints({ questions });
-  setText('quizTakeTitle', quiz.title);
-  setText('quizTakeMeta', `${points} points · ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'No time limit'}`);
-  
-  startQuizTimer(quiz.timeLimit);
-}
-
-function startQuizTimer(timeLimit) {
-  const timerEl = document.getElementById('quizTimer');
-  if (quizTimerInterval) {
-    clearInterval(quizTimerInterval);
-    quizTimerInterval = null;
-  }
-  
-  if (!timeLimit) {
-    if (timerEl) timerEl.textContent = 'No time limit';
-    return;
-  }
-  
-  quizTimeRemaining = timeLimit * 60;
-  if (timerEl) timerEl.textContent = formatTimer(quizTimeRemaining);
-  
-  quizTimerInterval = setInterval(() => {
-    quizTimeRemaining -= 1;
-    if (timerEl) timerEl.textContent = formatTimer(quizTimeRemaining);
-    if (quizTimeRemaining <= 0) {
-      clearInterval(quizTimerInterval);
-      quizTimerInterval = null;
-      showToast('Time is up! Submitting quiz.', 'info');
-      submitQuiz();
-    }
-  }, 1000);
-}
-
-function formatTimer(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
+// renderQuizTakeModal, startQuizTimer, formatTimer are in quiz_logic.js
 
 function shuffleArray(list) {
   return list.slice().sort(() => Math.random() - 0.5);
@@ -7949,43 +7899,76 @@ function exportGradebook() {
   const assignments = appData.assignments
     .filter(a => isAssignmentVisibleInGradebook(a))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  
+
   const students = appData.enrollments
     .filter(e => e.courseId === activeCourseId && e.role === 'student')
     .map(e => getUserById(e.userId))
     .filter(u => u);
-  
-  let csv = 'Student,Email,' + assignments.map(a => a.title).join(',') + ',Total\n';
-  
+
+  // Build category/weight lookup
+  const courseCategories = (appData.gradeCategories || []).filter(c => c.courseId === activeCourseId && !c.name.startsWith('__'));
+  const categoryWeights = {};
+  courseCategories.forEach(c => {
+    categoryWeights[c.name] = Math.round(c.weight * 100);
+  });
+
+  // CSV helper to escape values containing commas or quotes
+  const csvEscape = (val) => {
+    const s = String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  };
+
+  // Header row: assignment title with points possible and weight
+  const headerCols = assignments.map(a => {
+    const cat = a.category || 'uncategorized';
+    const weight = categoryWeights[cat];
+    let header = `${a.title} (${a.points} pts)`;
+    if (weight !== undefined) {
+      header += ` [${weight}%]`;
+    }
+    return csvEscape(header);
+  });
+
+  let csv = 'Student,Email,' + headerCols.join(',') + ',Total Points,Total Possible,Final %\n';
+
   students.forEach(student => {
     let totalScore = 0;
     let totalPoints = 0;
-    let row = `${student.name},${student.email},`;
-    
+    let row = csvEscape(student.name) + ',' + csvEscape(student.email) + ',';
+
     assignments.forEach(a => {
       const submission = appData.submissions.find(s => s.assignmentId === a.id && s.userId === student.id);
       const grade = submission ? appData.grades.find(g => g.submissionId === submission.id) : null;
-      
+
       if (grade) {
         totalScore += grade.score;
-        totalPoints += a.points;
-        row += `${grade.score}/${a.points},`;
+        row += grade.score + ',';
       } else {
         row += ',';
       }
+      totalPoints += a.points;
     });
-    
-    row += `${totalScore}/${totalPoints}\n`;
+
+    const pct = totalPoints > 0 ? ((totalScore / totalPoints) * 100).toFixed(1) : '0.0';
+
+    // Use weighted grade if available
+    const weightedGrade = calculateWeightedGrade(student.id, activeCourseId);
+    const finalPct = weightedGrade !== null ? weightedGrade.toFixed(1) : pct;
+
+    row += `${totalScore},${totalPoints},${finalPct}%\n`;
     csv += row;
   });
-  
+
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = 'gradebook.csv';
   a.click();
-  
+
   showToast('Gradebook exported!', 'success');
 }
 
@@ -9512,22 +9495,7 @@ async function saveCategoryWeights() {
 
   const existingCategories = appData.gradeCategories.filter(c => c.courseId === activeCourseId);
 
-  // 1) Persist new weights first
-  const persistedWeights = [];
-  for (const weight of weights) {
-    const created = await supabaseCreateGradeCategory(weight);
-    if (!created) {
-      // Best-effort cleanup of newly-created rows in this attempt
-      for (const createdWeight of persistedWeights) {
-        if (createdWeight.id) await supabaseDeleteGradeCategory(createdWeight.id);
-      }
-      showToast('Failed to save assignment weights', 'error');
-      return;
-    }
-    persistedWeights.push({ ...weight, id: created.id || weight.id });
-  }
-
-  // 2) Remove prior persisted rows
+  // 1) Remove prior persisted rows first to avoid unique constraint violations
   for (const cat of existingCategories) {
     if (!cat.id) continue;
     const deleted = await supabaseDeleteGradeCategory(cat.id);
@@ -9535,6 +9503,17 @@ async function saveCategoryWeights() {
       showToast('Failed to replace old assignment weights', 'error');
       return;
     }
+  }
+
+  // 2) Persist new weights
+  const persistedWeights = [];
+  for (const weight of weights) {
+    const created = await supabaseCreateGradeCategory(weight);
+    if (!created) {
+      showToast('Failed to save assignment weights', 'error');
+      return;
+    }
+    persistedWeights.push({ ...weight, id: created.id || weight.id });
   }
 
   // 3) Mutate local only after all persistence succeeded
@@ -9905,19 +9884,23 @@ function viewSubmissionHistory(assignmentId, userId) {
   const submissions = appData.submissions
     .filter(s => s.assignmentId === assignmentId && s.userId === userId)
     .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
-  
+
   const assignment = appData.assignments.find(a => a.id === assignmentId);
   const student = getUserById(userId);
-  
+
+  // Remove existing modal if any
+  const existing = document.getElementById('submissionHistoryModal');
+  if (existing) existing.remove();
+
   const html = `
-    <div class="modal-overlay visible" id="submissionHistoryModal">
+    <div class="modal-overlay" id="submissionHistoryModal">
       <div class="modal" style="max-width:700px;">
         <div class="modal-header">
-          <h2 class="modal-title">Submission History: ${student.name}</h2>
-          <button class="modal-close" onclick="closeModal('submissionHistoryModal')">&times;</button>
+          <h2 class="modal-title">Submission History: ${escapeHtml(student.name)}</h2>
+          <button class="modal-close" onclick="closeSubmissionHistoryModal()">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="muted" style="margin-bottom:16px;">Assignment: ${assignment.title}</div>
+          <div class="muted" style="margin-bottom:16px;">Assignment: ${escapeHtml(assignment.title)}</div>
           ${submissions.length === 0 ? '<div class="empty-state-text">No submissions yet</div>' : submissions.map((s, idx) => {
             const grade = appData.grades.find(g => g.submissionId === s.id);
             return `
@@ -9929,22 +9912,29 @@ function viewSubmissionHistory(assignmentId, userId) {
                   </div>
                   ${grade ? `<span class="muted">${grade.score}/${assignment.points}</span>` : ''}
                 </div>
-                <div>${s.text || '<em class="muted">No text submission</em>'}</div>
+                <div>${escapeHtml(s.text || '') || '<em class="muted">No text submission</em>'}</div>
                 ${s.fileName ? `<div class="muted" style="margin-top:8px;">Attachment: ${escapeHtml(s.fileName)}</div>` : ''}
-                ${grade && grade.feedback ? `<div style="margin-top:12px; padding:12px; background:var(--bg-card); border-radius:var(--radius);"><strong>Feedback:</strong> ${grade.feedback}</div>` : ''}
+                ${grade && grade.feedback ? `<div style="margin-top:12px; padding:12px; background:var(--bg-card); border-radius:var(--radius);"><strong>Feedback:</strong> ${escapeHtml(grade.feedback)}</div>` : ''}
               </div>
             `;
           }).join('')}
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal('submissionHistoryModal')">Close</button>
+          <button class="btn btn-secondary" onclick="closeSubmissionHistoryModal()">Close</button>
         </div>
       </div>
     </div>
   `;
-  
-  document.getElementById('modalsContainer').innerHTML += html;
+
+  document.getElementById('modalsContainer').insertAdjacentHTML('beforeend', html);
+  openModal('submissionHistoryModal');
 }
+
+function closeSubmissionHistoryModal() {
+  const modal = document.getElementById('submissionHistoryModal');
+  if (modal) modal.remove();
+}
+window.closeSubmissionHistoryModal = closeSubmissionHistoryModal;
 
 function calculateLateDeduction(assignment, submittedAt) {
   if (!assignment.allowLateSubmissions) return 0;
@@ -10385,6 +10375,7 @@ async function removeStudentFromGroupDetail(groupId, userId, gsId) {
 }
 
 async function deleteGroupFromDetail(gId, gsId) {
+  ensureModalsRendered();
   // Close groups modal so the confirm dialog is visible above it
   const groupsModal = document.getElementById('groupsManagerModal');
   if (groupsModal) groupsModal.style.display = 'none';
@@ -10451,6 +10442,7 @@ async function autoAssignFromDetail(gsId) {
 }
 
 async function deleteGroupSetFromModal(gsId) {
+  ensureModalsRendered();
   const groupsModal = document.getElementById('groupsManagerModal');
   if (groupsModal) groupsModal.style.display = 'none';
   showConfirmDialog('Delete this entire group set and all its groups?', async () => {

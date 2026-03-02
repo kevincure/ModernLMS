@@ -326,19 +326,30 @@ function resolveOperationReferences(operation) {
  * "use the id from the result of step 0". This function replaces those
  * template strings with actual values from previous step results.
  */
-function resolvePipelineStepRefs(step, results) {
+function resolvePipelineStepRefs(step, results, allSteps) {
   const resolved = { ...step };
   for (const key of Object.keys(resolved)) {
     const val = resolved[key];
     if (typeof val !== 'string') continue;
     // Match patterns like ${result_0.id}, ${result_1.name}, etc.
-    resolved[key] = val.replace(/\$\{result_(\d+)\.(\w+)\}/g, (match, idxStr, field) => {
+    let replaced = val.replace(/\$\{result_(\d+)\.(\w+)\}/g, (match, idxStr, field) => {
       const rIdx = parseInt(idxStr, 10);
       if (rIdx < results.length && results[rIdx] && results[rIdx][field] !== undefined) {
         return results[rIdx][field];
       }
       return match; // leave unresolved if not available
     });
+    // Also match ${result.action_name.field} — AI sometimes references by action name
+    if (allSteps) {
+      replaced = replaced.replace(/\$\{result\.(\w+)\.(\w+)\}/g, (match, actionName, field) => {
+        const stepIdx = allSteps.findIndex(s => s.action === actionName);
+        if (stepIdx >= 0 && stepIdx < results.length && results[stepIdx] && results[stepIdx][field] !== undefined) {
+          return results[stepIdx][field];
+        }
+        return match;
+      });
+    }
+    resolved[key] = replaced;
   }
   return resolved;
 }
@@ -2283,9 +2294,10 @@ export async function confirmAiAction(idx, publish = false) {
 
   if (msg.actionType === 'pipeline') {
     const pipelineResults = []; // collect results from each step
-    for (const step of (msg.data.steps || [])) {
-      // Resolve ${result_N.field} template references from previous step results
-      const resolvedStep = resolvePipelineStepRefs(step, pipelineResults);
+    const allSteps = msg.data.steps || [];
+    for (const step of allSteps) {
+      // Resolve ${result_N.field} and ${result.action_name.field} template references
+      const resolvedStep = resolvePipelineStepRefs(step, pipelineResults, allSteps);
       const missing = getMissingPublishRequirements(resolvedStep, false);
       if (missing.length) {
         aiThread.push({ role: 'assistant', content: `Before I can publish this pipeline step (${resolvedStep.action || 'unknown'}), I still need: ${missing.join(', ')}.` });

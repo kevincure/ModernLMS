@@ -432,10 +432,22 @@ export function deleteQuiz(quizId) {
 // QUIZ TAKING
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Track current question index for question-by-question navigation
+let currentQuestionIndex = 0;
+let quizTakeQuestions = [];
+
+// Leave warning for in-progress quiz
+function quizBeforeUnloadHandler(e) {
+  e.preventDefault();
+  e.returnValue = 'You have a quiz in progress. Are you sure you want to leave?';
+  return e.returnValue;
+}
+
 /**
  * Start taking a quiz
  */
 export function takeQuiz(quizId) {
+  if (ensureModalsRenderedCallback) ensureModalsRenderedCallback();
   const quiz = appData.quizzes.find(q => q.id === quizId);
   if (!quiz) return;
 
@@ -457,12 +469,16 @@ export function takeQuiz(quizId) {
   }
 
   currentQuizTakingId = quizId;
+  currentQuestionIndex = 0;
   renderQuizTakeModal(quiz);
   openModal('quizTakeModal');
+
+  // Add leave warning
+  window.addEventListener('beforeunload', quizBeforeUnloadHandler);
 }
 
 /**
- * Render the quiz taking modal
+ * Render the quiz taking modal — question by question with arrow navigation
  */
 export function renderQuizTakeModal(quiz) {
   const container = document.getElementById('quizTakeQuestions');
@@ -477,139 +493,299 @@ export function renderQuizTakeModal(quiz) {
     questions = shuffleArray(questions);
   }
 
+  quizTakeQuestions = questions;
   container.dataset.questions = JSON.stringify(questions);
-  container.innerHTML = questions.map((q, index) => {
-    const type = q.type || 'mc_single';
-    const pts = parseFloat(q.points) || 1;
-    const hintHtml = q.hint ? `<div class="quiz-hint" style="margin-top:4px;"><button class="btn btn-secondary btn-sm" style="font-size:0.8rem;" onclick="this.nextElementSibling.style.display='block';this.style.display='none';">Show Hint</button><div style="display:none; margin-top:4px; padding:8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(q.hint)}</div></div>` : '';
-    const imageHtml = q.imageUrl ? `<div style="margin:8px 0;"><img src="${escapeHtml(q.imageUrl)}" style="max-width:100%; max-height:300px; border-radius:var(--radius);" alt="Question image"></div>` : '';
-
-    if (type === 'mc_single' || type === 'multiple_choice') {
-      let opts = q.options || [];
-      if (q.shuffleOptions) opts = [...opts].sort(() => Math.random() - 0.5);
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
-          ${imageHtml}
-          ${hintHtml}
-          ${opts.map((opt, optIndex) => `
-            <label class="quiz-answer-option">
-              <input type="radio" name="quizQuestion${index}" value="${optIndex}">
-              <span>${escapeHtml(typeof opt === 'object' ? opt.text || '' : opt)}</span>
-            </label>
-          `).join('')}
-        </div>
-      `;
-    }
-
-    if (type === 'mc_multi') {
-      let opts = q.options || [];
-      if (q.shuffleOptions) opts = [...opts].sort(() => Math.random() - 0.5);
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — select all that apply)</span></div>
-          ${imageHtml}
-          ${hintHtml}
-          ${opts.map((opt, optIndex) => `
-            <label class="quiz-answer-option">
-              <input type="checkbox" name="quizQuestion${index}" value="${optIndex}">
-              <span>${escapeHtml(typeof opt === 'object' ? opt.text || '' : opt)}</span>
-            </label>
-          `).join('')}
-        </div>
-      `;
-    }
-
-    if (type === 'true_false') {
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
-          ${imageHtml}
-          ${hintHtml}
-          ${['True', 'False'].map(option => `
-            <label class="quiz-answer-option">
-              <input type="radio" name="quizQuestion${index}" value="${option}">
-              <span>${option}</span>
-            </label>
-          `).join('')}
-        </div>
-      `;
-    }
-
-    if (type === 'short_answer') {
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
-          ${imageHtml}
-          ${hintHtml}
-          <input type="text" class="form-input" id="quizAnswer${index}" placeholder="Type your answer here...">
-        </div>
-      `;
-    }
-
-    if (type === 'matching') {
-      const pairs = Array.isArray(q.options) && typeof q.options[0] === 'object' ? q.options : [];
-      const targets = [...pairs.map(p => p.target)].sort(() => Math.random() - 0.5);
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
-          ${imageHtml}
-          ${hintHtml}
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
-            <div style="font-size:0.8rem; color:var(--text-secondary); padding-bottom:4px;">Source</div>
-            <div style="font-size:0.8rem; color:var(--text-secondary); padding-bottom:4px;">Match</div>
-            ${pairs.map((p, pi) => `
-              <div style="padding:6px 0;">${escapeHtml(p.source)}</div>
-              <select class="form-select" id="quizMatch${index}_${pi}" style="margin:2px 0;">
-                <option value="">-- Select --</option>
-                ${targets.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
-              </select>
-            `).join('')}
-          </div>
-        </div>
-      `;
-    }
-
-    if (type === 'ordering') {
-      const items = Array.isArray(q.options) ? [...q.options] : [];
-      const shuffled = [...items].sort(() => Math.random() - 0.5);
-      return `
-        <div class="quiz-question-block">
-          <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — drag to reorder or use dropdowns)</span></div>
-          ${hintHtml}
-          <div id="quizOrder${index}" style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
-            ${shuffled.map((item, si) => `
-              <div style="display:flex; gap:8px; align-items:center; padding:6px; background:var(--surface); border-radius:4px; border:1px solid var(--border);">
-                <span style="font-size:0.85rem; flex:1;">${escapeHtml(item)}</span>
-                <select class="form-select" id="quizOrdPos${index}_${si}" style="width:80px;">
-                  ${items.map((_, pi) => `<option value="${pi+1}" ${pi===si?'selected':''}>${pi+1}</option>`).join('')}
-                </select>
-              </div>
-            `).join('')}
-          </div>
-          <div class="hint" style="margin-top:4px;">Set the position number (1 = first) for each item</div>
-        </div>
-      `;
-    }
-
-    // Essay / Written (catch-all)
-    const rows = q.expectedLength || 4;
-    return `
-      <div class="quiz-question-block">
-        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — manual grading)</span></div>
-        ${hintHtml}
-        <textarea class="form-textarea" rows="${Math.min(rows, 20)}" id="quizAnswer${index}" placeholder="Your answer..."></textarea>
-      </div>
-    `;
-  }).join('');
 
   const points = getQuizPoints({ questions });
   setText('quizTakeTitle', quiz.title);
   const proctorLabel = quiz.proctorMode ? ' · Proctored' : '';
-  setText('quizTakeMeta', `${points} points · ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'No time limit'}${proctorLabel}`);
+  setText('quizTakeMeta', `${points} points · ${questions.length} question${questions.length !== 1 ? 's' : ''} · ${quiz.timeLimit ? quiz.timeLimit + ' min' : 'No time limit'}${proctorLabel}`);
+
+  renderCurrentQuestion();
 
   startQuizTimer(quiz.timeLimit);
   initProctorMode(quiz);
+}
+
+/**
+ * Render a single question HTML by index
+ */
+function buildQuestionHtml(q, index) {
+  const type = q.type || 'mc_single';
+  const pts = parseFloat(q.points) || 1;
+  const hintHtml = q.hint ? `<div class="quiz-hint" style="margin-top:4px;"><button class="btn btn-secondary btn-sm" style="font-size:0.8rem;" onclick="this.nextElementSibling.style.display='block';this.style.display='none';">Show Hint</button><div style="display:none; margin-top:4px; padding:8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(q.hint)}</div></div>` : '';
+  const imageHtml = q.imageUrl ? `<div style="margin:8px 0;"><img src="${escapeHtml(q.imageUrl)}" style="max-width:100%; max-height:300px; border-radius:var(--radius);" alt="Question image"></div>` : '';
+
+  if (type === 'mc_single' || type === 'multiple_choice') {
+    let opts = q.options || [];
+    if (q.shuffleOptions) opts = [...opts].sort(() => Math.random() - 0.5);
+    return `
+      <div class="quiz-question-block">
+        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+        ${imageHtml}
+        ${hintHtml}
+        ${opts.map((opt, optIndex) => `
+          <label class="quiz-answer-option">
+            <input type="radio" name="quizQuestion${index}" value="${optIndex}">
+            <span>${escapeHtml(typeof opt === 'object' ? opt.text || '' : opt)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  if (type === 'mc_multi') {
+    let opts = q.options || [];
+    if (q.shuffleOptions) opts = [...opts].sort(() => Math.random() - 0.5);
+    return `
+      <div class="quiz-question-block">
+        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — select all that apply)</span></div>
+        ${imageHtml}
+        ${hintHtml}
+        ${opts.map((opt, optIndex) => `
+          <label class="quiz-answer-option">
+            <input type="checkbox" name="quizQuestion${index}" value="${optIndex}">
+            <span>${escapeHtml(typeof opt === 'object' ? opt.text || '' : opt)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  if (type === 'true_false') {
+    return `
+      <div class="quiz-question-block">
+        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+        ${imageHtml}
+        ${hintHtml}
+        ${['True', 'False'].map(option => `
+          <label class="quiz-answer-option">
+            <input type="radio" name="quizQuestion${index}" value="${option}">
+            <span>${option}</span>
+          </label>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  if (type === 'short_answer') {
+    return `
+      <div class="quiz-question-block">
+        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+        ${imageHtml}
+        ${hintHtml}
+        <input type="text" class="form-input" id="quizAnswer${index}" placeholder="Type your answer" style="max-width:400px;">
+        <div class="hint" style="margin-top:4px; font-size:0.8rem; color:var(--text-secondary);">Answer the question directly</div>
+      </div>
+    `;
+  }
+
+  if (type === 'matching') {
+    const pairs = Array.isArray(q.options) && typeof q.options[0] === 'object' ? q.options : [];
+    const targets = [...pairs.map(p => p.target)].sort(() => Math.random() - 0.5);
+    return `
+      <div class="quiz-question-block">
+        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''})</span></div>
+        ${imageHtml}
+        ${hintHtml}
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+          <div style="font-size:0.8rem; color:var(--text-secondary); padding-bottom:4px;">Source</div>
+          <div style="font-size:0.8rem; color:var(--text-secondary); padding-bottom:4px;">Match</div>
+          ${pairs.map((p, pi) => `
+            <div style="padding:6px 0;">${escapeHtml(p.source)}</div>
+            <select class="form-select" id="quizMatch${index}_${pi}" style="margin:2px 0;">
+              <option value="">-- Select --</option>
+              ${targets.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
+            </select>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  if (type === 'ordering') {
+    const items = Array.isArray(q.options) ? [...q.options] : [];
+    const shuffled = [...items].sort(() => Math.random() - 0.5);
+    return `
+      <div class="quiz-question-block">
+        <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — drag to reorder or use dropdowns)</span></div>
+        ${hintHtml}
+        <div id="quizOrder${index}" style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
+          ${shuffled.map((item, si) => `
+            <div style="display:flex; gap:8px; align-items:center; padding:6px; background:var(--surface); border-radius:4px; border:1px solid var(--border);">
+              <span style="font-size:0.85rem; flex:1;">${escapeHtml(item)}</span>
+              <select class="form-select" id="quizOrdPos${index}_${si}" style="width:80px;">
+                ${items.map((_, pi) => `<option value="${pi+1}" ${pi===si?'selected':''}>${pi+1}</option>`).join('')}
+              </select>
+            </div>
+          `).join('')}
+        </div>
+        <div class="hint" style="margin-top:4px;">Set the position number (1 = first) for each item</div>
+      </div>
+    `;
+  }
+
+  // Essay / Written (catch-all)
+  const rows = q.expectedLength || 4;
+  return `
+    <div class="quiz-question-block">
+      <div class="quiz-question-title">${index + 1}. ${escapeHtml(q.prompt)} <span style="font-size:0.8rem; color:var(--text-secondary);">(${pts} pt${pts!==1?'s':''} — manual grading)</span></div>
+      ${hintHtml}
+      <textarea class="form-textarea" rows="${Math.min(rows, 20)}" id="quizAnswer${index}" placeholder="Your answer..."></textarea>
+    </div>
+  `;
+}
+
+// Store saved answers between navigation
+let quizSavedAnswers = {};
+
+/**
+ * Save the current question's answer before navigating
+ */
+function saveCurrentQuestionAnswer() {
+  const index = currentQuestionIndex;
+  const q = quizTakeQuestions[index];
+  if (!q) return;
+  const type = q.type || 'mc_single';
+
+  if (type === 'short_answer' || type === 'essay' || type === 'written_response') {
+    const el = document.getElementById(`quizAnswer${index}`);
+    quizSavedAnswers[index] = el ? el.value : '';
+  } else if (type === 'matching') {
+    const pairs = Array.isArray(q.options) ? q.options : [];
+    const matchMap = {};
+    pairs.forEach((pair, pi) => {
+      const sel = document.getElementById(`quizMatch${index}_${pi}`);
+      matchMap[pi] = sel ? sel.value : '';
+    });
+    quizSavedAnswers[index] = matchMap;
+  } else if (type === 'ordering') {
+    const rows = document.querySelectorAll(`#quizOrder${index} > div`);
+    const ordering = [];
+    rows.forEach((row, ri) => {
+      ordering.push(row.querySelector('select')?.value || String(ri + 1));
+    });
+    quizSavedAnswers[index] = ordering;
+  } else if (type === 'mc_multi') {
+    const checked = [...document.querySelectorAll(`input[name="quizQuestion${index}"]:checked`)].map(el => el.value);
+    quizSavedAnswers[index] = checked;
+  } else {
+    const selected = document.querySelector(`input[name="quizQuestion${index}"]:checked`);
+    quizSavedAnswers[index] = selected ? selected.value : null;
+  }
+}
+
+/**
+ * Restore a saved answer after rendering
+ */
+function restoreQuestionAnswer(index) {
+  const saved = quizSavedAnswers[index];
+  if (saved === undefined) return;
+  const q = quizTakeQuestions[index];
+  if (!q) return;
+  const type = q.type || 'mc_single';
+
+  if (type === 'short_answer' || type === 'essay' || type === 'written_response') {
+    const el = document.getElementById(`quizAnswer${index}`);
+    if (el) el.value = saved;
+  } else if (type === 'matching') {
+    const pairs = Array.isArray(q.options) ? q.options : [];
+    pairs.forEach((_, pi) => {
+      const sel = document.getElementById(`quizMatch${index}_${pi}`);
+      if (sel && saved[pi]) sel.value = saved[pi];
+    });
+  } else if (type === 'ordering') {
+    const rows = document.querySelectorAll(`#quizOrder${index} > div`);
+    if (Array.isArray(saved)) {
+      rows.forEach((row, ri) => {
+        const sel = row.querySelector('select');
+        if (sel && saved[ri]) sel.value = saved[ri];
+      });
+    }
+  } else if (type === 'mc_multi') {
+    if (Array.isArray(saved)) {
+      saved.forEach(val => {
+        const el = document.querySelector(`input[name="quizQuestion${index}"][value="${val}"]`);
+        if (el) el.checked = true;
+      });
+    }
+  } else {
+    if (saved !== null) {
+      const el = document.querySelector(`input[name="quizQuestion${index}"][value="${saved}"]`);
+      if (el) el.checked = true;
+    }
+  }
+}
+
+/**
+ * Render the current question with navigation
+ */
+function renderCurrentQuestion() {
+  const container = document.getElementById('quizTakeQuestions');
+  if (!container || quizTakeQuestions.length === 0) return;
+
+  const total = quizTakeQuestions.length;
+  const index = currentQuestionIndex;
+  const q = quizTakeQuestions[index];
+
+  // Question dots navigation
+  const dotsHtml = quizTakeQuestions.map((_, i) => {
+    const answered = quizSavedAnswers[i] !== undefined && quizSavedAnswers[i] !== null;
+    const active = i === index;
+    return `<button onclick="window.goToQuizQuestion(${i})" style="width:28px; height:28px; border-radius:50%; border:2px solid ${active ? 'var(--primary)' : 'var(--border)'}; background:${active ? 'var(--primary)' : (answered ? 'var(--primary-light)' : 'var(--surface)')}; color:${active ? '#fff' : 'var(--text)'}; cursor:pointer; font-size:0.8rem; font-weight:600;">${i + 1}</button>`;
+  }).join('');
+
+  const questionHtml = buildQuestionHtml(q, index);
+
+  container.innerHTML = `
+    <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:16px; justify-content:center;">
+      ${dotsHtml}
+    </div>
+    <div style="text-align:center; margin-bottom:12px; font-size:0.85rem; color:var(--text-secondary);">
+      Question ${index + 1} of ${total}
+    </div>
+    ${questionHtml}
+    <div style="display:flex; justify-content:space-between; margin-top:16px;">
+      <button class="btn btn-secondary" onclick="window.prevQuizQuestion()" ${index === 0 ? 'disabled' : ''}>&larr; Previous</button>
+      <button class="btn btn-secondary" onclick="window.nextQuizQuestion()" ${index === total - 1 ? 'disabled' : ''}>Next &rarr;</button>
+    </div>
+  `;
+
+  // Restore any previously saved answer
+  restoreQuestionAnswer(index);
+}
+
+/**
+ * Navigate to next question
+ */
+export function nextQuizQuestion() {
+  if (currentQuestionIndex < quizTakeQuestions.length - 1) {
+    saveCurrentQuestionAnswer();
+    currentQuestionIndex++;
+    renderCurrentQuestion();
+  }
+}
+
+/**
+ * Navigate to previous question
+ */
+export function prevQuizQuestion() {
+  if (currentQuestionIndex > 0) {
+    saveCurrentQuestionAnswer();
+    currentQuestionIndex--;
+    renderCurrentQuestion();
+  }
+}
+
+/**
+ * Go to a specific question
+ */
+export function goToQuizQuestion(index) {
+  if (index >= 0 && index < quizTakeQuestions.length) {
+    saveCurrentQuestionAnswer();
+    currentQuestionIndex = index;
+    renderCurrentQuestion();
+  }
 }
 
 /**
@@ -659,44 +835,59 @@ export async function submitQuiz() {
   const container = document.getElementById('quizTakeQuestions');
   if (!quiz || !container) return;
 
-  const questions = JSON.parse(container.dataset.questions || '[]');
+  // Save current question answer before collecting all
+  saveCurrentQuestionAnswer();
+
+  const questions = quizTakeQuestions.length > 0 ? quizTakeQuestions : JSON.parse(container.dataset.questions || '[]');
   const answers = {};
 
   questions.forEach((q, index) => {
     const type = q.type || 'multiple_choice';
+    const saved = quizSavedAnswers[index];
 
     if (type === 'short_answer' || type === 'essay' || type === 'written_response') {
-      const el = document.getElementById(`quizAnswer${index}`);
-      answers[q.id] = el ? el.value.trim() : '';
+      answers[q.id] = (typeof saved === 'string' ? saved.trim() : '') || '';
       return;
     }
 
     if (type === 'matching') {
-      const pairs = Array.isArray(q.options) ? q.options : [];
-      const matchMap = {};
-      pairs.forEach((pair, pairIndex) => {
-        const selectEl = document.getElementById(`quizMatch${index}_${pairIndex}`);
-        const source = typeof pair === 'object' ? pair.source : `pair_${pairIndex}`;
-        matchMap[source] = selectEl ? selectEl.value : '';
-      });
-      answers[q.id] = matchMap;
+      if (saved && typeof saved === 'object') {
+        const pairs = Array.isArray(q.options) ? q.options : [];
+        const matchMap = {};
+        pairs.forEach((pair, pi) => {
+          const source = typeof pair === 'object' ? pair.source : `pair_${pi}`;
+          matchMap[source] = saved[pi] || '';
+        });
+        answers[q.id] = matchMap;
+      } else {
+        answers[q.id] = {};
+      }
       return;
     }
 
     if (type === 'ordering') {
-      const orderRows = Array.from(document.querySelectorAll(`#quizOrder${index} > div`));
-      const ordering = orderRows.map((row, rowIndex) => {
-        const label = row.querySelector('span')?.textContent?.trim() || '';
-        const position = row.querySelector('select')?.value || String(rowIndex + 1);
-        return { item: label, position: parseInt(position, 10) || (rowIndex + 1) };
-      });
-      answers[q.id] = ordering;
+      if (Array.isArray(saved)) {
+        const items = Array.isArray(q.options) ? q.options : [];
+        answers[q.id] = items.map((item, si) => ({
+          item: typeof item === 'string' ? item : '',
+          position: parseInt(saved[si], 10) || (si + 1)
+        }));
+      } else {
+        answers[q.id] = [];
+      }
       return;
     }
 
-    const selected = document.querySelector(`input[name="quizQuestion${index}"]:checked`);
-    answers[q.id] = selected ? selected.value : null;
+    if (type === 'mc_multi') {
+      answers[q.id] = Array.isArray(saved) ? saved : [];
+      return;
+    }
+
+    answers[q.id] = saved !== undefined ? saved : null;
   });
+
+  // Remove leave warning
+  window.removeEventListener('beforeunload', quizBeforeUnloadHandler);
 
   const { autoScore, needsManual } = calculateQuizAutoScore(questions, answers);
   const totalPoints = getQuizPoints({ questions });
@@ -786,6 +977,12 @@ export async function submitQuiz() {
   } else {
     showToast('Quiz submitted! Awaiting review.', 'success');
   }
+
+  // Clean up quiz state
+  window.removeEventListener('beforeunload', quizBeforeUnloadHandler);
+  quizSavedAnswers = {};
+  quizTakeQuestions = [];
+  currentQuestionIndex = 0;
 
   closeModal('quizTakeModal');
   if (renderAssignmentsCallback) renderAssignmentsCallback();
@@ -1153,4 +1350,30 @@ if (typeof window !== 'undefined') {
   window.toggleQuizVisibility = toggleQuizVisibility;
   window.getProctorReport = getProctorReport;
   window.cleanupProctorMode = cleanupProctorMode;
+  window.nextQuizQuestion = nextQuizQuestion;
+  window.prevQuizQuestion = prevQuizQuestion;
+  window.goToQuizQuestion = goToQuizQuestion;
+  window.cancelQuizTaking = cancelQuizTaking;
+}
+
+/**
+ * Cancel quiz taking with confirmation
+ */
+export function cancelQuizTaking() {
+  if (currentQuizTakingId && Object.keys(quizSavedAnswers).length > 0) {
+    if (!window.confirm('You have a quiz in progress. Are you sure you want to leave? Your answers will be lost.')) {
+      return;
+    }
+  }
+  window.removeEventListener('beforeunload', quizBeforeUnloadHandler);
+  quizSavedAnswers = {};
+  quizTakeQuestions = [];
+  currentQuestionIndex = 0;
+  currentQuizTakingId = null;
+  if (quizTimerInterval) {
+    clearInterval(quizTimerInterval);
+    quizTimerInterval = null;
+  }
+  cleanupProctorMode();
+  closeModal('quizTakeModal');
 }
