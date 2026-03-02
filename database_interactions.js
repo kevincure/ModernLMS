@@ -2542,6 +2542,7 @@ export async function supabaseCreateNotification(notif) {
 
 export async function supabaseNotifyCourseStudents(courseId, type, title, body, link, refId) {
   if (!supabaseClient) return false;
+  // Try RPC first, fall back to manual insert if RPC doesn't exist
   const { error } = await supabaseClient.rpc('notify_course_students', {
     p_course_id: courseId,
     p_type: type,
@@ -2550,7 +2551,39 @@ export async function supabaseNotifyCourseStudents(courseId, type, title, body, 
     p_link: link || null,
     p_ref_id: refId || null
   });
-  if (error) { console.error('[Supabase] Notify course students error:', error); return false; }
+  if (error) {
+    console.warn('[Supabase] RPC notify_course_students failed, using fallback:', error.message);
+    // Fallback: query enrolled students and insert notifications individually
+    try {
+      const { data: enrollments, error: enrollErr } = await supabaseClient
+        .from('enrollments')
+        .select('user_id')
+        .eq('course_id', courseId)
+        .eq('role', 'student');
+      if (enrollErr || !enrollments || enrollments.length === 0) {
+        console.error('[Supabase] Fallback: could not fetch enrollments', enrollErr);
+        return false;
+      }
+      const rows = enrollments.map(e => ({
+        user_id: e.user_id,
+        course_id: courseId,
+        type: type,
+        title: title,
+        body: body || null,
+        link: link || null,
+        ref_id: refId || null
+      }));
+      const { error: insertErr } = await supabaseClient.from('notifications').insert(rows);
+      if (insertErr) {
+        console.error('[Supabase] Fallback notification insert error:', insertErr);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('[Supabase] Fallback notification error:', e);
+      return false;
+    }
+  }
   return true;
 }
 
