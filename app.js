@@ -137,7 +137,6 @@ import {
   buildAiContext,
   renderAiThread,
   clearAiThread,
-  draftGradeWithAI,
   generateAiDraft,
   setActiveCourse as setAIActiveCourseId,
   setStudentViewMode as setAIStudentViewMode
