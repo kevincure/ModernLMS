@@ -225,11 +225,11 @@ function normalizeAiOperationAction(action) {
   const map = {
     create_announcement: 'announcement',
     update_announcement: 'announcement_update',
-    delete_announcement: 'announcement_delete',
+    delete_announcement: 'delete',
     create_quiz_from_bank: 'quiz_from_bank',
     create_assignment: 'assignment',
     update_assignment: 'assignment_update',
-    delete_assignment: 'assignment_delete',
+    delete_assignment: 'delete',
     create_module: 'module',
     update_module: 'module_update',
     set_module_visibility: 'module_visibility',
@@ -242,22 +242,22 @@ function normalizeAiOperationAction(action) {
     create_question_bank: 'question_bank_create',
     update_question_bank: 'question_bank_update',
     add_questions_to_bank: 'question_bank_add_questions',
-    delete_question_bank: 'question_bank_delete',
-    delete_question_from_bank: 'question_delete_from_bank',
+    delete_question_bank: 'delete',
+    delete_question_from_bank: 'delete',
     update_start_here: 'start_here_update',
     create_invite: 'invite_create',
     revoke_invite: 'invite_revoke',
     set_course_visibility: 'course_visibility',
     create_calendar_event: 'calendar_event_create',
     update_calendar_event: 'calendar_event_update',
-    delete_calendar_event: 'calendar_event_delete',
+    delete_calendar_event: 'delete',
     create_discussion_thread: 'discussion_thread_create',
     update_discussion_thread: 'discussion_thread_update',
-    delete_discussion_thread: 'discussion_thread_delete',
+    delete_discussion_thread: 'delete',
     pin_discussion_thread: 'discussion_thread_pin',
     reply_discussion_thread: 'discussion_thread_reply',
     create_group_set: 'group_set_create',
-    delete_group_set: 'group_set_delete',
+    delete_group_set: 'delete',
     auto_assign_groups: 'group_auto_assign',
   };
   return map[action] || action;
@@ -690,6 +690,22 @@ const ACTION_PARAM_SCHEMAS = {
     required: ['conversationId', 'message']
   },
 
+  // Unified delete
+  delete: {
+    type: 'object',
+    properties: {
+      targetType: { type: 'string', description: 'assignment|announcement|question_bank|question_from_bank|calendar_event|group_set|discussion_thread' },
+      id: STR,
+      bankId: STR,
+      questionId: STR,
+      title: STR,
+      name: STR,
+      threadTitle: STR,
+      questionPrompt: STR
+    },
+    required: ['targetType']
+  },
+
   // Pipeline
   pipeline: {
     type: 'object',
@@ -786,7 +802,7 @@ MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT
 - Before add_to_module/remove_from_module/move_to_module → call list_modules
 - Before rename_file or set_file_visibility → call list_files
 - Before update/add_to/delete question_bank → call list_question_banks
-- Before delete_question_from_bank → call list_question_banks then get_question_bank
+- Before delete actions: call the relevant lookup first (e.g., list_assignments/list_announcements/list_calendar_events/list_discussion_threads/list_group_sets; and get_question_bank for question_from_bank).
 - Before invite actions (revoke_invite) → call list_people
 - Before creating a quiz from a bank → call list_question_banks
 - Before get_student_grades → call list_people to get userId
@@ -1313,6 +1329,22 @@ function autoCorrectActionIds(payload) {
     else correctField('id', courseGroupSets);
   }
 
+  if (action === 'delete') {
+    const tt = payload.targetType;
+    if (tt === 'announcement') correctField('id', courseAnnouncements);
+    if (tt === 'assignment') correctField('id', courseAssignments);
+    if (tt === 'question_bank') correctField('id', courseBanks);
+    if (tt === 'group_set') correctField('id', courseGroupSets);
+    if (tt === 'discussion_thread') {
+      const threads = (appData.discussionThreads || []).filter(t => t.courseId === activeCourseId);
+      correctField('id', threads);
+    }
+    if (tt === 'calendar_event') {
+      const events = (appData.calendarEvents || []).filter(e => e.courseId === activeCourseId);
+      correctField('id', events);
+    }
+  }
+
   const courseThreads = (appData.discussionThreads || []).filter(t => t.courseId === activeCourseId);
   if (['update_discussion_thread','delete_discussion_thread','pin_discussion_thread'].includes(action)) {
     correctField('id', courseThreads);
@@ -1748,6 +1780,25 @@ function handleAiAction(action) {
       actionType: 'pipeline',
       data: {
         steps: action.steps || action.actions || [],
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
+  } else if (action.action === 'delete') {
+    const targetType = action.targetType || action.target_type || action.type || '';
+    aiThread.push({
+      role: 'action',
+      actionType: 'delete',
+      data: {
+        targetType,
+        id: action.id || null,
+        bankId: action.bankId || null,
+        questionId: action.questionId || null,
+        title: action.title || '',
+        name: action.name || '',
+        threadTitle: action.threadTitle || '',
+        questionPrompt: action.questionPrompt || '',
         notes: action.notes || ''
       },
       confirmed: false,
@@ -2460,6 +2511,8 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! Message sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
     case 'reply_message':
       return `Done! Reply sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
+    case 'delete':
+      return `Done! Deleted ${b(d.targetType || 'item')}${d.title ? `: ${b(d.title)}` : ''}.`;
     default:
       return `Done! The action was completed successfully.`;
   }
@@ -2519,6 +2572,29 @@ export async function confirmAiAction(idx, publish = false) {
 async function executeAiOperation(operation, publish = false) {
   const resolved = resolveOperationReferences(operation || {});
   const action = normalizeAiOperationAction(resolved.action);
+
+
+  if (action === 'delete') {
+    const legacyMap = {
+      delete_announcement: 'announcement',
+      delete_assignment: 'assignment',
+      delete_question_bank: 'question_bank',
+      delete_question_from_bank: 'question_from_bank',
+      delete_calendar_event: 'calendar_event',
+      delete_group_set: 'group_set',
+      delete_discussion_thread: 'discussion_thread'
+    };
+    const tt = resolved.targetType || legacyMap[resolved.action];
+    if (tt === 'announcement') return await executeAiOperation({ action: 'announcement_delete', id: resolved.id }, false);
+    if (tt === 'assignment') return await executeAiOperation({ action: 'assignment_delete', id: resolved.id }, false);
+    if (tt === 'question_bank') return await executeAiOperation({ action: 'question_bank_delete', id: resolved.id }, false);
+    if (tt === 'calendar_event') return await executeAiOperation({ action: 'calendar_event_delete', id: resolved.id, title: resolved.title }, false);
+    if (tt === 'group_set') return await executeAiOperation({ action: 'group_set_delete', id: resolved.id, name: resolved.name }, false);
+    if (tt === 'discussion_thread') return await executeAiOperation({ action: 'discussion_thread_delete', id: resolved.id, threadTitle: resolved.threadTitle }, false);
+    if (tt === 'question_from_bank') return await executeAiOperation({ action: 'question_delete_from_bank', bankId: resolved.bankId, questionId: resolved.questionId, questionPrompt: resolved.questionPrompt }, false);
+    showToast(`Unsupported delete targetType: ${tt || 'unknown'}`, 'error');
+    return false;
+  }
 
   if (action === 'announcement') {
     const announcement = {
@@ -3393,6 +3469,7 @@ export function renderAiThread() {
         'discussion_thread_reply': 'Discussion Reply',
         'send_message': 'Message',
         'reply_message': 'Message',
+        'delete': 'Delete',
         'group_set_create': 'Group Set',
         'group_set_delete': 'Group Set',
         'group_auto_assign': 'Groups',
@@ -3447,6 +3524,7 @@ export function renderAiThread() {
         'discussion_thread_reply': 'Post',
         'send_message': 'Send',
         'reply_message': 'Reply',
+        'delete': 'Delete',
         'group_set_create': 'Create',
         'group_set_delete': 'Delete',
         'group_auto_assign': 'Auto-assign',
@@ -3555,6 +3633,8 @@ function describeStep(step) {
       return `Send message`;
     case 'reply_message':
       return `Reply to conversation`;
+    case 'delete':
+      return `Delete ${step.targetType || 'item'}${step.title ? `: "${step.title}"` : ''}`;
     case 'create_discussion_thread':
       return `Create discussion thread: "${title}"`;
     case 'update_discussion_thread':
@@ -4025,6 +4105,14 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'calendar_event_delete') {
     const ev = (appData.calendarEvents || []).find(e => e.id === d.id);
     return `<div class="muted" style="font-size:0.9rem;">Delete calendar event: <strong>${escapeHtml(ev?.title || d.title || d.id || '')}</strong></div>`;
+  }
+
+
+  // ─── UNIFIED DELETE ───────────────────────────────────────────────────────
+  if (msg.actionType === 'delete') {
+    const tt = d.targetType || '';
+    const label = d.title || d.name || d.threadTitle || d.questionPrompt || d.id || '';
+    return `<div class="muted" style="font-size:0.9rem;">Delete <strong>${escapeHtml(tt || 'item')}</strong>${label ? `: <strong>${escapeHtml(label)}</strong>` : ''}</div>`;
   }
 
   // ─── GROUP SET (create) ──────────────────────────────────────────────────
