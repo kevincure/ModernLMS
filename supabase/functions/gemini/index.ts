@@ -8,7 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const MODEL = 'gemini-3.0-flash'
+const MODEL = 'gemini-2.5-flash'
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
