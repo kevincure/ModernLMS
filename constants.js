@@ -257,7 +257,6 @@ export const AI_TOOL_REGISTRY = {
   // Each result is fed back into the conversation before the AI emits an action.
   context_tools: [
     { name: 'list_assignments',         description: 'All assignments (id, title, assignmentType, gradingType, status, points, dueDate, isGroupAssignment, groupSetId)' },
-    { name: 'list_quizzes',             description: 'All standalone quizzes (id, title, status, dueDate, questionCount)' },
     { name: 'list_files',               description: 'All uploaded files (id, name, type, size, hidden, folder)' },
     { name: 'list_modules',             description: 'Module structure with item IDs, titles, and hidden status' },
     { name: 'list_people',              description: 'Enrolled users AND pending invites. Enrolled rows: {userId, name, email, role, status:"enrolled"}. Pending invite rows: {inviteId, email, role, status:"pending_invite"}. ALWAYS call this before any invite or person action.' },
@@ -269,7 +268,6 @@ export const AI_TOOL_REGISTRY = {
     { name: 'list_group_sets',          description: 'All group sets in this course (id, name, description, groupCount, groups[{id, name, memberCount}])' },
     { name: 'get_question_bank',        description: 'Full question list for a bank (includes question IDs)', params: { bank_id: 'string' } },
     { name: 'get_assignment',           description: 'Full assignment details including rubric', params: { assignment_id: 'string' } },
-    { name: 'get_quiz',                 description: 'Full quiz with all questions', params: { quiz_id: 'string' } },
     { name: 'get_file_content',         description: 'Read text content of a file (PDF/doc)', params: { file_id: 'string' } },
     { name: 'get_assignment_analytics', description: 'Submission and grade stats for an assignment (submittedCount, averageScore, ungradedCount, etc.)', params: { assignment_id: 'string' } },
     { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } },
@@ -296,10 +294,8 @@ export const AI_TOOL_REGISTRY = {
     { name: 'delete_question_from_bank', description: 'Delete a single question from a question bank', dangerous: true, fields: 'bankId* (from list_question_banks), questionId* (from get_question_bank), questionPrompt' },
     // Announcements
     { name: 'create_announcement',     description: 'Create a new announcement',                             fields: 'title, content, pinned, status, fileIds' },
-    { name: 'update_announcement',     description: 'Edit an existing announcement (title, content, pinning, visibility)', fields: 'id*, title, content, pinned, hidden' },
+    { name: 'update_announcement',     description: 'Edit an existing announcement (title/content) and also handle pin/unpin and publish/unpublish via pinned and hidden booleans', fields: 'id*, title, content, pinned, hidden, fileIds' },
     { name: 'delete_announcement',     description: 'Permanently delete announcement',    dangerous: true,   fields: 'id*' },
-    { name: 'publish_announcement',    description: 'Publish a draft announcement (make visible to students)', fields: 'id*' },
-    { name: 'pin_announcement',        description: 'Pin or unpin announcement',                             fields: 'id*, pinned (boolean)' },
     // Modules
     { name: 'create_module',           description: 'Create a new module',                                   fields: 'name, description' },
     { name: 'update_module',           description: 'Rename a module',                                       fields: 'moduleId* (from list_modules), moduleName (old name for display), name (new name)' },
@@ -314,7 +310,6 @@ export const AI_TOOL_REGISTRY = {
     // People
     { name: 'create_invite',           description: 'Invite people to the course by email',                  fields: 'emails (array), role (student|ta|instructor)' },
     { name: 'revoke_invite',           description: 'Revoke a pending invite — REQUIRES list_people first to get inviteId', dangerous: true, fields: 'inviteId* (from list_people), email' },
-    { name: 'remove_person',           description: 'Remove enrolled user from course',   dangerous: true,   fields: 'userId* (from list_people), name' },
     // Course
     { name: 'update_start_here',       description: 'Edit the Start Here / Welcome message shown on the course home page', fields: 'title, content (markdown supported)' },
     { name: 'set_course_visibility',   description: 'Show or hide the entire course from students',          fields: 'visible (boolean)' },
