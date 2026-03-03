@@ -10,7 +10,6 @@ import {
 import {
   callGeminiAPI, callGeminiAPIWithRetry,
   supabaseCreateAnnouncement, supabaseUpdateAnnouncement, supabaseDeleteAnnouncement,
-  supabaseCreateQuiz, supabaseUpdateQuiz, supabaseDeleteQuiz,
   supabaseCreateAssignment, supabaseUpdateAssignment, supabaseDeleteAssignment,
   supabaseCreateModule, supabaseUpdateModule, supabaseCreateModuleItem, supabaseDeleteModuleItem,
   supabaseCreateInvite, supabaseDeleteInvite,
@@ -38,7 +37,7 @@ import { AI_PROMPTS, AI_CONFIG, AI_TOOL_REGISTRY } from './constants.js';
 // STUDENT MODE: read-only tools students may call (enforced in code, not prompt)
 // ═══════════════════════════════════════════════════════════════════════════════
 const STUDENT_TOOLS = [
-  'list_assignments', 'list_quizzes', 'list_files', 'list_modules',
+  'list_assignments', 'list_files', 'list_modules',
   'list_announcements', 'list_discussion_threads', 'get_assignment',
   'get_file_content', 'get_grade_categories', 'get_grade_settings',
   'list_group_sets', 'get_group_set',
@@ -129,6 +128,22 @@ export function clearAiThread() {
   aiThread = [];
 }
 
+
+function getUserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  } catch {
+    return 'local';
+  }
+}
+
+function formatLocalDateTime(iso) {
+  if (!iso) return null;
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toLocaleString();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // AI CONTEXT BUILDER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -137,7 +152,8 @@ export function clearAiThread() {
  * Build context for AI assistant
  */
 export function buildAiContext() {
-  let context = `Current date/time: ${new Date().toLocaleString()}\n\n`;
+  const tz = getUserTimeZone();
+  let context = `Current date/time (local): ${new Date().toLocaleString()}\nTime zone: ${tz}\n\n`; 
 
   if (activeCourseId && getCourseByIdCallback) {
     const course = getCourseByIdCallback(activeCourseId);
@@ -156,7 +172,6 @@ export function buildAiContext() {
       // This keeps the context small and forces fresh lookups for accurate IDs.
       const aiCtxIsStaff = isStaffCallback && isStaffCallback(appData.currentUser?.id, activeCourseId) && !studentViewMode;
       const assignments   = (appData.assignments   || []).filter(a => a.courseId === activeCourseId && (aiCtxIsStaff || (a.status === 'published' && !a.hidden && (a.assignmentType || 'essay') !== 'no_submission')));
-      const quizzes       = (appData.quizzes       || []).filter(q => q.courseId === activeCourseId && (aiCtxIsStaff || q.status === 'published'));
       const questionBanks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
       const files         = (appData.files         || []).filter(f => f.courseId === activeCourseId && !f.isPlaceholder && (aiCtxIsStaff || !f.hidden));
       const modules       = (appData.modules       || []).filter(m => m.courseId === activeCourseId && (aiCtxIsStaff || !m.hidden));
@@ -167,7 +182,6 @@ export function buildAiContext() {
 
       context += `\nCOURSE CONTENTS — call the relevant tool to get IDs, titles, and full content:\n`;
       context += `- assignments: ${assignments.length}\n`;
-      context += `- quizzes: ${quizzes.length}\n`;
       context += `- question banks: ${questionBanks.length} (${qTotal} questions total)\n`;
       context += `- files: ${files.length}\n`;
       context += `- modules: ${modules.length}\n`;
@@ -211,13 +225,11 @@ function normalizeAiOperationAction(action) {
   const map = {
     create_announcement: 'announcement',
     update_announcement: 'announcement_update',
-    delete_announcement: 'announcement_delete',
-    publish_announcement: 'announcement_publish',
-    pin_announcement: 'announcement_pin',
+    delete_announcement: 'delete',
     create_quiz_from_bank: 'quiz_from_bank',
     create_assignment: 'assignment',
     update_assignment: 'assignment_update',
-    delete_assignment: 'assignment_delete',
+    delete_assignment: 'delete',
     create_module: 'module',
     update_module: 'module_update',
     set_module_visibility: 'module_visibility',
@@ -230,24 +242,23 @@ function normalizeAiOperationAction(action) {
     create_question_bank: 'question_bank_create',
     update_question_bank: 'question_bank_update',
     add_questions_to_bank: 'question_bank_add_questions',
-    delete_question_bank: 'question_bank_delete',
-    delete_question_from_bank: 'question_delete_from_bank',
+    delete_question_bank: 'delete',
+    delete_question_from_bank: 'delete',
     update_start_here: 'start_here_update',
     create_invite: 'invite_create',
     revoke_invite: 'invite_revoke',
     set_course_visibility: 'course_visibility',
     create_calendar_event: 'calendar_event_create',
     update_calendar_event: 'calendar_event_update',
-    delete_calendar_event: 'calendar_event_delete',
+    delete_calendar_event: 'delete',
     create_discussion_thread: 'discussion_thread_create',
     update_discussion_thread: 'discussion_thread_update',
-    delete_discussion_thread: 'discussion_thread_delete',
+    delete_discussion_thread: 'delete',
     pin_discussion_thread: 'discussion_thread_pin',
     reply_discussion_thread: 'discussion_thread_reply',
     create_group_set: 'group_set_create',
-    delete_group_set: 'group_set_delete',
+    delete_group_set: 'delete',
     auto_assign_groups: 'group_auto_assign',
-    remove_person: 'person_remove'
   };
   return map[action] || action;
 }
@@ -388,20 +399,18 @@ function appendAvailabilityToDescription(description, availableFrom, availableUn
 
 function getMissingPublishRequirements(operation, publish = false) {
   const action = normalizeAiOperationAction(operation?.action);
-  const wantsPublish = publish || operation?.status === 'published' || action === 'announcement_publish';
+  const wantsPublish = publish || operation?.status === 'published';
   if (!wantsPublish) return [];
 
   const missing = [];
-  if (action === 'announcement' || action === 'announcement_update' || action === 'announcement_publish') {
-    if (action === 'announcement_publish') {
-      const existing = (appData.announcements || []).find(a => a.id === operation.id && a.courseId === activeCourseId);
-      if (!existing) missing.push('announcement id');
-      if (existing && !existing.title) missing.push('title');
-      if (existing && !existing.content) missing.push('content');
-      return missing;
-    }
-    if (!operation.title) missing.push('title');
-    if (!operation.content) missing.push('content');
+  if (action === 'announcement' || action === 'announcement_update') {
+    const existing = action === 'announcement_update'
+      ? (appData.announcements || []).find(a => a.id === operation.id && a.courseId === activeCourseId)
+      : null;
+    const title = operation.title ?? existing?.title;
+    const content = operation.content ?? existing?.content;
+    if (!title) missing.push('title');
+    if (!content) missing.push('content');
     return missing;
   }
 
@@ -525,12 +534,6 @@ const ACTION_PARAM_SCHEMAS = {
     required: ['id']
   },
   delete_announcement: { type: 'object', properties: { id: STR }, required: ['id'] },
-  publish_announcement: { type: 'object', properties: { id: STR }, required: ['id'] },
-  pin_announcement: {
-    type: 'object',
-    properties: { id: STR, pinned: BOOL },
-    required: ['id', 'pinned']
-  },
 
   // Modules
   create_module: {
@@ -595,11 +598,6 @@ const ACTION_PARAM_SCHEMAS = {
     type: 'object',
     properties: { inviteId: STR, email: STR },
     required: ['inviteId']
-  },
-  remove_person: {
-    type: 'object',
-    properties: { userId: STR, name: STR },
-    required: ['userId']
   },
 
   // Course
@@ -692,6 +690,22 @@ const ACTION_PARAM_SCHEMAS = {
     required: ['conversationId', 'message']
   },
 
+  // Unified delete
+  delete: {
+    type: 'object',
+    properties: {
+      targetType: { type: 'string', description: 'assignment|announcement|question_bank|question_from_bank|calendar_event|group_set|discussion_thread' },
+      id: STR,
+      bankId: STR,
+      questionId: STR,
+      title: STR,
+      name: STR,
+      threadTitle: STR,
+      questionPrompt: STR
+    },
+    required: ['targetType']
+  },
+
   // Pipeline
   pipeline: {
     type: 'object',
@@ -759,7 +773,7 @@ function buildFunctionDeclarations(isStaff) {
  * Build system instruction for Gemini.
  * Contains behavioral rules only — tool/action definitions are in function declarations.
  */
-function buildSystemInstruction(isStaff, courseContext) {
+function buildSystemInstruction(isStaff) {
   if (!isStaff) {
     return `You are an AI assistant for an LMS helping a STUDENT. Help with course questions, explain concepts, provide guidance, and help send or reply to messages.
 
@@ -774,8 +788,7 @@ COMMUNICATION CHANNEL RULES:
 - "reply to a discussion" → reply_discussion_thread (call list_discussion_threads first)
 
 When responding with plain text, NEVER include raw UUIDs — refer to things by name/title only.
-
-${courseContext}`;
+`;
   }
 
   return `You are an AI assistant for an LMS helping an INSTRUCTOR manage course content. You look up real data via tools, then propose an action for the instructor to confirm. You never touch the database — you propose actions that the instructor reviews and confirms.
@@ -785,13 +798,12 @@ When no function call is needed, respond with plain text (for questions, explana
 MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT IDs. You MUST call a lookup tool to get real IDs before every action:
 - Before update/delete assignment → call list_assignments
 - Before update/delete announcement → call list_announcements
-- Before update/delete quiz → call list_quizzes
 - Before update_module or set_module_visibility → call list_modules
 - Before add_to_module/remove_from_module/move_to_module → call list_modules
 - Before rename_file or set_file_visibility → call list_files
 - Before update/add_to/delete question_bank → call list_question_banks
-- Before delete_question_from_bank → call list_question_banks then get_question_bank
-- Before invite/person actions (revoke_invite, remove_person) → call list_people
+- Before delete actions: call the relevant lookup first (e.g., list_assignments/list_announcements/list_calendar_events/list_discussion_threads/list_group_sets; and get_question_bank for question_from_bank).
+- Before invite actions (revoke_invite) → call list_people
 - Before creating a quiz from a bank → call list_question_banks
 - Before get_student_grades → call list_people to get userId
 - Standalone quiz creation is deprecated. Use create_assignment with assignmentType:"quiz" or create_quiz_from_bank.
@@ -848,6 +860,7 @@ DEFAULTS (use unless user specifies otherwise):
 DATE/TIME RULES — CRITICAL:
 - "Current date/time" in course context is already in the user's LOCAL time zone.
 - All date/time fields must be LOCAL time WITHOUT trailing Z or timezone offset.
+- Use the local timezone from the initial context turn when interpreting due dates/times.
   ✓ RIGHT: "2025-09-15T14:00:00"
   ❌ WRONG: "2025-09-15T14:00:00.000Z" or "2025-09-15T14:00:00+05:00"
 - "2pm" = T14:00:00 with no suffix.
@@ -858,8 +871,7 @@ DATE/TIME RULES — CRITICAL:
 CONTENT FORMATTING (markdown supported):
 - **bold**, *italic*, ## headers, - bullet lists
 - Link files: [📄 filename](#file-FILE_ID)
-
-${courseContext}`;
+`;
 }
 
 /**
@@ -877,7 +889,6 @@ function summarizeToolResult(toolName, result) {
       }
       case 'list_assignments':        return `${result.length} assignment${result.length !== 1 ? 's' : ''}`;
       case 'list_question_banks':     return `${result.length} bank${result.length !== 1 ? 's' : ''}`;
-      case 'list_quizzes':            return `${result.length} quiz${result.length !== 1 ? 'zes' : ''}`;
       case 'list_files':              return `${result.length} file${result.length !== 1 ? 's' : ''}`;
       case 'list_announcements':      return `${result.length} announcement${result.length !== 1 ? 's' : ''}`;
       case 'list_modules':            return `${result.length} module${result.length !== 1 ? 's' : ''}`;
@@ -969,13 +980,8 @@ async function executeAiTool(toolName, params = {}) {
       return (appData.assignments || [])
         .filter(a => a.courseId === activeCourseId)
         .filter(a => effectiveIsStaff || (a.status === 'published' && !a.hidden && (a.assignmentType || 'essay') !== 'no_submission'))
-        .map(a => ({ id: a.id, title: a.title, type: a.assignmentType || 'essay', gradingType: a.gradingType || 'points', status: a.status, points: a.points, dueDate: a.dueDate, isGroupAssignment: !!a.isGroupAssignment, groupSetId: a.groupSetId || null }));
+        .map(a => ({ id: a.id, title: a.title, type: a.assignmentType || 'essay', gradingType: a.gradingType || 'points', status: a.status, points: a.points, dueDate: a.dueDate, dueDateLocal: formatLocalDateTime(a.dueDate), isGroupAssignment: !!a.isGroupAssignment, groupSetId: a.groupSetId || null }));
 
-    case 'list_quizzes':
-      return (appData.quizzes || [])
-        .filter(q => q.courseId === activeCourseId)
-        .filter(q => effectiveIsStaff || q.status === 'published')
-        .map(q => ({ id: q.id, title: q.title, status: q.status, dueDate: q.dueDate, questionCount: (q.questions || []).length }));
 
     case 'list_files':
       return (appData.files || [])
@@ -1072,14 +1078,10 @@ async function executeAiTool(toolName, params = {}) {
     case 'get_assignment': {
       const assignmentId = params.assignment_id || params.assignmentId || params.id;
       const a = (appData.assignments || []).find(a => a.id === assignmentId && a.courseId === activeCourseId);
-      return a || { error: 'Assignment not found — call list_assignments first to get the id' };
+      if (!a) return { error: 'Assignment not found — call list_assignments first to get the id' };
+      return { ...a, dueDateLocal: formatLocalDateTime(a.dueDate), availableFromLocal: formatLocalDateTime(a.availableFrom), availableUntilLocal: formatLocalDateTime(a.availableUntil) };
     }
 
-    case 'get_quiz': {
-      const quizId = params.quiz_id || params.quizId || params.id;
-      const q = (appData.quizzes || []).find(q => q.id === quizId && q.courseId === activeCourseId);
-      return q || { error: 'Quiz not found — call list_quizzes first to get the id' };
-    }
 
     case 'get_assignment_analytics': {
       const assignId = params.assignment_id || params.assignmentId || params.id;
@@ -1249,6 +1251,7 @@ async function executeAiTool(toolName, params = {}) {
         id: ev.id,
         title: ev.title,
         eventDate: ev.eventDate,
+        eventDateLocal: formatLocalDateTime(ev.eventDate),
         eventType: ev.eventType || 'Event',
         description: ev.description || ''
       }));
@@ -1303,7 +1306,7 @@ function autoCorrectActionIds(payload) {
   const courseBanks = (appData.questionBanks || []).filter(b => b.courseId === activeCourseId);
   const courseGroupSets = (appData.groupSets || []).filter(gs => gs.courseId === activeCourseId);
 
-  if (['update_announcement','delete_announcement','publish_announcement','pin_announcement'].includes(action)) {
+  if (['update_announcement','delete_announcement'].includes(action)) {
     correctField('id', courseAnnouncements);
   }
   if (['update_assignment','delete_assignment'].includes(action)) {
@@ -1324,6 +1327,22 @@ function autoCorrectActionIds(payload) {
   if (action === 'delete_group_set' || action === 'auto_assign_groups') {
     if (payload.groupSetId) correctField('groupSetId', courseGroupSets);
     else correctField('id', courseGroupSets);
+  }
+
+  if (action === 'delete') {
+    const tt = payload.targetType;
+    if (tt === 'announcement') correctField('id', courseAnnouncements);
+    if (tt === 'assignment') correctField('id', courseAssignments);
+    if (tt === 'question_bank') correctField('id', courseBanks);
+    if (tt === 'group_set') correctField('id', courseGroupSets);
+    if (tt === 'discussion_thread') {
+      const threads = (appData.discussionThreads || []).filter(t => t.courseId === activeCourseId);
+      correctField('id', threads);
+    }
+    if (tt === 'calendar_event') {
+      const events = (appData.calendarEvents || []).filter(e => e.courseId === activeCourseId);
+      correctField('id', events);
+    }
   }
 
   const courseThreads = (appData.discussionThreads || []).filter(t => t.courseId === activeCourseId);
@@ -1356,7 +1375,7 @@ function validateActionPayload(payload) {
     if (!(appData.quizzes || []).find(q => q.id === payload.id && q.courseId === activeCourseId))
       return `Quiz "${payload.id}" not found in this course`;
   }
-  if (['update_announcement','delete_announcement','publish_announcement','pin_announcement'].includes(action)) {
+  if (['update_announcement','delete_announcement'].includes(action)) {
     if (!payload.id) return 'Missing announcement id';
     if (!(appData.announcements || []).find(a => a.id === payload.id && a.courseId === activeCourseId))
       return `Announcement "${payload.id}" not found in this course`;
@@ -1366,12 +1385,6 @@ function validateActionPayload(payload) {
     if (!id) return 'Missing inviteId — call list_people first to get the real invite id';
     if (!(appData.invites || []).find(i => i.id === id && i.courseId === activeCourseId))
       return `Invite not found (id: ${id}) — call list_people to get the current invite list`;
-  }
-  if (action === 'remove_person') {
-    const uid = payload.userId || payload.id;
-    if (!uid) return 'Missing userId — call list_people first';
-    if (!(appData.enrollments || []).find(e => e.userId === uid && e.courseId === activeCourseId))
-      return `User "${uid}" is not enrolled in this course`;
   }
   if (action === 'create_quiz_from_bank' && payload.questionBankId) {
     if (!(appData.questionBanks || []).find(b => b.id === payload.questionBankId && b.courseId === activeCourseId))
@@ -1465,8 +1478,8 @@ async function runAiLoop(contents, systemInstruction, tools, isStaffUser = true)
 
   const TOOL_ICONS = {
     list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖',
-    list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝',
-    get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊',
+    list_announcements:'📣', list_files:'📁', list_modules:'🗂️',
+    get_assignment:'📄', list_discussion_threads:'💬', get_grade_categories:'📊',
     get_grade_settings:'📊', get_file_content:'📄', list_conversations:'✉️',
     get_assignment_analytics:'📊', get_student_grades:'📊', list_group_sets:'👥',
     get_group_set:'👥', get_start_here:'🏠', list_calendar_events:'📅'
@@ -1686,21 +1699,26 @@ export async function sendAiMessage(audioBase64 = null) {
   renderAiThread();
 
   try {
-    const systemInstruction = { parts: [{ text: buildSystemInstruction(effectiveIsStaff, buildAiContext()) }] };
+    const courseContext = buildAiContext();
+    const systemInstruction = { parts: [{ text: buildSystemInstruction(effectiveIsStaff) }] };
     const tools = buildFunctionDeclarations(effectiveIsStaff);
     let contents;
 
     if (audioBase64) {
-      contents = [{
-        role: 'user',
-        parts: [
-          { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
-          { text: 'Transcribe this voice message then respond as instructed.' }
-        ]
-      }];
+      contents = [
+        { role: 'user', parts: [{ text: `INTERNAL COURSE CONTEXT (not user-visible):\n${courseContext}` }] },
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
+            { text: 'Transcribe this voice message then respond as instructed.' }
+          ]
+        }
+      ];
     } else {
       const geminiHistory = buildGeminiHistory();
       contents = [
+        { role: 'user', parts: [{ text: `INTERNAL COURSE CONTEXT (not user-visible):\n${courseContext}` }] },
         ...geminiHistory,
         { role: 'user', parts: [{ text: message }] }
       ];
@@ -1742,7 +1760,7 @@ export function sendAiFollowup(idx) {
   updateAiProcessingState();
   const isStaffUser = activeCourseId && isStaffCallback && isStaffCallback(appData.currentUser?.id, activeCourseId);
   const effectiveIsStaff = isStaffUser && !studentViewMode;
-  const systemInstruction = msg.systemInstruction || { parts: [{ text: buildSystemInstruction(effectiveIsStaff, buildAiContext()) }] };
+  const systemInstruction = msg.systemInstruction || { parts: [{ text: buildSystemInstruction(effectiveIsStaff) }] };
   const tools = msg.tools || buildFunctionDeclarations(effectiveIsStaff);
   runAiLoop(resumeContents, systemInstruction, tools, effectiveIsStaff).finally(() => {
     aiProcessing = false;
@@ -1767,6 +1785,25 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
+  } else if (action.action === 'delete') {
+    const targetType = action.targetType || action.target_type || action.type || '';
+    aiThread.push({
+      role: 'action',
+      actionType: 'delete',
+      data: {
+        targetType,
+        id: action.id || null,
+        bankId: action.bankId || null,
+        questionId: action.questionId || null,
+        title: action.title || '',
+        name: action.name || '',
+        threadTitle: action.threadTitle || '',
+        questionPrompt: action.questionPrompt || '',
+        notes: action.notes || ''
+      },
+      confirmed: false,
+      rejected: false
+    });
   } else if (action.action === 'create_announcement') {
     aiThread.push({
       role: 'action',
@@ -1783,10 +1820,6 @@ function handleAiAction(action) {
     aiThread.push({ role: 'action', actionType: 'announcement_update', data: d, confirmed: false, rejected: false });
   } else if (action.action === 'delete_announcement') {
     aiThread.push({ role: 'action', actionType: 'announcement_delete', data: { id: action.id }, confirmed: false, rejected: false });
-  } else if (action.action === 'publish_announcement') {
-    aiThread.push({ role: 'action', actionType: 'announcement_publish', data: { id: action.id }, confirmed: false, rejected: false });
-  } else if (action.action === 'pin_announcement') {
-    aiThread.push({ role: 'action', actionType: 'announcement_pin', data: { id: action.id, pinned: action.pinned !== false }, confirmed: false, rejected: false });
   } else if (action.action === 'create_quiz_from_bank') {
     const defaultDueDate = new Date(Date.now() + 86400000 * 7).toISOString();
     // AI may send questionCount instead of numQuestions, or questionBankName instead of questionBankId
@@ -2142,20 +2175,6 @@ function handleAiAction(action) {
       confirmed: false,
       rejected: false
     });
-  } else if (action.action === 'remove_person') {
-    aiThread.push({
-      role: 'action',
-      actionType: 'person_remove',
-      data: {
-        userId: action.userId || null,
-        name: action.name || '',
-        email: action.email || '',
-        role: action.role || '',
-        notes: action.notes || ''
-      },
-      confirmed: false,
-      rejected: false
-    });
   } else if (action.action === 'set_course_visibility') {
     aiThread.push({
       role: 'action',
@@ -2392,10 +2411,6 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! Updated the announcement. View it in ${pageLink('updates', 'Announcements')}.`;
     case 'announcement_delete':
       return `Done! The announcement has been permanently deleted.`;
-    case 'announcement_publish':
-      return `Done! The announcement is now <strong>published</strong> and visible to students. See ${pageLink('updates', 'Announcements')}.`;
-    case 'announcement_pin':
-      return `Done! The announcement has been <strong>${d.pinned !== false ? 'pinned' : 'unpinned'}</strong>. See ${pageLink('updates', 'Announcements')}.`;
     case 'assignment': {
       const due = d.dueDate ? new Date(d.dueDate).toLocaleDateString() : 'as set';
       return `Done! Created assignment ${b(d.title || 'Untitled')} (${escapeHtml(String(d.points || 100))} pts, due ${escapeHtml(due)}). ${pubSpan} View it in ${pageLink('assignments', 'Assignments')}.`;
@@ -2476,11 +2491,6 @@ function generateActionConfirmation(msg, publish = false) {
       const revokedEmail = d.email || inv?.email || '';
       return `Done! The invitation${revokedEmail ? ` for ${b(revokedEmail)}` : ''} has been revoked. Manage invites from ${pageLink('people', 'People')}.`;
     }
-    case 'person_remove': {
-      const removedUser = (appData.users || []).find(u => u.id === d.userId);
-      const removedName = d.name || removedUser?.name || d.email || removedUser?.email || 'The person';
-      return `Done! ${b(removedName)} has been removed from the course. See ${pageLink('people', 'People')}.`;
-    }
     case 'course_visibility':
       return `Done! The course is now <strong>${d.visible !== false ? 'visible to students' : 'hidden from students'}</strong>.`;
     case 'calendar_event_create': {
@@ -2501,6 +2511,8 @@ function generateActionConfirmation(msg, publish = false) {
       return `Done! Message sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
     case 'reply_message':
       return `Done! Reply sent. View the conversation in ${pageLink('inbox', 'Inbox')}.`;
+    case 'delete':
+      return `Done! Deleted ${b(d.targetType || 'item')}${d.title ? `: ${b(d.title)}` : ''}.`;
     default:
       return `Done! The action was completed successfully.`;
   }
@@ -2561,6 +2573,29 @@ async function executeAiOperation(operation, publish = false) {
   const resolved = resolveOperationReferences(operation || {});
   const action = normalizeAiOperationAction(resolved.action);
 
+
+  if (action === 'delete') {
+    const legacyMap = {
+      delete_announcement: 'announcement',
+      delete_assignment: 'assignment',
+      delete_question_bank: 'question_bank',
+      delete_question_from_bank: 'question_from_bank',
+      delete_calendar_event: 'calendar_event',
+      delete_group_set: 'group_set',
+      delete_discussion_thread: 'discussion_thread'
+    };
+    const tt = resolved.targetType || legacyMap[resolved.action];
+    if (tt === 'announcement') return await executeAiOperation({ action: 'announcement_delete', id: resolved.id }, false);
+    if (tt === 'assignment') return await executeAiOperation({ action: 'assignment_delete', id: resolved.id }, false);
+    if (tt === 'question_bank') return await executeAiOperation({ action: 'question_bank_delete', id: resolved.id }, false);
+    if (tt === 'calendar_event') return await executeAiOperation({ action: 'calendar_event_delete', id: resolved.id, title: resolved.title }, false);
+    if (tt === 'group_set') return await executeAiOperation({ action: 'group_set_delete', id: resolved.id, name: resolved.name }, false);
+    if (tt === 'discussion_thread') return await executeAiOperation({ action: 'discussion_thread_delete', id: resolved.id, threadTitle: resolved.threadTitle }, false);
+    if (tt === 'question_from_bank') return await executeAiOperation({ action: 'question_delete_from_bank', bankId: resolved.bankId, questionId: resolved.questionId, questionPrompt: resolved.questionPrompt }, false);
+    showToast(`Unsupported delete targetType: ${tt || 'unknown'}`, 'error');
+    return false;
+  }
+
   if (action === 'announcement') {
     const announcement = {
       id: generateId(),
@@ -2607,13 +2642,6 @@ async function executeAiOperation(operation, publish = false) {
     return true;
   }
 
-  if (action === 'announcement_publish') {
-    return await executeAiOperation({ action: 'announcement_update', id: resolved.id, hidden: false }, false);
-  }
-
-  if (action === 'announcement_pin') {
-    return await executeAiOperation({ action: 'announcement_update', id: resolved.id, pinned: resolved.pinned !== false }, false);
-  }
 
   if (action === 'announcement_delete') {
     const success = await supabaseDeleteAnnouncement(resolved.id);
@@ -3014,18 +3042,6 @@ async function executeAiOperation(operation, publish = false) {
     return true;
   }
 
-  if (action === 'person_remove') {
-    const userId = resolved.userId;
-    if (!userId) { showToast('User ID missing', 'error'); return false; }
-    const enrollment = (appData.enrollments || []).find(e => e.userId === userId && e.courseId === activeCourseId);
-    if (!enrollment) { showToast('User is not enrolled in this course', 'error'); return false; }
-    await supabaseDeleteEnrollment(userId, activeCourseId);
-    appData.enrollments = (appData.enrollments || []).filter(
-      e => !(e.userId === userId && e.courseId === activeCourseId)
-    );
-    if (renderPeopleCallback) renderPeopleCallback();
-    return true;
-  }
 
   if (action === 'course_visibility') {
     const courseId = resolved.courseId || activeCourseId;
@@ -3418,8 +3434,6 @@ export function renderAiThread() {
         'announcement': 'Announcement',
         'announcement_update': 'Announcement',
         'announcement_delete': 'Announcement',
-        'announcement_publish': 'Announcement',
-        'announcement_pin': 'Announcement',
         'quiz': 'Quiz',
         'quiz_update': 'Quiz',
         'quiz_delete': 'Quiz',
@@ -3444,7 +3458,6 @@ export function renderAiThread() {
         'start_here_update': 'Start Here Message',
         'invite_create': 'Invitation',
         'invite_revoke': 'Invitation',
-        'person_remove': 'Person',
         'course_visibility': 'Course Visibility',
         'calendar_event_create': 'Calendar Event',
         'calendar_event_update': 'Calendar Event',
@@ -3456,6 +3469,7 @@ export function renderAiThread() {
         'discussion_thread_reply': 'Discussion Reply',
         'send_message': 'Message',
         'reply_message': 'Message',
+        'delete': 'Delete',
         'group_set_create': 'Group Set',
         'group_set_delete': 'Group Set',
         'group_auto_assign': 'Groups',
@@ -3475,8 +3489,6 @@ export function renderAiThread() {
         'announcement': 'Create',
         'announcement_update': getAnnouncementUpdateVerb(msg.data),
         'announcement_delete': 'Delete',
-        'announcement_publish': 'Publish',
-        'announcement_pin': msg.data?.pinned === false ? 'Unpin' : 'Pin',
         'quiz': 'Create',
         'quiz_update': 'Update',
         'quiz_delete': 'Delete',
@@ -3501,7 +3513,6 @@ export function renderAiThread() {
         'start_here_update': 'Update',
         'invite_create': 'Send',
         'invite_revoke': 'Revoke',
-        'person_remove': 'Remove',
         'course_visibility': msg.data?.visible === false ? 'Hide' : 'Show',
         'calendar_event_create': 'Add',
         'calendar_event_update': 'Update',
@@ -3513,6 +3524,7 @@ export function renderAiThread() {
         'discussion_thread_reply': 'Post',
         'send_message': 'Send',
         'reply_message': 'Reply',
+        'delete': 'Delete',
         'group_set_create': 'Create',
         'group_set_delete': 'Delete',
         'group_auto_assign': 'Auto-assign',
@@ -3595,8 +3607,6 @@ function describeStep(step) {
       return `Invite: ${step.email || title}${step.role ? ` as ${step.role}` : ''}`;
     case 'revoke_invite':
       return `Revoke invite: ${step.email || title}`;
-    case 'remove_person':
-      return `Remove person: ${step.name || step.email || title}`;
     case 'create_calendar_event':
       return `Add calendar event: "${title}"${step.eventDate ? ` on ${new Date(step.eventDate).toLocaleDateString()}` : ''}`;
     case 'update_calendar_event':
@@ -3623,6 +3633,8 @@ function describeStep(step) {
       return `Send message`;
     case 'reply_message':
       return `Reply to conversation`;
+    case 'delete':
+      return `Delete ${step.targetType || 'item'}${step.title ? `: "${step.title}"` : ''}`;
     case 'create_discussion_thread':
       return `Create discussion thread: "${title}"`;
     case 'update_discussion_thread':
@@ -3728,14 +3740,6 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'announcement_delete') {
     const ann = (appData.announcements || []).find(a => a.id === d.id);
     return `<div class="muted" style="font-size:0.9rem;">Delete announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
-  }
-  if (msg.actionType === 'announcement_publish') {
-    const ann = (appData.announcements || []).find(a => a.id === d.id);
-    return `<div class="muted" style="font-size:0.9rem;">Publish announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
-  }
-  if (msg.actionType === 'announcement_pin') {
-    const ann = (appData.announcements || []).find(a => a.id === d.id);
-    return `<div class="muted" style="font-size:0.9rem;">${d.pinned === false ? 'Unpin' : 'Pin'} announcement: <strong>${escapeHtml(ann?.title || d.id || '')}</strong></div>`;
   }
 
   // ─── QUIZ (update) — only show fields the AI actually changed ────────────
@@ -3935,18 +3939,6 @@ function renderActionPreview(msg, idx) {
   }
 
   // ─── PERSON REMOVE ───────────────────────────────────────────────────────
-  if (msg.actionType === 'person_remove') {
-    const user = (appData.users || []).find(u => u.id === d.userId);
-    const enrollment = (appData.enrollments || []).find(e => e.userId === d.userId && e.courseId === activeCourseId);
-    const displayName = d.name || user?.name || d.email || user?.email || d.userId || '';
-    const displayEmail = d.email || user?.email || '';
-    const displayRole = d.role || enrollment?.role || '';
-    const roleLabel = displayRole ? ` (${displayRole === 'ta' ? 'Teaching Assistant' : displayRole.charAt(0).toUpperCase() + displayRole.slice(1)})` : '';
-    return `
-      <div class="muted" style="font-size:0.9rem;">Remove <strong>${escapeHtml(displayName)}</strong>${displayEmail && displayEmail !== displayName ? ` &lt;${escapeHtml(displayEmail)}&gt;` : ''}${escapeHtml(roleLabel)} from this course.</div>
-      <div style="margin-top:8px; font-size:0.82rem; color:var(--danger, #c00);">⚠️ This will unenroll them immediately. Their submissions and grades are kept.</div>
-    `;
-  }
 
   // ─── COURSE VISIBILITY ───────────────────────────────────────────────────
   if (msg.actionType === 'course_visibility') {
@@ -4113,6 +4105,14 @@ function renderActionPreview(msg, idx) {
   if (msg.actionType === 'calendar_event_delete') {
     const ev = (appData.calendarEvents || []).find(e => e.id === d.id);
     return `<div class="muted" style="font-size:0.9rem;">Delete calendar event: <strong>${escapeHtml(ev?.title || d.title || d.id || '')}</strong></div>`;
+  }
+
+
+  // ─── UNIFIED DELETE ───────────────────────────────────────────────────────
+  if (msg.actionType === 'delete') {
+    const tt = d.targetType || '';
+    const label = d.title || d.name || d.threadTitle || d.questionPrompt || d.id || '';
+    return `<div class="muted" style="font-size:0.9rem;">Delete <strong>${escapeHtml(tt || 'item')}</strong>${label ? `: <strong>${escapeHtml(label)}</strong>` : ''}</div>`;
   }
 
   // ─── GROUP SET (create) ──────────────────────────────────────────────────
@@ -4328,66 +4328,6 @@ export function stopAiRecording() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // AI GRADING
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Draft a grade with AI assistance
- */
-export async function draftGradeWithAI(submissionId, assignmentId) {
-  const submission = appData.submissions.find(s => s.id === submissionId);
-  const assignment = appData.assignments.find(a => a.id === assignmentId);
-
-  if (!submission || !assignment) {
-    showToast('Submission or assignment not found', 'error');
-    return;
-  }
-
-  const rubric = assignment.rubric || null;
-  const prompt = AI_PROMPTS.gradeSubmission(assignment, submission, rubric);
-
-  try {
-    showToast('Drafting grade with AI...', 'info');
-
-    const contents = [{ parts: [{ text: prompt }] }];
-    const data = await callGeminiAPI({
-      contents,
-      generationConfig: { responseMimeType: "application/json", temperature: AI_CONFIG.TEMPERATURE_GRADING }
-    });
-
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-
-    const text = data.candidates[0].content.parts[0].text;
-
-    // Try to parse JSON from response
-    let result;
-    try {
-      const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
-      result = JSON.parse(jsonMatch ? jsonMatch[1] || jsonMatch[0] : text);
-    } catch (parseErr) {
-      // Fallback: extract score and feedback manually
-      const scoreMatch = text.match(/score["']?\s*:\s*(\d+)/i);
-      const feedbackMatch = text.match(/feedback["']?\s*:\s*["'](.*?)["']/is);
-
-      result = {
-        score: scoreMatch ? parseInt(scoreMatch[1]) : Math.floor(assignment.points * 0.85),
-        feedback: feedbackMatch ? feedbackMatch[1] : text
-      };
-    }
-
-    const scoreEl = document.getElementById('gradeScore');
-    const feedbackEl = document.getElementById('gradeFeedback');
-
-    if (scoreEl) scoreEl.value = result.score;
-    if (feedbackEl) feedbackEl.value = result.feedback;
-
-    showToast('AI draft ready! Review and edit as needed.', 'success');
-
-  } catch (err) {
-    console.error('AI grading error:', err);
-    showToast('AI drafting failed: ' + err.message, 'error');
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AI CONTENT CREATION MODAL
