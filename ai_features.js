@@ -2617,7 +2617,7 @@ async function executeAiOperation(operation, publish = false) {
     if (renderHomeCallback) renderHomeCallback();
     // Notify students when published
     if (publish && !announcement.hidden) {
-      supabaseNotifyCourseStudents(activeCourseId, 'announcement', 'New announcement: ' + announcement.title, (announcement.content || '').slice(0, 100), 'updates', announcement.id);
+      await supabaseNotifyCourseStudents(activeCourseId, 'announcement', 'New announcement: ' + announcement.title, (announcement.content || '').slice(0, 100), 'updates', announcement.id);
     }
     return true;
   }
@@ -2743,7 +2743,7 @@ async function executeAiOperation(operation, publish = false) {
     if (renderAssignmentsCallback) renderAssignmentsCallback();
     // Notify students when published
     if (newAssignment.status === 'published' && !newAssignment.hidden) {
-      supabaseNotifyCourseStudents(activeCourseId, 'assignment', 'New assignment: ' + newAssignment.title, (newAssignment.description || '').slice(0, 100), 'assignments', newAssignment.id);
+      await supabaseNotifyCourseStudents(activeCourseId, 'assignment_due', 'New assignment: ' + newAssignment.title, (newAssignment.description || '').slice(0, 100), 'assignments', newAssignment.id);
     }
     return true;
   }
