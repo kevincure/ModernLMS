@@ -416,181 +416,446 @@ function getMissingPublishRequirements(operation, publish = false) {
   return [];
 }
 // ═══════════════════════════════════════════════════════════════════════════════
-// MULTI-STEP AI ENGINE
-// Flow: user message → buildSystemPrompt → runAiLoop → [tool_call → result → loop]
-//       → action (Take Action Card) | answer (text bubble) | ask_user (inline input)
-// The AI never touches the DB; it only emits JSON. Deterministic code executes actions.
+// MULTI-STEP AI ENGINE — Gemini native function calling
+// Flow: user message → buildSystemInstruction + buildFunctionDeclarations
+//       → runAiLoop → [functionCall → result → loop]
+//       → action (Take Action Card) | text (chat bubble) | ask_user (inline input)
+// The AI never touches the DB; it only emits function calls. Deterministic code executes actions.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Gemini function‑declaration parameter schemas for each action type ──────
+const STR = { type: 'string' };
+const NUM = { type: 'number' };
+const BOOL = { type: 'boolean' };
+const STR_ARRAY = { type: 'array', items: { type: 'string' } };
+const QUESTION_ITEM = {
+  type: 'object',
+  properties: {
+    type:          { type: 'string', description: 'multiple_choice|true_false|short_answer|essay|fill_in_blank|matching|ordering' },
+    prompt:        { type: 'string', description: 'The question text' },
+    options:       { type: 'array', items: { type: 'string' }, description: 'Answer options (for multiple_choice, matching, ordering)' },
+    correctAnswer: { type: 'string', description: 'Correct answer index/value' },
+    points:        { type: 'number', description: 'Points for this question' }
+  },
+  required: ['type', 'prompt']
+};
+const QUESTION_ARRAY = { type: 'array', items: QUESTION_ITEM };
+const PIPELINE_STEP = {
+  type: 'object',
+  properties: {
+    action: { type: 'string', description: 'Action name (e.g. create_assignment)' }
+  },
+  description: 'An action step — include all fields required by that action'
+};
+
+const ACTION_PARAM_SCHEMAS = {
+  // Assignments
+  create_assignment: {
+    type: 'object',
+    properties: {
+      title: STR, description: STR, assignmentType: { type: 'string', description: 'essay|quiz|no_submission' },
+      gradingType: { type: 'string', description: 'points|complete_incomplete|letter_grade|not_graded' },
+      points: NUM, dueDate: { type: 'string', description: 'ISO 8601 local datetime, no Z' },
+      status: { type: 'string', description: 'draft|published' },
+      submissionModalities: STR_ARRAY, allowLateSubmissions: BOOL, lateDeduction: NUM,
+      allowResubmission: BOOL, submissionAttempts: NUM, gradingNotes: STR,
+      questionBankId: STR, timeLimit: NUM, randomizeQuestions: BOOL,
+      availableFrom: STR, availableUntil: STR, fileIds: STR_ARRAY,
+      isGroupAssignment: BOOL, groupSetId: STR, groupGradingMode: { type: 'string', description: 'per_group|individual' }
+    },
+    required: ['title']
+  },
+  update_assignment: {
+    type: 'object',
+    properties: {
+      id: STR, title: STR, description: STR, points: NUM, dueDate: STR,
+      status: STR, assignmentType: STR, gradingType: STR,
+      allowLateSubmissions: BOOL, lateDeduction: NUM, allowResubmission: BOOL,
+      isGroupAssignment: BOOL, groupSetId: STR, groupGradingMode: STR
+    },
+    required: ['id']
+  },
+  delete_assignment: { type: 'object', properties: { id: STR }, required: ['id'] },
+
+  // Quizzes from bank
+  create_quiz_from_bank: {
+    type: 'object',
+    properties: {
+      title: STR, description: STR, category: STR, questionBankId: STR,
+      numQuestions: NUM, randomizeQuestions: BOOL, randomizeAnswers: BOOL,
+      dueDate: STR, availableFrom: STR, availableUntil: STR,
+      points: NUM, timeLimit: NUM, attempts: NUM, allowLateSubmissions: BOOL,
+      status: STR, gradingNotes: STR
+    },
+    required: ['questionBankId']
+  },
+
+  // Question Banks
+  create_question_bank: {
+    type: 'object',
+    properties: { name: STR, description: STR, questions: QUESTION_ARRAY },
+    required: ['name']
+  },
+  update_question_bank: {
+    type: 'object',
+    properties: { id: STR, name: STR, description: STR },
+    required: ['id']
+  },
+  add_questions_to_bank: {
+    type: 'object',
+    properties: { id: STR, bankName: STR, questions: QUESTION_ARRAY },
+    required: ['id', 'questions']
+  },
+  delete_question_bank: { type: 'object', properties: { id: STR }, required: ['id'] },
+  delete_question_from_bank: {
+    type: 'object',
+    properties: { bankId: STR, questionId: STR, questionPrompt: STR },
+    required: ['bankId', 'questionId']
+  },
+
+  // Announcements
+  create_announcement: {
+    type: 'object',
+    properties: { title: STR, content: STR, pinned: BOOL, status: STR, fileIds: STR_ARRAY },
+    required: ['title', 'content']
+  },
+  update_announcement: {
+    type: 'object',
+    properties: { id: STR, title: STR, content: STR, pinned: BOOL, hidden: BOOL },
+    required: ['id']
+  },
+  delete_announcement: { type: 'object', properties: { id: STR }, required: ['id'] },
+  publish_announcement: { type: 'object', properties: { id: STR }, required: ['id'] },
+  pin_announcement: {
+    type: 'object',
+    properties: { id: STR, pinned: BOOL },
+    required: ['id', 'pinned']
+  },
+
+  // Modules
+  create_module: {
+    type: 'object',
+    properties: { name: STR, description: STR },
+    required: ['name']
+  },
+  update_module: {
+    type: 'object',
+    properties: { moduleId: STR, moduleName: STR, name: { type: 'string', description: 'New name' } },
+    required: ['moduleId', 'name']
+  },
+  set_module_visibility: {
+    type: 'object',
+    properties: { moduleId: STR, moduleName: STR, hidden: BOOL },
+    required: ['moduleId', 'hidden']
+  },
+  add_to_module: {
+    type: 'object',
+    properties: {
+      moduleId: STR, moduleName: STR,
+      itemType: { type: 'string', description: 'assignment|quiz|file|external_link' },
+      itemId: STR, itemTitle: STR, url: STR
+    },
+    required: ['moduleId', 'itemType']
+  },
+  remove_from_module: {
+    type: 'object',
+    properties: { moduleId: STR, itemId: STR, itemTitle: STR },
+    required: ['moduleId', 'itemId']
+  },
+  move_to_module: {
+    type: 'object',
+    properties: { itemId: STR, fromModuleId: STR, toModuleId: STR },
+    required: ['itemId', 'fromModuleId', 'toModuleId']
+  },
+
+  // Files
+  rename_file: {
+    type: 'object',
+    properties: { fileId: STR, oldName: STR, newName: STR },
+    required: ['fileId', 'newName']
+  },
+  set_file_folder: {
+    type: 'object',
+    properties: { fileId: STR, fileName: STR, folder: STR },
+    required: ['fileId']
+  },
+  set_file_visibility: {
+    type: 'object',
+    properties: { fileId: STR, fileName: STR, hidden: BOOL },
+    required: ['fileId', 'hidden']
+  },
+
+  // People
+  create_invite: {
+    type: 'object',
+    properties: { emails: STR_ARRAY, role: { type: 'string', description: 'student|ta|instructor' } },
+    required: ['emails']
+  },
+  revoke_invite: {
+    type: 'object',
+    properties: { inviteId: STR, email: STR },
+    required: ['inviteId']
+  },
+  remove_person: {
+    type: 'object',
+    properties: { userId: STR, name: STR },
+    required: ['userId']
+  },
+
+  // Course
+  update_start_here: {
+    type: 'object',
+    properties: { title: STR, content: STR },
+    required: ['content']
+  },
+  set_course_visibility: {
+    type: 'object',
+    properties: { visible: BOOL },
+    required: ['visible']
+  },
+
+  // Calendar
+  create_calendar_event: {
+    type: 'object',
+    properties: {
+      title: STR,
+      eventDate: { type: 'string', description: 'ISO 8601 local datetime' },
+      eventType: { type: 'string', description: 'Class|Lecture|Office Hours|Exam|Event' },
+      description: STR
+    },
+    required: ['title', 'eventDate']
+  },
+  update_calendar_event: {
+    type: 'object',
+    properties: { id: STR, title: STR, eventDate: STR, eventType: STR, description: STR },
+    required: ['id']
+  },
+  delete_calendar_event: {
+    type: 'object',
+    properties: { id: STR, title: STR },
+    required: ['id']
+  },
+
+  // Groups
+  create_group_set: {
+    type: 'object',
+    properties: { name: STR, description: STR, groupCount: NUM },
+    required: ['name']
+  },
+  delete_group_set: {
+    type: 'object',
+    properties: { id: STR, name: STR },
+    required: ['id']
+  },
+  auto_assign_groups: {
+    type: 'object',
+    properties: { groupSetId: STR, groupSetName: STR },
+    required: ['groupSetId']
+  },
+
+  // Discussion threads
+  create_discussion_thread: {
+    type: 'object',
+    properties: { title: STR, content: STR, pinned: BOOL },
+    required: ['title']
+  },
+  update_discussion_thread: {
+    type: 'object',
+    properties: { id: STR, title: STR, content: STR },
+    required: ['id']
+  },
+  delete_discussion_thread: {
+    type: 'object',
+    properties: { id: STR, threadTitle: STR },
+    required: ['id']
+  },
+  pin_discussion_thread: {
+    type: 'object',
+    properties: { id: STR, threadTitle: STR, pinned: BOOL },
+    required: ['id', 'pinned']
+  },
+  reply_discussion_thread: {
+    type: 'object',
+    properties: { threadId: STR, threadTitle: STR, content: STR },
+    required: ['threadId', 'content']
+  },
+
+  // Messaging
+  send_message: {
+    type: 'object',
+    properties: { recipientIds: STR_ARRAY, message: STR },
+    required: ['recipientIds', 'message']
+  },
+  reply_message: {
+    type: 'object',
+    properties: { conversationId: STR, message: STR },
+    required: ['conversationId', 'message']
+  },
+
+  // Pipeline
+  pipeline: {
+    type: 'object',
+    properties: {
+      steps: { type: 'array', items: PIPELINE_STEP, description: 'Ordered list of actions to execute' },
+      notes: STR
+    },
+    required: ['steps']
+  }
+};
+
 /**
- * Build system prompt dynamically from AI_TOOL_REGISTRY so it always reflects
- * current capabilities with zero extra work when new tools/actions are added.
+ * Build Gemini function declarations from AI_TOOL_REGISTRY.
+ * Returns the `tools` array for the Gemini API request.
  */
-function buildSystemPrompt(isStaff, courseContext) {
+function buildFunctionDeclarations(isStaff) {
+  const declarations = [];
+
+  // Context tools (read-only lookups)
+  const contextTools = isStaff
+    ? AI_TOOL_REGISTRY.context_tools
+    : AI_TOOL_REGISTRY.context_tools.filter(t => STUDENT_TOOLS.includes(t.name));
+
+  for (const tool of contextTools) {
+    const decl = { name: tool.name, description: tool.description };
+    if (tool.params && Object.keys(tool.params).length) {
+      decl.parameters = {
+        type: 'object',
+        properties: Object.fromEntries(
+          Object.entries(tool.params).map(([k]) => [k, { type: 'string', description: k.replace(/_/g, ' ') }])
+        ),
+        required: Object.keys(tool.params)
+      };
+    }
+    declarations.push(decl);
+  }
+
+  // Action types
+  const actionTypes = isStaff
+    ? AI_TOOL_REGISTRY.action_types
+    : AI_TOOL_REGISTRY.action_types.filter(t => STUDENT_ACTIONS.includes(t.name));
+
+  for (const action of actionTypes) {
+    const schema = ACTION_PARAM_SCHEMAS[action.name];
+    const decl = { name: action.name, description: action.description };
+    if (schema) decl.parameters = schema;
+    declarations.push(decl);
+  }
+
+  // ask_user — available to both roles
+  declarations.push({
+    name: 'ask_user',
+    description: 'Ask the user a clarification question when intent is fundamentally ambiguous and defaults cannot apply',
+    parameters: {
+      type: 'object',
+      properties: { question: { type: 'string', description: 'The question to ask the user' } },
+      required: ['question']
+    }
+  });
+
+  return [{ function_declarations: declarations }];
+}
+
+/**
+ * Build system instruction for Gemini.
+ * Contains behavioral rules only — tool/action definitions are in function declarations.
+ */
+function buildSystemInstruction(isStaff, courseContext) {
   if (!isStaff) {
-    const studentToolList = STUDENT_TOOLS.map(name => {
-      const t = AI_TOOL_REGISTRY.context_tools.find(ct => ct.name === name);
-      if (!t) return '';
-      const paramStr = t.params ? `(${Object.entries(t.params).map(([k, v]) => `${k}: ${v}`).join(', ')})` : '';
-      return `  - ${t.name}${paramStr}: ${t.description}`;
-    }).filter(Boolean).join('\n');
-    const messagingActionList = AI_TOOL_REGISTRY.action_types
-      .filter(t => STUDENT_ACTIONS.includes(t.name))
-      .map(t => `  - ${t.name}: ${t.description}`)
-      .join('\n');
     return `You are an AI assistant for an LMS helping a STUDENT. Help with course questions, explain concepts, provide guidance, and help send or reply to messages.
 
-⚠️ OUTPUT FORMAT — CRITICAL:
-Output ONLY a single valid JSON object. No text before or after.
-- To answer: {"type":"answer","text":"Your response here"}
-- To look up course data: {"type":"tool_call","tool":"tool_name","params":{},"step_label":"📋 Looking up..."}
-- To send a message: {"type":"action","action":"send_message","recipientIds":["<id>"],"message":"..."}
-- To reply to a conversation: {"type":"action","action":"reply_message","conversationId":"<id>","message":"..."}
+Call the available tools to look up real IDs before taking any action — never guess IDs.
+You may send messages and reply to messages. You may NOT create or modify any other content (assignments, quizzes, grades, etc.).
 
-AVAILABLE TOOLS (call these to look up real IDs — never guess IDs):
-${studentToolList}
+COMMUNICATION CHANNEL RULES:
+- "message all students" / "notify everyone" → create_announcement
+- "message" a specific student by name → send_message (call list_people first for their user ID)
+- "reply" to an existing conversation → reply_message (call list_conversations first)
+- "post to discussion" / "start a thread" → create_discussion_thread
+- "reply to a discussion" → reply_discussion_thread (call list_discussion_threads first)
 
-AVAILABLE MESSAGING ACTIONS:
-${messagingActionList}
-
-⚠️ COMMUNICATION CHANNEL RULES:
-- When the user asks to "message all students", "notify everyone", or "send to the class": use create_announcement (announcements are the default for reaching all students).
-- When the user asks to "message" one or a few specific students by name: use send_message (direct message).
-- When the user asks to "post to the discussion board", "start a discussion", or "create a thread": use create_discussion_thread.
-- When the user asks to "reply to a discussion": use reply_discussion_thread.
-- ALWAYS use send_message by default for individual communication unless the user explicitly says "reply" or references a specific existing conversation.
-- Before send_message: call list_people to find the recipient's user ID by name.
-- Before reply_message: call list_conversations to find the conversationId.
-- Before update/delete/pin/reply discussion threads: call list_discussion_threads to get the thread ID.
-- You may send messages and reply to messages. You may NOT create or modify any other content (assignments, quizzes, grades, etc.).
-NEVER include raw UUIDs in answer text — refer to things by name/title only.
+When responding with plain text, NEVER include raw UUIDs — refer to things by name/title only.
 
 ${courseContext}`;
   }
 
-  const toolList = AI_TOOL_REGISTRY.context_tools.map(t => {
-    const paramStr = t.params ? `(${Object.entries(t.params).map(([k, v]) => `${k}: ${v}`).join(', ')})` : '';
-    return `  - ${t.name}${paramStr}: ${t.description}`;
-  }).join('\n');
+  return `You are an AI assistant for an LMS helping an INSTRUCTOR manage course content. You look up real data via tools, then propose an action for the instructor to confirm. You never touch the database — you propose actions that the instructor reviews and confirms.
 
-  const actionList = AI_TOOL_REGISTRY.action_types.map(t =>
-    `  - ${t.name}${t.dangerous ? ' ⚠️' : ''}: ${t.description}`
-  ).join('\n');
+When no function call is needed, respond with plain text (for questions, explanations, confirmations).
 
-  return `You are an AI assistant for an LMS (Learning Management System) helping an INSTRUCTOR manage course content. You look up real data via tools, then propose an action for the instructor to confirm.
+MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT IDs. You MUST call a lookup tool to get real IDs before every action:
+- Before update/delete assignment → call list_assignments
+- Before update/delete announcement → call list_announcements
+- Before update/delete quiz → call list_quizzes
+- Before update_module or set_module_visibility → call list_modules
+- Before add_to_module/remove_from_module/move_to_module → call list_modules
+- Before rename_file or set_file_visibility → call list_files
+- Before update/add_to/delete question_bank → call list_question_banks
+- Before delete_question_from_bank → call list_question_banks then get_question_bank
+- Before invite/person actions (revoke_invite, remove_person) → call list_people
+- Before creating a quiz from a bank → call list_question_banks
+- Before get_student_grades → call list_people to get userId
+- Standalone quiz creation is deprecated. Use create_assignment with assignmentType:"quiz" or create_quiz_from_bank.
+- NEVER guess IDs — wrong IDs cause errors.
+- NEVER include raw UUIDs in text responses — always use human-readable names/titles.
 
-⚠️ OUTPUT FORMAT — CRITICAL:
-- Output ONLY a single valid JSON object. No text before or after the JSON. No explanation outside the JSON.
-- If you need to explain something, put it inside the "text" field of a {"type":"answer"} object.
-- If you need to call a tool, output ONLY the tool_call JSON — do not add any prose explanation.
+ALWAYS include human-readable labels alongside IDs in action payloads:
+- inviteId → also include email
+- userId → also include name and email
+- moduleId → also include moduleName
+- itemId → also include itemTitle
+- fileId → also include fileName
+- bankId → also include bankName
+- questionId → also include questionPrompt
 
-ALWAYS respond with ONLY a single valid JSON object in exactly one of these formats:
+OUT-OF-SCOPE — respond with text, do NOT call an action:
+- Creating a new course, importing content, editing course name/code/description → "done manually in Course Settings"
+- Editing gradebook (categories, weights, letter thresholds, changing grades) → "grade changes must be made directly in the Gradebook"
 
-1. Direct text answer (for questions/explanations, or when no action is needed):
-{"type":"answer","text":"Your response here"}
-
-2. Tool call — look up real IDs/data before acting. You WILL see the result and can call more tools before your final output:
-{"type":"tool_call","tool":"tool_name","params":{"key":"value"},"step_label":"👥 Looking up people and invites..."}
-
-3. Ask user for clarification — ONLY when intent is fundamentally ambiguous and defaults cannot apply:
-{"type":"ask_user","question":"Which question bank should I use? Available: Bank A, Bank B"}
-
-4. Action — creates a Take Action Card for the instructor to review and confirm (you never touch the DB):
-{"type":"action","action":"action_name",...all required fields...}
-
-AVAILABLE TOOLS (call these first to look up real IDs — never guess IDs):
-${toolList}
-
-AVAILABLE ACTIONS (* = required field):
-${actionList}
-
-MANDATORY PRE-ACTION RULES — the COURSE CONTEXT only provides item counts, NOT IDs. You MUST call a tool to get real IDs before every action:
-- Before update/delete assignment: call list_assignments → use the returned id
-- Before update/delete announcement: call list_announcements → use the returned id
-- Before update/delete quiz: call list_quizzes → use the returned id
-- Before update_module or set_module_visibility: call list_modules → use the returned module id
-- Before add_to_module/remove_from_module/move_to_module: call list_modules → use the returned moduleId/itemId
-- Before rename_file or set_file_visibility: call list_files → use the returned file id
-- Before update_question_bank, add_questions_to_bank, delete_question_bank: call list_question_banks → use the returned bank id
-- Before delete_question_from_bank: call list_question_banks → then call get_question_bank(bank_id) → use the returned question id
-- Before ANY invite/person action (revoke_invite, remove_person): call list_people → use the returned inviteId/userId
-- Before creating a quiz/exam from a bank: call list_question_banks → use the returned id
-- Standalone quiz actions (create_quiz/create_quiz_inline) are deprecated. To create a quiz, ALWAYS use create_assignment with assignmentType:"quiz" (and questionBankId) or create_quiz_from_bank.
-- Before get_student_grades: call list_people → pass the returned userId as the user_id param
-- NEVER guess or hallucinate IDs — all IDs are validated server-side; wrong IDs show an error card, not an action card
-- NEVER include raw UUIDs or database IDs in the "text" field of any answer — always refer to things by human-readable name, title, or email.
-  ❌ WRONG: "There are two announcements: 'Andy' (ID: f42c0e22-...) and 'Chad' (ID: 65570f8d-...)"
-  ✓ RIGHT: "There are two guest lecture announcements: one for Andy Esteves and one for Chad Kogar. Which did you mean?"
-- ACTION PAYLOAD FIELDS ARE DIFFERENT: you MUST include the real database "id" (or inviteId/userId/moduleId/fileId/bankId) field in every action JSON payload. These are machine fields, not shown to users. The COURSE CONTEXT only shows counts — you MUST call the relevant list tool first to obtain the real ID.
-  ❌ WRONG update_assignment: {"type":"action","action":"update_assignment","title":"New Title"}  ← missing id; call list_assignments first
-  ✓ RIGHT update_assignment: {"type":"action","action":"update_assignment","id":"the-uuid-from-list_assignments","title":"New Title"}
-  ❌ WRONG update_announcement: {"type":"action","action":"update_announcement","title":"New Title"}  ← missing id; call list_announcements first
-  ✓ RIGHT update_announcement: {"type":"action","action":"update_announcement","id":"the-uuid-from-list_announcements","title":"New Title"}
-  ❌ WRONG revoke_invite: {"type":"action","action":"revoke_invite","email":"x@x.com"}  ← missing inviteId; call list_people first
-  ✓ RIGHT revoke_invite: {"type":"action","action":"revoke_invite","inviteId":"the-uuid-from-list_people","email":"x@x.com"}
-
-ALWAYS include human-readable label fields alongside every ID in action payloads:
-- inviteId → also include email (from list_people result)
-- userId → also include name and email (from list_people result)
-- moduleId → also include moduleName (from list_modules result)
-- itemId → also include itemTitle (from list_modules or list_assignments/quizzes/files)
-- fileId → also include fileName (from list_files result)
-- bankId → also include bankName (from list_question_banks result)
-- questionId → also include questionPrompt (from get_question_bank result)
-
-OUT-OF-SCOPE REQUESTS — respond with an answer, do NOT use an action:
-- Creating a new course, importing content from another course, or editing course name/code/description/metadata: tell the instructor these must be done manually in Course Settings.
-- Editing the gradebook (grade categories, weights, letter thresholds, or changing a student's grade): tell the instructor "For security reasons, grade and gradebook changes must be made directly in the Gradebook." Do NOT use any grade-editing action.
-
-VIEWING ANALYTICS AND GRADES — use tools then answer, no action needed:
-- To show analytics for an assignment: call get_assignment_analytics(assignment_id) → then answer with the stats
-- To show a student's grades: call list_people → get the userId → call get_student_grades(user_id) → then answer with their grades. Never emit an action for viewing read-only data.
+VIEWING ANALYTICS AND GRADES — use tools then respond with text, no action needed:
+- Assignment analytics → call get_assignment_analytics → respond with stats
+- Student grades → call list_people → get_student_grades → respond with grades
 
 COMMUNICATION CHANNEL RULES:
-- When the user asks to "message all students", "notify everyone", or "send to the class": use create_announcement (announcements are the default for reaching all students).
-- When the user asks to "message" one or a few specific students by name: use send_message (direct message).
-- When the user asks to "post to the discussion board", "start a discussion", or "create a thread": use create_discussion_thread.
-- When the user asks to "reply to a discussion": use reply_discussion_thread.
-- ALWAYS use send_message by default for individual communication unless the user explicitly says "reply" or references a specific existing conversation.
-- Before send_message: call list_people to find the recipient's user ID by name.
-- Before reply_message: call list_conversations to find the conversationId.
-- Before update/delete/pin/reply discussion threads: call list_discussion_threads to get the thread ID.
+- "message all students" / "notify everyone" → create_announcement
+- "message" a specific student by name → send_message (call list_people first)
+- "reply" to existing conversation → reply_message (call list_conversations first)
+- "post to discussion" → create_discussion_thread
+- "reply to a discussion" → reply_discussion_thread (call list_discussion_threads first)
 
-QUESTION BANK QUESTION TYPES (7 supported types for create_question_bank / add_questions_to_bank):
+QUESTION BANK QUESTION TYPES (7 types for create_question_bank / add_questions_to_bank):
 - multiple_choice: options array + correctAnswer (index or value)
 - true_false: correctAnswer:"true" or "false"
 - short_answer: correctAnswer is a string or array of acceptable answers
 - essay: no correctAnswer (manually graded)
 - fill_in_blank: correctAnswer is the expected text
 - matching: options array of {left,right} pairs
-- ordering: options array to put in correct order, correctAnswer is the ordered array
+- ordering: options array in correct order, correctAnswer is the ordered array
 
 CLARIFICATION RULE — minimize ask_user:
-- Only ask when you genuinely cannot proceed (e.g., multiple question banks match and user didn't specify)
+- Only ask when genuinely ambiguous (e.g. multiple question banks match)
 - Do NOT ask about: due dates, points, grading type, modality, late policy, status — use defaults
-- If a field is optional and unknown, set it to null; the instructor edits it in the confirmation form
-- NEVER use ask_user to say "I need to call list_people" or "can you tell me the ID?" — JUST CALL THE TOOL instead. Calling tools is always available to you.
+- Optional unknown fields → set to null; the instructor edits in the confirmation form
+- NEVER call ask_user to say "I need to call list_people" — JUST CALL THE TOOL.
 
 DEFAULTS (use unless user specifies otherwise):
-- Assignment: assignmentType:"essay", gradingType:"points", points:100, dueDate:1 week from now, status:"draft", allowLateSubmissions:true, latePenaltyType:"per_day", lateDeduction:10, allowResubmission:true, submissionAttempts:null, description: always write a concise one-sentence description summarising what students must do — never leave it blank
+- Assignment: assignmentType:"essay", gradingType:"points", points:100, dueDate:1 week from now, status:"draft", allowLateSubmissions:true, latePenaltyType:"per_day", lateDeduction:10, allowResubmission:true, submissionAttempts:null, description: always write a concise one-sentence description — never leave blank
 - no_submission type: no dueDate, no availability dates, always status:"draft"
 - Quiz: attempts:1, randomizeQuestions:false, randomizeAnswers:true, timeLimit:null
 - Announcement: pinned:false, status:"draft"
 - Invite: role:"student"
-- update_start_here: title:"Start Here" (unless user specifies otherwise)
+- update_start_here: title:"Start Here" (unless user specifies)
 
 DATE/TIME RULES — CRITICAL:
-- The "Current date/time" in the course context is already in the user's LOCAL time zone. Use it as local time.
-- All date/time fields (dueDate, availableFrom, availableUntil, eventDate) must be output as LOCAL time WITHOUT a trailing Z or timezone offset.
-  ✓ RIGHT: "2025-09-15T14:00:00"  (local 2pm, no Z)
-  ❌ WRONG: "2025-09-15T14:00:00.000Z"  (this is interpreted as UTC, shifts display time by timezone offset)
-  ❌ WRONG: "2025-09-15T14:00:00+05:00"  (do not include offset)
-- When a user says "2pm" they mean 2pm in their local time — output T14:00:00 with no suffix.
-- EXTRACT DATES FROM CONTENT: If the user pastes announcement/message text that contains a date/time (e.g. "next Saturday, March 7th, 2026, at 2:00 PM"), parse it and use it as the eventDate. Do NOT leave the date blank or ask for it if it appears in the pasted text.
-  Example: "add this to the calendar: we meet next Saturday March 7 at 2pm" → eventDate:"2026-03-07T14:00:00"
-- For relative dates like "next Saturday", resolve them relative to the Current date/time in the course context.
+- "Current date/time" in course context is already in the user's LOCAL time zone.
+- All date/time fields must be LOCAL time WITHOUT trailing Z or timezone offset.
+  ✓ RIGHT: "2025-09-15T14:00:00"
+  ❌ WRONG: "2025-09-15T14:00:00.000Z" or "2025-09-15T14:00:00+05:00"
+- "2pm" = T14:00:00 with no suffix.
+- EXTRACT DATES FROM CONTENT: if user pastes text with a date/time, parse it.
+  Example: "add to calendar: we meet next Saturday March 7 at 2pm" → eventDate:"2026-03-07T14:00:00"
+- Relative dates → resolve relative to the Current date/time in course context.
 
-CONTENT FORMATTING (markdown supported in description/content fields):
+CONTENT FORMATTING (markdown supported):
 - **bold**, *italic*, ## headers, - bullet lists
 - Link files: [📄 filename](#file-FILE_ID)
 
@@ -1188,193 +1453,153 @@ function validateActionPayload(payload) {
  * Each tool step is shown as a pill in the chat thread.
  * Max MAX_STEPS iterations to prevent infinite loops.
  */
-async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
-  const MAX_STEPS = 6;
+async function runAiLoop(contents, systemInstruction, tools, isStaffUser = true) {
   let steps = 0;
 
-  while (steps < MAX_STEPS) {
+  // Sets of known names for dispatching function calls
+  const CONTEXT_TOOL_NAMES = new Set(AI_TOOL_REGISTRY.context_tools.map(t => t.name));
+  const ACTION_NAMES = new Set([
+    ...(AI_TOOL_REGISTRY.action_types || []).map(a => a.name),
+    'pipeline', 'edit_pending_action'
+  ]);
+
+  const TOOL_ICONS = {
+    list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖',
+    list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝',
+    get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊',
+    get_grade_settings:'📊', get_file_content:'📄', list_conversations:'✉️',
+    get_assignment_analytics:'📊', get_student_grades:'📊', list_group_sets:'👥',
+    get_group_set:'👥', get_start_here:'🏠', list_calendar_events:'📅'
+  };
+
+  while (steps < AI_CONFIG.MAX_STEPS) {
     steps++;
 
-    const data = await callGeminiAPIWithRetry(contents, { temperature: AI_CONFIG.TEMPERATURE_CHAT });
+    const data = await callGeminiAPIWithRetry({
+      contents,
+      systemInstruction,
+      tools,
+      toolConfig: { function_calling_config: { mode: 'AUTO' } },
+      generationConfig: { temperature: AI_CONFIG.TEMPERATURE_CHAT, maxOutputTokens: 8192 }
+    });
     if (data.error) throw new Error(data.error.message);
 
-    const rawReply = data.candidates[0].content.parts[0].text.trim();
-    const cleaned = rawReply.replace(/^```json\s*/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+    const candidate = data.candidates[0];
+    const parts = candidate.content.parts || [];
 
-    // ── Parse JSON — robust extraction handles mixed text+JSON responses ─────
-    // Gemini sometimes outputs a prose explanation followed by (or mixed with)
-    // a JSON object. Walk the string to find every top-level {...} block,
-    // parse each, then pick the highest-priority type so a tool_call wins
-    // over a plain answer even when mixed with natural language.
-    const TYPE_PRIORITY = { tool_call: 4, action: 3, ask_user: 2, answer: 1 };
-    let parsed = null;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      // Extract all top-level JSON blocks
-      let depth = 0, blockStart = -1;
-      let best = null, bestPriority = 0;
-      for (let i = 0; i < cleaned.length; i++) {
-        if (cleaned[i] === '{') { if (depth === 0) blockStart = i; depth++; }
-        else if (cleaned[i] === '}' && depth > 0) {
-          depth--;
-          if (depth === 0 && blockStart !== -1) {
-            try {
-              const candidate = JSON.parse(cleaned.slice(blockStart, i + 1));
-              const p = TYPE_PRIORITY[candidate.type] || 0;
-              if (p > bestPriority) { best = candidate; bestPriority = p; }
-            } catch { /* malformed block — skip */ }
-            blockStart = -1;
-          }
-        }
-      }
-      parsed = best;
-    }
+    // ── Check for function call ────────────────────────────────────────────
+    const fnCallPart = parts.find(p => p.functionCall);
 
-    // ── Bad JSON → retry with correction prompt ────────────────────────────────
-    if (!parsed) {
-      contents = [
-        ...contents,
-        { role: 'model', parts: [{ text: rawReply }] },
-        { role: 'user',  parts: [{ text: 'ERROR: Your response was not valid JSON. Output ONLY a single valid JSON object with no other text. Try again.' }] }
-      ];
-      continue;
-    }
-
-    // ── Normalize: AI sometimes uses tool name as `type` instead of tool_call ─
-    // e.g. {"type":"get_file_content","params":{...}} instead of the correct
-    // {"type":"tool_call","tool":"get_file_content","params":{...}}
-    const KNOWN_TOOLS = ['list_assignments','list_quizzes','list_files','list_modules','list_people',
-      'list_question_banks','list_announcements','list_discussion_threads','get_grade_categories',
-      'get_grade_settings','get_question_bank','get_assignment','get_quiz','get_file_content',
-      'get_start_here','list_conversations','get_assignment_analytics','get_student_grades',
-      'list_group_sets','get_group_set','list_calendar_events'];
-    if (parsed.type && !['tool_call','action','ask_user','answer'].includes(parsed.type) && KNOWN_TOOLS.includes(parsed.type)) {
-      parsed = { type: 'tool_call', tool: parsed.type, params: parsed.params || {}, step_label: parsed.step_label || '' };
-    }
-
-    // Normalize: AI sometimes uses action name as `type` instead of `action`
-    // e.g. {"type":"create_question_bank",...} instead of
-    // {"type":"action","action":"create_question_bank",...}
-    const RESERVED_TYPES = ['tool_call', 'action', 'ask_user', 'answer'];
-    const ACTION_TYPES = new Set((AI_TOOL_REGISTRY.action_types || []).map(actionType => actionType.name));
-    if (parsed.type && !RESERVED_TYPES.includes(parsed.type) && !parsed.action && ACTION_TYPES.has(parsed.type)) {
-      parsed = { ...parsed, type: 'action', action: parsed.type };
-    }
-
-    // Normalize: {"type":"pipeline","actions":[...]} → {"type":"action","action":"pipeline","steps":[...]}
-    if (parsed.type === 'pipeline') {
-      parsed = { type: 'action', action: 'pipeline', steps: parsed.actions || parsed.steps || [] };
-    }
-
-    // Normalize: pipeline with "actions" array instead of "steps"
-    if (parsed.type === 'action' && parsed.action === 'pipeline' && !parsed.steps && Array.isArray(parsed.actions)) {
-      parsed = { ...parsed, steps: parsed.actions };
-    }
-
-    // ── Direct text answer ────────────────────────────────────────────────────
-    if (parsed.type === 'answer') {
-      aiThread.push({ role: 'assistant', content: parsed.text });
+    if (!fnCallPart) {
+      // Text response — direct answer
+      const text = parts.map(p => p.text || '').join('');
+      aiThread.push({ role: 'assistant', content: text });
       renderAiThread();
       return;
     }
 
-    // ── Tool call ─────────────────────────────────────────────────────────────
-    if (parsed.type === 'tool_call') {
-      // Enforce student tool restrictions in code (not just prompt)
-      if (!isStaffUser && !STUDENT_TOOLS.includes(parsed.tool)) {
+    const { name: fnName, args: fnArgs } = fnCallPart.functionCall;
+
+    // ── Context tool (read-only lookup) ──────────────────────────────────
+    if (CONTEXT_TOOL_NAMES.has(fnName)) {
+      // Enforce student tool restrictions in code
+      if (!isStaffUser && !STUDENT_TOOLS.includes(fnName)) {
         aiThread.push({ role: 'assistant', content: 'I can only look up course information as a student.' });
         renderAiThread();
         return;
       }
-      const icon = { list_people:'👥', list_assignments:'📋', list_question_banks:'📚', get_question_bank:'📖', list_announcements:'📣', list_files:'📁', list_modules:'🗂️', list_quizzes:'📝', get_assignment:'📄', get_quiz:'❓', list_discussion_threads:'💬', get_grade_categories:'📊', get_grade_settings:'📊', get_file_content:'📄', list_conversations:'✉️' }[parsed.tool] || '🔍';
+
+      const icon = TOOL_ICONS[fnName] || '🔍';
       const stepMsg = {
         role: 'tool_step',
-        tool: parsed.tool,
-        stepLabel: parsed.step_label || `${icon} Calling ${parsed.tool.replace(/_/g, ' ')}…`,
+        tool: fnName,
+        stepLabel: `${icon} Calling ${fnName.replace(/_/g, ' ')}…`,
         result: null,
         resultSummary: null
       };
       aiThread.push(stepMsg);
       renderAiThread();
 
-      const result = await executeAiTool(parsed.tool, parsed.params || {});
+      const result = await executeAiTool(fnName, fnArgs || {});
       stepMsg.result = result;
-      stepMsg.resultSummary = summarizeToolResult(parsed.tool, result);
+      stepMsg.resultSummary = summarizeToolResult(fnName, result);
       renderAiThread();
 
-      // Feed result back as the next user turn so the loop continues.
-      // For get_file_content, attach the file as a multimodal inline data part so
-      // Gemini can read PDFs, DOCX, PPTX, images, etc. directly instead of decoded text.
-      const toolResultParts = [];
+      // Build function response — use native functionCall/functionResponse turns
+      const modelTurn = { role: 'model', parts: [fnCallPart] };
+
+      // For binary files (PDF, images), attach inline data as a separate user turn
+      // since functionResponse content must be JSON.
       if (result._inlineData) {
-        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): File "${result.name}" (${result.mimeType}, ${(result.sizeBytes/1024).toFixed(0)} KB) is attached below. Read and analyze its full content.` });
-        toolResultParts.push({ inlineData: result._inlineData });
+        const meta = { fileName: result.name, mimeType: result.mimeType, sizeKB: Math.round(result.sizeBytes / 1024) };
+        contents = [
+          ...contents,
+          modelTurn,
+          { role: 'function', parts: [{ functionResponse: { name: fnName, response: { name: fnName, content: meta } } }] },
+          { role: 'user', parts: [
+            { text: `Content of "${result.name}" (${result.mimeType}):` },
+            { inlineData: result._inlineData }
+          ]}
+        ];
       } else if (result._textContent !== undefined) {
-        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): File "${result.name}" (${result.mimeType}, ${(result.sizeBytes/1024).toFixed(0)} KB) content:\n\n${result._textContent}\n\nContinue with the original task.` });
+        const textResult = { fileName: result.name, mimeType: result.mimeType, content: result._textContent };
+        contents = [
+          ...contents,
+          modelTurn,
+          { role: 'function', parts: [{ functionResponse: { name: fnName, response: { name: fnName, content: textResult } } }] }
+        ];
       } else {
-        toolResultParts.push({ text: `TOOL_RESULT(${parsed.tool}): ${JSON.stringify(result)}\n\nContinue with the original task.` });
+        contents = [
+          ...contents,
+          modelTurn,
+          { role: 'function', parts: [{ functionResponse: { name: fnName, response: { name: fnName, content: result } } }] }
+        ];
       }
-      contents = [
-        ...contents,
-        { role: 'model', parts: [{ text: rawReply }] },
-        { role: 'user',  parts: toolResultParts }
-      ];
       continue;
     }
 
-    // ── Ask user ──────────────────────────────────────────────────────────────
-    if (parsed.type === 'ask_user') {
-      aiThread.push({ role: 'ask_user', question: parsed.question, pendingContents: contents, systemPrompt });
+    // ── ask_user ─────────────────────────────────────────────────────────
+    if (fnName === 'ask_user') {
+      aiThread.push({
+        role: 'ask_user',
+        question: fnArgs?.question || 'Could you clarify?',
+        pendingContents: contents,
+        systemInstruction,
+        tools
+      });
       renderAiThread();
       return;
     }
 
-    // ── Action ────────────────────────────────────────────────────────────────
-    if (parsed.type === 'action') {
+    // ── Action (proposed change for user confirmation) ───────────────────
+    if (ACTION_NAMES.has(fnName)) {
       // Students can only use whitelisted actions (messaging)
-      if (!isStaffUser && !STUDENT_ACTIONS.includes(parsed.action)) {
+      if (!isStaffUser && !STUDENT_ACTIONS.includes(fnName)) {
         aiThread.push({ role: 'assistant', content: 'I can help you look up information, but only instructors can create or modify course content.' });
         renderAiThread();
         return;
       }
 
-      // Hard check: verify action exists in the registry (or is a known internal action)
-      const KNOWN_ACTIONS = new Set([
-        ...(AI_TOOL_REGISTRY.action_types || []).map(a => a.name),
-        'edit_pending_action', 'pipeline'
-      ]);
-      const normalizedActionName = parsed.action;
-      if (!KNOWN_ACTIONS.has(normalizedActionName)) {
-        // Feed error back to AI so it can reconsider
-        const availableActions = [...KNOWN_ACTIONS].filter(a => a !== 'edit_pending_action').join(', ');
-        const errorMsg = `SYSTEM_ERROR: The action "${normalizedActionName}" does not exist. Available actions are: ${availableActions}. Please check if this can actually be done with one of the available actions, or inform the user that this action is not supported.`;
+      const actionPayload = { type: 'action', action: fnName, ...(fnArgs || {}) };
+      const validationError = validateActionPayload(actionPayload);
+      if (validationError) {
+        // Feed validation error back via functionResponse so the model can fix it
         contents = [
           ...contents,
-          { role: 'model', parts: [{ text: rawReply }] },
-          { role: 'user', parts: [{ text: errorMsg }] }
+          { role: 'model', parts: [fnCallPart] },
+          { role: 'function', parts: [{ functionResponse: { name: fnName, response: { name: fnName, content: { error: validationError } } } }] }
         ];
         continue;
       }
 
-      const validationError = validateActionPayload(parsed);
-      if (validationError) {
-        // Feed validation errors back to AI so it can fix the payload
-        const errorFeedback = `SYSTEM_ERROR: Action validation failed — ${validationError}. Please fix and retry.`;
-        contents = [
-          ...contents,
-          { role: 'model', parts: [{ text: rawReply }] },
-          { role: 'user', parts: [{ text: errorFeedback }] }
-        ];
-        continue;
-      }
-      handleAiAction(parsed);
+      handleAiAction(actionPayload);
       renderAiThread();
       return;
     }
 
-    // ── Fallback: treat as plain text ─────────────────────────────────────────
-    aiThread.push({ role: 'assistant', content: rawReply });
+    // ── Unknown function call — treat as text ────────────────────────────
+    const fallbackText = parts.map(p => p.text || '').join('') || `I called an unexpected function (${fnName}). Please try again.`;
+    aiThread.push({ role: 'assistant', content: fallbackText });
     renderAiThread();
     return;
   }
@@ -1389,64 +1614,57 @@ async function runAiLoop(contents, systemPrompt, isStaffUser = true) {
  * Consecutive same-role turns are merged to satisfy Gemini's alternating requirement.
  * HTML is stripped from assistant messages so Gemini doesn't echo markup.
  */
+/**
+ * Build Gemini-format conversation history from aiThread using native function calling format.
+ * Excludes the most-recently-added message (current user turn just pushed).
+ * Tool steps become functionCall/functionResponse pairs.
+ */
 function buildGeminiHistory() {
   const history = [];
-  const previousMessages = aiThread.slice(0, -1); // exclude current user msg
+  const previousMessages = aiThread.slice(0, -1);
 
   for (const msg of previousMessages) {
     if (msg.hidden) continue;
-    let role, text;
+
     if (msg.role === 'user') {
-      role = 'user';
-      text = msg.content;
+      const last = history[history.length - 1];
+      if (last && last.role === 'user') {
+        last.parts[0].text += '\n\n' + msg.content;
+      } else {
+        history.push({ role: 'user', parts: [{ text: msg.content }] });
+      }
     } else if (msg.role === 'assistant') {
-      // Strip HTML tags so confirmed-action success messages don't get echoed
-      // back verbatim (Gemini confuses rendered HTML with its own prior output)
-      role = 'model';
-      text = (msg.content || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      const text = (msg.content || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
       if (!text) continue;
+      const last = history[history.length - 1];
+      if (last && last.role === 'model') {
+        last.parts.push({ text });
+      } else {
+        history.push({ role: 'model', parts: [{ text }] });
+      }
     } else if (msg.role === 'action' && msg.confirmed) {
-      // Emit a brief action summary; deliberately NOT merged with the follow-up
-      // success-message assistant turn so Gemini gets two clean separate turns
-      // The success message assistant turn comes right after and is handled above.
-      // We skip emitting a model turn here — the assistant success message already
-      // covers it. Skipping avoids the confusing merge.
       continue;
     } else if (msg.role === 'action' && msg.rejected) {
-      role = 'model';
-      text = `I proposed a "${msg.actionType}" action but the instructor cancelled it.`;
+      history.push({ role: 'model', parts: [{ text: `I proposed a "${msg.actionType}" action but the instructor cancelled it.` }] });
     } else if (msg.role === 'tool_step' && msg.result !== null) {
-      // Re-emit tool call + result as model/user turns so the model retains
-      // exact IDs (file IDs, assignment IDs, etc.) across follow-up messages.
-      const toolCallJson = JSON.stringify({ type: 'tool_call', tool: msg.tool });
-      let resultText;
+      // Re-emit as native functionCall → functionResponse turns
+      const fnCallPart = { functionCall: { name: msg.tool, args: {} } };
+      history.push({ role: 'model', parts: [fnCallPart] });
+
+      let responseContent;
       if (msg.result._inlineData) {
-        // Binary file: just record name/type so the model knows it was read
-        resultText = `TOOL_RESULT(${msg.tool}): File "${msg.result.name}" (${msg.result.mimeType}) was read as binary.`;
+        responseContent = { fileName: msg.result.name, mimeType: msg.result.mimeType, note: 'Binary file was read.' };
       } else if (msg.result._textContent !== undefined) {
-        resultText = `TOOL_RESULT(${msg.tool}): ${JSON.stringify({ name: msg.result.name, mimeType: msg.result.mimeType })}\n\n${msg.result._textContent.slice(0, 2000)}`;
+        responseContent = { fileName: msg.result.name, mimeType: msg.result.mimeType, content: msg.result._textContent.slice(0, 2000) };
       } else {
-        resultText = `TOOL_RESULT(${msg.tool}): ${JSON.stringify(msg.result)}`;
+        responseContent = msg.result;
       }
-      // Append model turn (tool call) — merge with prior model turn if possible
-      const lastModel = history[history.length - 1];
-      if (lastModel && lastModel.role === 'model') {
-        lastModel.parts[0].text += '\n\n' + toolCallJson;
-      } else {
-        history.push({ role: 'model', parts: [{ text: toolCallJson }] });
-      }
-      // Append user turn (tool result) — always separate
-      history.push({ role: 'user', parts: [{ text: resultText }] });
-      continue;
-    } else {
-      continue; // skip pending actions, ask_user, incomplete tool_steps
+      history.push({
+        role: 'function',
+        parts: [{ functionResponse: { name: msg.tool, response: { name: msg.tool, content: responseContent } } }]
+      });
     }
-    const last = history[history.length - 1];
-    if (last && last.role === role) {
-      last.parts[0].text += '\n\n' + text;
-    } else {
-      history.push({ role, parts: [{ text }] });
-    }
+    // skip pending actions, ask_user, incomplete tool_steps
   }
   return history;
 }
@@ -1468,31 +1686,27 @@ export async function sendAiMessage(audioBase64 = null) {
   renderAiThread();
 
   try {
-    const systemPrompt = buildSystemPrompt(effectiveIsStaff, buildAiContext());
+    const systemInstruction = { parts: [{ text: buildSystemInstruction(effectiveIsStaff, buildAiContext()) }] };
+    const tools = buildFunctionDeclarations(effectiveIsStaff);
     let contents;
+
     if (audioBase64) {
       contents = [{
+        role: 'user',
         parts: [
           { inlineData: { mimeType: 'audio/webm', data: audioBase64 } },
-          { text: systemPrompt + '\n\nTranscribe this voice message then respond as instructed:' }
+          { text: 'Transcribe this voice message then respond as instructed.' }
         ]
       }];
     } else {
       const geminiHistory = buildGeminiHistory();
-      if (geminiHistory.length === 0) {
-        // First message: embed system prompt in user turn
-        contents = [{ role: 'user', parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }];
-      } else {
-        // Subsequent messages: system prompt anchor + history + current message
-        contents = [
-          { role: 'user', parts: [{ text: systemPrompt }] },
-          { role: 'model', parts: [{ text: '{"type":"answer","text":"Understood. I will follow these instructions."}' }] },
-          ...geminiHistory,
-          { role: 'user', parts: [{ text: message }] }
-        ];
-      }
+      contents = [
+        ...geminiHistory,
+        { role: 'user', parts: [{ text: message }] }
+      ];
     }
-    await runAiLoop(contents, systemPrompt, effectiveIsStaff);
+
+    await runAiLoop(contents, systemInstruction, tools, effectiveIsStaff);
   } catch (err) {
     console.error('AI error:', err);
     showToast('AI request failed: ' + err.message, 'error');
@@ -1521,14 +1735,16 @@ export function sendAiFollowup(idx) {
 
   const resumeContents = [
     ...(msg.pendingContents || []),
-    { role: 'user', parts: [{ text: `USER_ANSWER: ${answer}\n\nContinue with the original task.` }] }
+    { role: 'user', parts: [{ text: answer }] }
   ];
 
   aiProcessing = true;
   updateAiProcessingState();
   const isStaffUser = activeCourseId && isStaffCallback && isStaffCallback(appData.currentUser?.id, activeCourseId);
   const effectiveIsStaff = isStaffUser && !studentViewMode;
-  runAiLoop(resumeContents, msg.systemPrompt || '', effectiveIsStaff).finally(() => {
+  const systemInstruction = msg.systemInstruction || { parts: [{ text: buildSystemInstruction(effectiveIsStaff, buildAiContext()) }] };
+  const tools = msg.tools || buildFunctionDeclarations(effectiveIsStaff);
+  runAiLoop(resumeContents, systemInstruction, tools, effectiveIsStaff).finally(() => {
     aiProcessing = false;
     updateAiProcessingState();
   });
@@ -4132,9 +4348,9 @@ export async function draftGradeWithAI(submissionId, assignmentId) {
     showToast('Drafting grade with AI...', 'info');
 
     const contents = [{ parts: [{ text: prompt }] }];
-    const data = await callGeminiAPI(contents, {
-      responseMimeType: "application/json",
-      temperature: AI_CONFIG.TEMPERATURE_GRADING
+    const data = await callGeminiAPI({
+      contents,
+      generationConfig: { responseMimeType: "application/json", temperature: AI_CONFIG.TEMPERATURE_GRADING }
     });
 
     if (data.error) {
@@ -4254,9 +4470,9 @@ ${systemPrompt}
   try {
     showToast('Generating draft with AI...', 'info');
     const contents = [{ parts: [{ text: contextualPrompt }] }];
-    const data = await callGeminiAPI(contents, {
-      responseMimeType: "application/json",
-      temperature: AI_CONFIG.TEMPERATURE_CHAT
+    const data = await callGeminiAPI({
+      contents,
+      generationConfig: { responseMimeType: "application/json", temperature: AI_CONFIG.TEMPERATURE_CHAT }
     });
 
     if (data.error) {

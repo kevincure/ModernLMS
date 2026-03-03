@@ -286,7 +286,7 @@ Rules:
       ]
     }];
 
-    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: 'application/json', temperature: 0.2 });
+    const data = await callGeminiAPIWithRetry({ contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } });
     if (data.error) throw new Error(data.error.message);
 
     const text = data.candidates[0].content.parts[0].text;
@@ -477,7 +477,7 @@ export async function parseSyllabus() {
     `;
     showToast('Parsing syllabus... please wait', 'info');
 
-    const data = await callGeminiAPIWithRetry(contents, { responseMimeType: "application/json", temperature: 0.2 });
+    const data = await callGeminiAPIWithRetry({ contents, generationConfig: { responseMimeType: "application/json", temperature: 0.2 } });
     if (data.error) {
       throw new Error(data.error.message);
     }

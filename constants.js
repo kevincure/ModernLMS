@@ -98,9 +98,10 @@ export const FILE_SETTINGS = {
 
 export const AI_CONFIG = {
   TEMPERATURE_GRADING: 0.2,
-  TEMPERATURE_CHAT: 0.4,
+  TEMPERATURE_CHAT: 0.1,
   MAX_RETRIES: 3,
-  RETRY_DELAY_MS: 1000
+  RETRY_DELAY_MS: 1000,
+  MAX_STEPS: 10
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
