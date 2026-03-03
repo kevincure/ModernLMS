@@ -6792,7 +6792,7 @@ async function speedGraderDraftWithAI() {
     showToast('Drafting grade with AI...', 'info');
 
     const contents = [{ parts: [{ text: prompt }] }];
-    const data = await callGeminiAPI(contents, { responseMimeType: "application/json", temperature: 0.2 });
+    const data = await callGeminiAPI({ contents, generationConfig: { responseMimeType: "application/json", temperature: 0.2 } });
     if (data.error) throw new Error(data.error.message);
 
     const result = parseAiJsonResponse(data.candidates[0].content.parts[0].text);
@@ -11426,8 +11426,11 @@ async function postDiscussionAiReply(threadId) {
 
     const threadContext = `Discussion thread: "${thread.title}"\n${thread.content ? 'Thread content: ' + thread.content + '\n' : ''}User input/question: ${question}`;
 
-    const contents = [{ role: 'user', parts: [{ text: systemPrompt + '\n\n' + threadContext }] }];
-    const response = await callGeminiAPIWithRetry(contents);
+    const contents = [{ role: 'user', parts: [{ text: threadContext }] }];
+    const response = await callGeminiAPIWithRetry({
+      contents,
+      systemInstruction: { parts: [{ text: systemPrompt }] }
+    });
     const aiText = response?.candidates?.[0]?.content?.parts?.[0]?.text || 'I was unable to generate a response.';
 
     // Show draft for review — don't post immediately

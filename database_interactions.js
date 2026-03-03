@@ -2040,12 +2040,18 @@ export async function supabaseDeleteRubric(rubricId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Call Gemini API via Supabase Edge Function
- * @param {Array} contents - The contents array for the Gemini API
- * @param {Object|null} generationConfig - Optional generation config
+ * Call Gemini API via Supabase Edge Function.
+ * Supports native function calling via tools/tool_config and system_instruction.
+ *
+ * @param {Object} options
+ * @param {Array}  options.contents          - Conversation turns
+ * @param {Object} [options.generationConfig] - Temperature, maxOutputTokens, etc.
+ * @param {Object} [options.systemInstruction] - System instruction ({parts:[{text}]})
+ * @param {Array}  [options.tools]           - Function declarations array
+ * @param {Object} [options.toolConfig]      - e.g. {functionCallingConfig:{mode:'AUTO'}}
  * @returns {Promise<Object>} The API response
  */
-export async function callGeminiAPI(contents, generationConfig = null) {
+export async function callGeminiAPI({ contents, generationConfig = null, systemInstruction = null, tools = null, toolConfig = null }) {
   console.log('[Gemini] callGeminiAPI called, supabaseClient:', !!supabaseClient);
 
   if (!supabaseClient) {
@@ -2059,7 +2065,6 @@ export async function callGeminiAPI(contents, generationConfig = null) {
     throw new Error('Not authenticated - please sign in again');
   }
 
-  // Extra diagnostics for project/token mismatch (common source of 401 on Edge Functions)
   let tokenIssuer = null;
   try {
     const payload = JSON.parse(atob(session.access_token.split('.')[1] || ''));
@@ -2077,17 +2082,23 @@ export async function callGeminiAPI(contents, generationConfig = null) {
 
   console.log('[Gemini] ▶ input:', contents);
 
-  const { data, error } = await supabaseClient.functions.invoke('gemini', {
-    body: { contents, generationConfig }
-  });
+  const body = { contents, generationConfig };
+  if (systemInstruction) body.system_instruction = systemInstruction;
+  if (tools)             body.tools = tools;
+  if (toolConfig)        body.tool_config = toolConfig;
+
+  const { data, error } = await supabaseClient.functions.invoke('gemini', { body });
 
   if (data) {
     const usage = data.usageMetadata || {};
     const cached = usage.cachedContentTokenCount ?? 0;
     const nonCached = (usage.promptTokenCount ?? 0) - cached;
-    const out = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const textOut = parts.map(p => p.text || '').join('');
+    const fnCalls = parts.filter(p => p.functionCall).map(p => p.functionCall.name);
     console.log(`[Gemini] ⚡ tokens — input: ${usage.promptTokenCount ?? '?'} (non-cached: ${nonCached}, cached: ${cached}), output: ${usage.candidatesTokenCount ?? '?'}, thinking: ${usage.thoughtsTokenCount ?? 0}, total: ${usage.totalTokenCount ?? '?'}`);
-    console.log('[Gemini] ◀ output:', out);
+    if (fnCalls.length) console.log('[Gemini] ◀ functionCalls:', fnCalls);
+    if (textOut)         console.log('[Gemini] ◀ text:', textOut);
   }
 
   if (error) {
@@ -2119,17 +2130,16 @@ export async function callGeminiAPI(contents, generationConfig = null) {
 }
 
 /**
- * Call Gemini API with retry logic
- * @param {Array} contents - The contents array for the Gemini API
- * @param {Object|null} generationConfig - Optional generation config
- * @param {number} maxRetries - Maximum number of retry attempts
+ * Call Gemini API with retry logic.
+ * @param {Object} options - Same options as callGeminiAPI
+ * @param {number} [maxRetries=3]
  * @returns {Promise<Object>} The API response
  */
-export async function callGeminiAPIWithRetry(contents, generationConfig = null, maxRetries = 3) {
+export async function callGeminiAPIWithRetry(options, maxRetries = 3) {
   let lastError;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await callGeminiAPI(contents, generationConfig);
+      return await callGeminiAPI(options);
     } catch (err) {
       lastError = err;
       console.warn(`[Gemini] Attempt ${attempt}/${maxRetries} failed:`, err.message);
