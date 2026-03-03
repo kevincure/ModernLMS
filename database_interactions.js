@@ -2537,10 +2537,22 @@ export async function supabaseMarkConversationRead(conversationId) {
 
 export async function supabaseCreateNotification(notif) {
   if (!supabaseClient) return null;
+  const typeAliases = {
+    assignment: 'assignment_due'
+  };
+  const allowedTypes = new Set([
+    'grade_released', 'assignment_due', 'announcement', 'submission_received',
+    'quiz_available', 'invite', 'message_received', 'group_created', 'due_date_reminder'
+  ]);
+  const normalizedType = typeAliases[notif.type] || notif.type;
+  if (!allowedTypes.has(normalizedType)) {
+    console.error('[Supabase] Create notification error: invalid notification type', notif.type);
+    return null;
+  }
   const { data, error } = await supabaseClient.from('notifications').insert({
     user_id: notif.userId,
     course_id: notif.courseId || null,
-    type: notif.type,
+    type: normalizedType,
     title: notif.title,
     body: notif.body || null,
     link: notif.link || null,
@@ -2552,10 +2564,22 @@ export async function supabaseCreateNotification(notif) {
 
 export async function supabaseNotifyCourseStudents(courseId, type, title, body, link, refId) {
   if (!supabaseClient) return false;
+  const typeAliases = {
+    assignment: 'assignment_due'
+  };
+  const allowedTypes = new Set([
+    'grade_released', 'assignment_due', 'announcement', 'submission_received',
+    'quiz_available', 'invite', 'message_received', 'group_created', 'due_date_reminder'
+  ]);
+  const normalizedType = typeAliases[type] || type;
+  if (!allowedTypes.has(normalizedType)) {
+    console.error('[Supabase] notify_course_students aborted: invalid notification type', type);
+    return false;
+  }
   // Try RPC first, fall back to manual insert if RPC doesn't exist
   const { error } = await supabaseClient.rpc('notify_course_students', {
     p_course_id: courseId,
-    p_type: type,
+    p_type: normalizedType,
     p_title: title,
     p_body: body || null,
     p_link: link || null,
@@ -2577,7 +2601,7 @@ export async function supabaseNotifyCourseStudents(courseId, type, title, body, 
       const rows = enrollments.map(e => ({
         user_id: e.user_id,
         course_id: courseId,
-        type: type,
+        type: normalizedType,
         title: title,
         body: body || null,
         link: link || null,

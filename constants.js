@@ -257,7 +257,6 @@ export const AI_TOOL_REGISTRY = {
   // Each result is fed back into the conversation before the AI emits an action.
   context_tools: [
     { name: 'list_assignments',         description: 'All assignments (id, title, assignmentType, gradingType, status, points, dueDate, isGroupAssignment, groupSetId)' },
-    { name: 'list_quizzes',             description: 'All standalone quizzes (id, title, status, dueDate, questionCount)' },
     { name: 'list_files',               description: 'All uploaded files (id, name, type, size, hidden, folder)' },
     { name: 'list_modules',             description: 'Module structure with item IDs, titles, and hidden status' },
     { name: 'list_people',              description: 'Enrolled users AND pending invites. Enrolled rows: {userId, name, email, role, status:"enrolled"}. Pending invite rows: {inviteId, email, role, status:"pending_invite"}. ALWAYS call this before any invite or person action.' },
@@ -269,7 +268,6 @@ export const AI_TOOL_REGISTRY = {
     { name: 'list_group_sets',          description: 'All group sets in this course (id, name, description, groupCount, groups[{id, name, memberCount}])' },
     { name: 'get_question_bank',        description: 'Full question list for a bank (includes question IDs)', params: { bank_id: 'string' } },
     { name: 'get_assignment',           description: 'Full assignment details including rubric', params: { assignment_id: 'string' } },
-    { name: 'get_quiz',                 description: 'Full quiz with all questions', params: { quiz_id: 'string' } },
     { name: 'get_file_content',         description: 'Read text content of a file (PDF/doc)', params: { file_id: 'string' } },
     { name: 'get_assignment_analytics', description: 'Submission and grade stats for an assignment (submittedCount, averageScore, ungradedCount, etc.)', params: { assignment_id: 'string' } },
     { name: 'get_student_grades',       description: 'All grades for a specific enrolled student in this course', params: { user_id: 'string' } },
@@ -285,21 +283,15 @@ export const AI_TOOL_REGISTRY = {
     // Assignments
     { name: 'create_assignment',       description: 'Create a new assignment (essay / quiz / no_submission). For group assignments set isGroupAssignment=true, groupSetId (from list_group_sets), and groupGradingMode (per_group or individual)',  fields: 'title, description, assignmentType, gradingType, points, dueDate, status, submissionModalities, allowLateSubmissions, lateDeduction, allowResubmission, submissionAttempts, gradingNotes, questionBankId, timeLimit, randomizeQuestions, availableFrom, availableUntil, fileIds, isGroupAssignment, groupSetId, groupGradingMode' },
     { name: 'update_assignment',       description: 'Edit an existing assignment. Can also toggle group assignment settings.',  fields: 'id*, title, description, points, dueDate, status, assignmentType, gradingType, allowLateSubmissions, lateDeduction, allowResubmission, isGroupAssignment, groupSetId, groupGradingMode' },
-    { name: 'delete_assignment',       description: 'Permanently delete an assignment',   dangerous: true,    fields: 'id*' },
     // Quizzes
     { name: 'create_quiz_from_bank',   description: 'Create quiz/exam linked to a question bank',            fields: 'title, description, category, questionBankId*, numQuestions, randomizeQuestions, randomizeAnswers, dueDate, availableFrom, availableUntil, points, timeLimit, attempts, allowLateSubmissions, status, gradingNotes' },
     // Question Banks
     { name: 'create_question_bank',    description: 'Create a new question bank with questions. Supported question types: multiple_choice, true_false, short_answer, essay, fill_in_blank, matching, ordering', fields: 'name* (bank title — use "name" NOT "bankName"), description, questions:[{type* (use "type" NOT "questionType"), prompt* (use "prompt" NOT "questionPrompt"), options, correctAnswer, points}]' },
     { name: 'update_question_bank',    description: 'Edit question bank name or description',                 fields: 'id* (from list_question_banks), name, description' },
     { name: 'add_questions_to_bank',   description: 'Append new questions to an existing question bank',      fields: 'id* (from list_question_banks), bankName, questions:[{type,prompt,options,correctAnswer,points}]' },
-    { name: 'delete_question_bank',    description: 'Permanently delete a question bank', dangerous: true,   fields: 'id* (from list_question_banks)' },
-    { name: 'delete_question_from_bank', description: 'Delete a single question from a question bank', dangerous: true, fields: 'bankId* (from list_question_banks), questionId* (from get_question_bank), questionPrompt' },
     // Announcements
     { name: 'create_announcement',     description: 'Create a new announcement',                             fields: 'title, content, pinned, status, fileIds' },
-    { name: 'update_announcement',     description: 'Edit an existing announcement (title, content, pinning, visibility)', fields: 'id*, title, content, pinned, hidden' },
-    { name: 'delete_announcement',     description: 'Permanently delete announcement',    dangerous: true,   fields: 'id*' },
-    { name: 'publish_announcement',    description: 'Publish a draft announcement (make visible to students)', fields: 'id*' },
-    { name: 'pin_announcement',        description: 'Pin or unpin announcement',                             fields: 'id*, pinned (boolean)' },
+    { name: 'update_announcement',     description: 'Edit an existing announcement (title/content) and also handle pin/unpin and publish/unpublish via pinned and hidden booleans', fields: 'id*, title, content, pinned, hidden, fileIds' },
     // Modules
     { name: 'create_module',           description: 'Create a new module',                                   fields: 'name, description' },
     { name: 'update_module',           description: 'Rename a module',                                       fields: 'moduleId* (from list_modules), moduleName (old name for display), name (new name)' },
@@ -314,27 +306,24 @@ export const AI_TOOL_REGISTRY = {
     // People
     { name: 'create_invite',           description: 'Invite people to the course by email',                  fields: 'emails (array), role (student|ta|instructor)' },
     { name: 'revoke_invite',           description: 'Revoke a pending invite — REQUIRES list_people first to get inviteId', dangerous: true, fields: 'inviteId* (from list_people), email' },
-    { name: 'remove_person',           description: 'Remove enrolled user from course',   dangerous: true,   fields: 'userId* (from list_people), name' },
     // Course
     { name: 'update_start_here',       description: 'Edit the Start Here / Welcome message shown on the course home page', fields: 'title, content (markdown supported)' },
     { name: 'set_course_visibility',   description: 'Show or hide the entire course from students',          fields: 'visible (boolean)' },
     // Calendar
     { name: 'create_calendar_event',   description: 'Add a non-assignment calendar entry (class, lecture, office hours, etc.)', fields: 'title, eventDate (ISO 8601), eventType (Class|Lecture|Office Hours|Exam|Event), description' },
     { name: 'update_calendar_event',   description: 'Edit an existing calendar event',                          fields: 'id* (calendar event id), title, eventDate (ISO 8601), eventType, description' },
-    { name: 'delete_calendar_event',   description: 'Delete a calendar event', dangerous: true,                  fields: 'id* (calendar event id), title' },
     // Groups
     { name: 'create_group_set',        description: 'Create a new group set with N groups. Students can be auto-assigned afterwards.', fields: 'name*, description, groupCount (number of groups to create, default 4)' },
-    { name: 'delete_group_set',        description: 'Permanently delete a group set and all its groups', dangerous: true, fields: 'id* (from list_group_sets), name' },
     { name: 'auto_assign_groups',      description: 'Randomly assign all unassigned students to groups in a set (round-robin)', fields: 'groupSetId* (from list_group_sets), groupSetName' },
     // Discussion threads
     { name: 'create_discussion_thread', description: 'Create a new discussion thread',                    fields: 'title*, content, pinned (boolean)' },
     { name: 'update_discussion_thread', description: 'Edit a discussion thread title or content',          fields: 'id* (from list_discussion_threads), title, content' },
-    { name: 'delete_discussion_thread', description: 'Permanently delete a discussion thread', dangerous: true, fields: 'id* (from list_discussion_threads), threadTitle' },
     { name: 'pin_discussion_thread',    description: 'Pin or unpin a discussion thread',                   fields: 'id* (from list_discussion_threads), threadTitle, pinned (boolean)' },
     { name: 'reply_discussion_thread',  description: 'Post a reply to a discussion thread',                fields: 'threadId* (from list_discussion_threads), threadTitle, content*' },
     // Messaging — available to both students and instructors
     { name: 'send_message',            description: 'Send a direct message to one or more users in this course. Available to students and instructors.', fields: 'recipientIds* (array of user IDs from list_people), message*' },
     { name: 'reply_message',           description: 'Reply to an existing conversation. Call list_conversations first to get the conversationId. Available to students and instructors.', fields: 'conversationId* (from list_conversations), message*' },
+    { name: 'delete',                  description: 'Delete an item. targetType must be one of: assignment, announcement, question_bank, question_from_bank, calendar_event, group_set, discussion_thread.', dangerous: true, fields: 'targetType*, id* (or bankId+questionId for question_from_bank), title/name/threadTitle/questionPrompt as labels' },
     { name: 'pipeline',                description: 'Execute multiple actions in sequence',                  fields: 'steps (array of action objects)' }
   ]
 };

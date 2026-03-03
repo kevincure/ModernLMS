@@ -137,7 +137,6 @@ import {
   buildAiContext,
   renderAiThread,
   clearAiThread,
-  draftGradeWithAI,
   generateAiDraft,
   setActiveCourse as setAIActiveCourseId,
   setStudentViewMode as setAIStudentViewMode
@@ -2663,7 +2662,7 @@ async function createAnnouncement() {
     renderHome();
 
     // Notify all enrolled students
-    supabaseNotifyCourseStudents(activeCourseId, 'announcement', 'New announcement: ' + title, content.slice(0, 100), 'updates', announcement.id);
+    await supabaseNotifyCourseStudents(activeCourseId, 'announcement', 'New announcement: ' + title, content.slice(0, 100), 'updates', announcement.id);
 
     showToast('Announcement posted!', 'success');
   } catch (err) {
@@ -4836,7 +4835,7 @@ async function saveNewAssignment() {
 
     // Notify students when an assignment is made visible (status changed to published)
     if (fields.status === 'published' && original.status !== 'published') {
-      supabaseNotifyCourseStudents(
+      await supabaseNotifyCourseStudents(
         activeCourseId,
         'assignment_due',
         'New assignment: ' + fields.title,
@@ -4867,7 +4866,7 @@ async function saveNewAssignment() {
 
       // Notify students when a new assignment is published
       if (fields.status === 'published') {
-        supabaseNotifyCourseStudents(
+        await supabaseNotifyCourseStudents(
           activeCourseId,
           'assignment_due',
           'New assignment: ' + title,
@@ -5724,7 +5723,7 @@ async function saveGrade(submissionId) {
   if (released && submission) {
     const assignment = appData.assignments.find(a => a.id === submission.assignmentId);
     if (assignment) {
-      supabaseCreateNotification({
+      await supabaseCreateNotification({
         userId: submission.userId,
         courseId: assignment.courseId,
         type: 'grade_released',
@@ -9763,7 +9762,7 @@ function bulkReleaseGrades(assignmentId) {
       for (const submission of submissions) {
         const grade = appData.grades.find(g => g.submissionId === submission.id);
         if (grade && grade.released) {
-          supabaseCreateNotification({
+          await supabaseCreateNotification({
             userId: submission.userId,
             courseId: assignment.courseId,
             type: 'grade_released',
