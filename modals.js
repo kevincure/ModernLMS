@@ -1217,16 +1217,16 @@ student3@example.com, 92, Well done" rows="10"></textarea>
     <div class="modal-overlay" id="aiCourseSetupModal">
       <div class="modal" style="max-width:700px;max-height:90vh;display:flex;flex-direction:column;">
         <div class="modal-header" style="flex-shrink:0;">
-          <h2 class="modal-title">Create Course with AI Help</h2>
+          <h2 class="modal-title">Set Up Course with AI</h2>
           <button class="modal-close" aria-label="Close dialog" onclick="aiSetupClose()">&times;</button>
         </div>
         <div style="padding:12px 20px 0;flex-shrink:0;">
           <div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:4px;">
-            <div class="wiz-step-dot wiz-active" id="wizStep_intake" title="Course Info"><span>1</span></div>
+            <div class="wiz-step-dot wiz-active" id="wizStep_import" title="Syllabus & Import"><span>1</span></div>
             <div class="wiz-step-line"></div>
-            <div class="wiz-step-dot" id="wizStep_import" title="Import"><span>2</span></div>
+            <div class="wiz-step-dot" id="wizStep_upload" title="Upload Files"><span>2</span></div>
             <div class="wiz-step-line"></div>
-            <div class="wiz-step-dot" id="wizStep_upload" title="Upload Files"><span>3</span></div>
+            <div class="wiz-step-dot" id="wizStep_modules" title="Modules"><span>3</span></div>
             <div class="wiz-step-line"></div>
             <div class="wiz-step-dot" id="wizStep_organize" title="Organize"><span>4</span></div>
             <div class="wiz-step-line"></div>
