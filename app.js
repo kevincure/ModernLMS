@@ -1607,10 +1607,14 @@ function renderCourses() {
             <div class="muted">${escapeHtml(c.code)} · ${roleLabel}</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            ${c.role === 'instructor' ? `
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openImportContentModal('${c.id}')">Import Content</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openEditCourseModal('${c.id}')">Edit</button>
-            ` : ''}
+            ${c.role === 'instructor' ? (() => {
+              const isEmpty = !appData.files.some(f => f.courseId === c.id) && !appData.assignments.some(a => a.courseId === c.id) && !appData.announcements.some(a => a.courseId === c.id);
+              const aiEnabled = (appData.featureFlags || {}).ai_enabled !== false;
+              return (isEmpty && aiEnabled
+                ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); openAiCourseSetupWizard('${c.id}')">Set Up with AI</button>`
+                : `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openImportContentModal('${c.id}')">Import Content</button>`
+              ) + `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openEditCourseModal('${c.id}')">Edit</button>`;
+            })() : ''}
           </div>
         </div>
         ${c.description ? `<div style="margin-top:8px;" class="muted">${escapeHtml(c.description)}</div>` : ''}
@@ -2397,7 +2401,7 @@ function renderStartHere(course) {
         if (link.fileId) {
           const file = appData.files.find(f => f.id === link.fileId);
           if (file) {
-            return `<a href="#" onclick="openFile('${file.id}'); return false;" class="pill pill-link">${escapeHtml(link.label)}</a>`;
+            return `<a href="#" onclick="viewFile('${file.id}'); return false;" class="pill pill-link">${escapeHtml(link.label)}</a>`;
           }
           return ''; // File not found
         }
