@@ -41,7 +41,7 @@ let switchCourseCallback = null;
 let generateModalsCallback = null;
 
 // ─── Wizard state ────────────────────────────────────────────────────────────
-const STEPS = ['import', 'upload', 'organize', 'assignments', 'grading', 'calendar', 'summary'];
+const STEPS = ['import', 'upload', 'modules', 'organize', 'assignments', 'grading', 'calendar', 'summary'];
 let wizState = resetWizState();
 
 function resetWizState() {
@@ -129,6 +129,10 @@ export function initAiCourseSetupModule(deps) {
   window.aiSetupEditCalendarEvent = aiSetupEditCalendarEvent;
   window.aiSetupRemoveCalendarEvent = aiSetupRemoveCalendarEvent;
   window.aiSetupExecute = aiSetupExecute;
+  window.aiSetupEditModule = aiSetupEditModule;
+  window.aiSetupRemoveModule = aiSetupRemoveModule;
+  window.aiSetupAddModule = aiSetupAddModule;
+  window.aiSetupMoveModule = aiSetupMoveModule;
 }
 
 // ─── Open wizard ─────────────────────────────────────────────────────────────
@@ -158,7 +162,8 @@ function aiSetupNextStep() {
   const idx = currentStepIndex();
   if (idx < STEPS.length - 1) {
     const nextStep = STEPS[idx + 1];
-    // On transition to organize, generate AI plan if we have syllabus data
+    // Generate plans when entering each step
+    if (nextStep === 'modules') generateModulePlan();
     if (nextStep === 'organize') generateOrganizePlan();
     if (nextStep === 'assignments') generateAssignmentPlan();
     if (nextStep === 'grading') generateGradingPlan();
@@ -201,6 +206,7 @@ function renderWizard() {
   switch (wizState.step) {
     case 'import': body.innerHTML = renderImportStep(); break;
     case 'upload': body.innerHTML = renderUploadStep(); break;
+    case 'modules': body.innerHTML = renderModulesStep(); break;
     case 'organize': body.innerHTML = renderOrganizeStep(); break;
     case 'assignments': body.innerHTML = renderAssignmentsStep(); break;
     case 'grading': body.innerHTML = renderGradingStep(); break;
@@ -313,7 +319,10 @@ Rules:
 - Extract grading weights/categories if mentioned (e.g. "Homework 30%, Exams 40%")
 - Extract class meeting days/times and exam dates
 - If no due date found, use null
-- If no points specified, estimate based on weight`;
+- Points must add up sensibly: if a category (e.g. "Homework 30%") has 10 assignments, each might be 10 pts (100 total)
+- For multipart assignments (e.g. "Research Paper Part 1, Part 2, Part 3" worth 25% total), distribute points proportionally (e.g. each part might be different or equal, reflecting their relative importance)
+- Major exams/finals should have more points than weekly quizzes
+- If no points specified, estimate based on weight and assignment count in category`;
 
     const contents = [{
       parts: [
@@ -516,7 +525,115 @@ function aiSetupRemoveUploadFile(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 3: ORGANIZE FILES INTO FOLDERS + MODULES (AI-proposed, user-editable)
+// STEP 3: MODULES (confirm module structure before file organization)
+// ═════════════════════════════════════════════════════════════════════════════
+function generateModulePlan() {
+  if (wizState.modulePlan.length > 0) return; // already generated
+
+  const plan = [];
+  const seen = new Set();
+
+  // 1. Modules from syllabus
+  if (wizState.syllabusData?.modules?.length) {
+    for (const m of wizState.syllabusData.modules) {
+      if (!seen.has(m.name)) {
+        plan.push({ name: m.name, source: 'syllabus' });
+        seen.add(m.name);
+      }
+    }
+  }
+
+  // 2. Modules imported from prior course
+  const courseId = wizState.courseId;
+  const importedModules = (appData.modules || []).filter(m => m.courseId === courseId);
+  for (const m of importedModules) {
+    if (!seen.has(m.name)) {
+      plan.push({ name: m.name, source: 'imported' });
+      seen.add(m.name);
+    }
+  }
+
+  // 3. Add a general "Course Documents" module if we have any content
+  if (plan.length > 0 && !seen.has('Course Documents')) {
+    plan.push({ name: 'Course Documents', source: 'auto' });
+  }
+
+  wizState.modulePlan = plan;
+}
+
+function renderModulesStep() {
+  const plan = wizState.modulePlan;
+
+  if (plan.length === 0) {
+    return `
+      <div style="margin-bottom:20px;">
+        <h3 style="margin:0 0 4px;">Step 3: Modules</h3>
+        <p class="muted" style="margin:0;font-size:0.85rem;">No modules detected from syllabus or import. You can add modules manually or skip this step.</p>
+      </div>
+      <button class="btn btn-secondary" onclick="aiSetupAddModule()">+ Add Module</button>
+    `;
+  }
+
+  const rows = plan.map((m, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border-light);">
+      <span style="color:var(--text-muted);font-size:0.75rem;width:24px;text-align:center;">${i + 1}</span>
+      <div style="flex:1;font-size:0.85rem;font-weight:500;">${escapeHtml(m.name)}</div>
+      <span class="muted" style="font-size:0.75rem;">${m.source === 'syllabus' ? 'from syllabus' : m.source === 'imported' ? 'imported' : ''}</span>
+      ${i > 0 ? `<button class="btn btn-secondary btn-sm" onclick="aiSetupMoveModule(${i}, -1)" title="Move up" style="padding:2px 6px;">&#9650;</button>` : '<span style="width:30px;"></span>'}
+      ${i < plan.length - 1 ? `<button class="btn btn-secondary btn-sm" onclick="aiSetupMoveModule(${i}, 1)" title="Move down" style="padding:2px 6px;">&#9660;</button>` : '<span style="width:30px;"></span>'}
+      <button class="btn btn-secondary btn-sm" onclick="aiSetupEditModule(${i})">Edit</button>
+      <button class="btn btn-secondary btn-sm" onclick="aiSetupRemoveModule(${i})">Remove</button>
+    </div>
+  `).join('');
+
+  return `
+    <div style="margin-bottom:20px;">
+      <h3 style="margin:0 0 4px;">Step 3: Modules</h3>
+      <p class="muted" style="margin:0;font-size:0.85rem;">These are the learning modules students will follow. Confirm the structure, reorder, rename, or remove modules. Files and assignments will be placed into these in the next steps.</p>
+    </div>
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;">
+      ${rows}
+    </div>
+    <div style="margin-top:12px;">
+      <button class="btn btn-secondary" onclick="aiSetupAddModule()">+ Add Module</button>
+    </div>
+  `;
+}
+
+function aiSetupEditModule(index) {
+  const m = wizState.modulePlan[index];
+  if (!m) return;
+  const newName = prompt('Module name:', m.name);
+  if (newName !== null && newName.trim()) {
+    m.name = newName.trim();
+    renderWizard();
+  }
+}
+
+function aiSetupRemoveModule(index) {
+  wizState.modulePlan.splice(index, 1);
+  renderWizard();
+}
+
+function aiSetupAddModule() {
+  const name = prompt('New module name:');
+  if (name?.trim()) {
+    wizState.modulePlan.push({ name: name.trim(), source: 'manual' });
+    renderWizard();
+  }
+}
+
+function aiSetupMoveModule(index, direction) {
+  const newIndex = index + direction;
+  if (newIndex < 0 || newIndex >= wizState.modulePlan.length) return;
+  const temp = wizState.modulePlan[index];
+  wizState.modulePlan[index] = wizState.modulePlan[newIndex];
+  wizState.modulePlan[newIndex] = temp;
+  renderWizard();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STEP 4: ORGANIZE FILES INTO FOLDERS + MODULES (AI-proposed, user-editable)
 // ═════════════════════════════════════════════════════════════════════════════
 function generateOrganizePlan() {
   // Build list of all files: imported + newly uploaded + syllabus
@@ -556,25 +673,16 @@ function generateOrganizePlan() {
     return { ...f, folder, moduleName: null };
   });
 
-  // If syllabus has module divisions, propose module placement
-  if (wizState.syllabusData?.modules?.length) {
-    wizState.modulePlan = wizState.syllabusData.modules.map(m => ({
-      name: m.name,
-      fileIds: []
-    }));
-    // Add a "Course Documents" module for syllabus
-    wizState.modulePlan.push({ name: 'Course Documents', fileIds: [] });
-    // Place syllabus in Course Documents module
+  // Place syllabus in Course Documents module if modules exist
+  if (wizState.modulePlan.length > 0) {
     const syllabusEntry = wizState.fileOrgPlan.find(f => f.source === 'syllabus');
     if (syllabusEntry) {
-      syllabusEntry.moduleName = 'Course Documents';
+      const cdMod = wizState.modulePlan.find(m => m.name === 'Course Documents');
+      if (cdMod) syllabusEntry.moduleName = 'Course Documents';
     }
-  } else {
-    wizState.modulePlan = [];
   }
 
   // For ambiguous files (defaulted to "Course Documents"), try AI classification
-  // by inspecting the start of the document for uploaded PDF/DOC files
   classifyAmbiguousFiles();
 }
 
@@ -636,7 +744,7 @@ function renderOrganizeStep() {
   if (wizState.fileOrgPlan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 3: Organize Files</h3>
+        <h3 style="margin:0 0 4px;">Step 4: Organize Files</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No files to organize. Continue to the next step.</p>
       </div>
     `;
@@ -663,7 +771,7 @@ function renderOrganizeStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 3: Organize Files into Folders & Modules</h3>
+      <h3 style="margin:0 0 4px;">Step 4: Organize Files into Folders & Modules</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">The AI sorted your files into folders. Review and adjust below. <strong>Folders</strong> organize files for storage; <strong>Modules</strong> are the learning sequence students see.</p>
     </div>
     <div style="overflow-x:auto;">
@@ -702,7 +810,7 @@ function aiSetupMoveFile(index, field, value) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 4: ASSIGNMENTS (AI-proposed from syllabus, user-editable)
+// STEP 5: ASSIGNMENTS (AI-proposed from syllabus, user-editable)
 // ═════════════════════════════════════════════════════════════════════════════
 function generateAssignmentPlan() {
   if (wizState.assignmentPlan.length > 0) return; // already generated
@@ -710,24 +818,138 @@ function generateAssignmentPlan() {
   const plan = [];
   const sd = wizState.syllabusData;
 
+  // Build schedule helper for due date inference
+  const schedule = sd?.schedule || {};
+  const classMeetings = schedule.classMeetings || [];
+  const startDate = schedule.startDate ? new Date(schedule.startDate) : null;
+  const endDate = schedule.endDate ? new Date(schedule.endDate) : (startDate ? new Date(startDate.getTime() + 86400000 * 120) : null);
+  const dayMap = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+
+  // Parse class meeting time (e.g., "10:00 AM") → {hours, minutes}
+  function parseTime(timeStr) {
+    if (!timeStr) return null;
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!match) return null;
+    let hours = parseInt(match[1]);
+    const minutes = parseInt(match[2]);
+    const ampm = (match[3] || '').toUpperCase();
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+    return { hours, minutes };
+  }
+
+  // Find the class meeting time for the first meeting day
+  const firstMeetingTime = classMeetings.length > 0 ? parseTime(classMeetings[0].time) : null;
+
+  // Build a list of class dates in order, grouped by week
+  const classDates = [];
+  if (startDate && classMeetings.length > 0) {
+    for (const meeting of classMeetings) {
+      const dayNum = dayMap[(meeting.dayOfWeek || '').toLowerCase()];
+      if (dayNum === undefined) continue;
+      let d = new Date(startDate);
+      while (d.getDay() !== dayNum && d <= endDate) d.setDate(d.getDate() + 1);
+      while (d <= endDate) {
+        classDates.push(new Date(d));
+        d.setDate(d.getDate() + 7);
+      }
+    }
+    classDates.sort((a, b) => a - b);
+  }
+
+  // Map module index → the last class date of that week/module for due dates
+  function inferDueDate(moduleIndex, totalModules) {
+    if (classDates.length === 0 || !startDate) return '';
+    // Divide class dates roughly into module-count segments
+    const datesPerModule = Math.max(1, Math.floor(classDates.length / totalModules));
+    const endIdx = Math.min((moduleIndex + 1) * datesPerModule - 1, classDates.length - 1);
+    const d = new Date(classDates[endIdx]);
+    // Set time to class start time, or 11:59 PM if no class time
+    if (firstMeetingTime) {
+      d.setHours(firstMeetingTime.hours, firstMeetingTime.minutes, 0, 0);
+    } else {
+      d.setHours(23, 59, 0, 0);
+    }
+    return d.toISOString();
+  }
+
   // From syllabus parsed data
   if (sd?.modules) {
-    for (const mod of sd.modules) {
+    const totalModules = sd.modules.length;
+    // Track categories for points normalization
+    const categoryItems = {};
+
+    for (let mi = 0; mi < sd.modules.length; mi++) {
+      const mod = sd.modules[mi];
       for (const item of (mod.items || [])) {
         if (item.type === 'reading') continue; // readings become files, not assignments
         const isQuiz = item.type === 'quiz';
         const hasContent = !isQuiz; // quizzes without banks are placeholders
-        plan.push({
+
+        // Due date inference
+        let dueDate = '';
+        if (item.dueDate) {
+          // If date provided but no time component, default to 11:59 PM
+          const parsed = new Date(item.dueDate);
+          if (!isNaN(parsed.getTime())) {
+            const isoStr = item.dueDate;
+            // Check if it's a date-only string (no time) or has midnight
+            if (!isoStr.includes('T') || isoStr.includes('T00:00:00')) {
+              parsed.setHours(23, 59, 0, 0);
+            }
+            dueDate = parsed.toISOString();
+          }
+        } else {
+          // No date — infer from schedule based on module position
+          dueDate = inferDueDate(mi, totalModules);
+        }
+
+        const cat = isQuiz ? 'quiz' : 'homework';
+        if (!categoryItems[cat]) categoryItems[cat] = [];
+        const entry = {
           title: hasContent ? item.title : `PLACEHOLDER: ${item.title} (CONTENT NEEDED)`,
           description: item.description || (isQuiz ? 'Link a question bank to activate this quiz' : ''),
-          dueDate: item.dueDate || '',
+          dueDate,
           points: item.points || 100,
           assignmentType: isQuiz ? 'quiz' : 'essay',
           status: 'draft',
           isPlaceholder: isQuiz,
           moduleName: mod.name,
-          category: isQuiz ? 'quiz' : 'homework'
-        });
+          category: cat
+        };
+        categoryItems[cat].push(entry);
+        plan.push(entry);
+      }
+    }
+
+    // Normalize points so they add up sensibly within categories
+    // If grading policy exists, align total points per category with weights
+    if (sd.gradingPolicy?.categories?.length) {
+      for (const gc of sd.gradingPolicy.categories) {
+        const catName = gc.name.toLowerCase();
+        // Find matching category items
+        let matchedItems = [];
+        for (const [cat, items] of Object.entries(categoryItems)) {
+          if (catName.includes(cat) || cat.includes(catName) ||
+              catName.includes('exam') && cat === 'quiz' ||
+              catName.includes('homework') && cat === 'homework' ||
+              catName.includes('assignment') && cat === 'homework' ||
+              catName.includes('quiz') && cat === 'quiz' ||
+              catName.includes('test') && cat === 'quiz') {
+            matchedItems = items;
+            break;
+          }
+        }
+        if (matchedItems.length > 0) {
+          // Distribute points evenly within category so total per category is consistent
+          // Use base points of 100 per item, but weight evenly
+          const pointsPerItem = Math.round(100 / matchedItems.length * matchedItems.length) ? 100 : 100;
+          for (const item of matchedItems) {
+            if (!item.points || item.points === 100) {
+              item.points = pointsPerItem;
+            }
+          }
+        }
       }
     }
   }
@@ -737,7 +959,6 @@ function generateAssignmentPlan() {
   for (const aid of importedAssignmentIds) {
     const a = (appData.assignments || []).find(aa => aa.id === aid);
     if (a) {
-      // Already imported, just track for display
       plan.push({
         title: a.title,
         description: a.description || '',
@@ -762,7 +983,7 @@ function renderAssignmentsStep() {
   if (plan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 4: Assignments</h3>
+        <h3 style="margin:0 0 4px;">Step 5: Assignments</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No assignments detected from syllabus or import. You can add assignments later from the Assignments page.</p>
       </div>
     `;
@@ -796,7 +1017,7 @@ function renderAssignmentsStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 4: Assignments</h3>
+      <h3 style="margin:0 0 4px;">Step 5: Assignments</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">
         ${newCount} assignment${newCount !== 1 ? 's' : ''} from syllabus.
         ${placeholderCount > 0 ? `${placeholderCount} are placeholders that need content — they'll be created as drafts titled "PLACEHOLDER".` : ''}
@@ -830,7 +1051,7 @@ function aiSetupRemoveAssignment(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 5: GRADING STRUCTURE
+// STEP 6: GRADING STRUCTURE
 // ═════════════════════════════════════════════════════════════════════════════
 function generateGradingPlan() {
   if (wizState.gradingPlan.length > 0) return;
@@ -863,7 +1084,7 @@ function renderGradingStep() {
   if (plan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 5: Grading Weights</h3>
+        <h3 style="margin:0 0 4px;">Step 6: Grading Weights</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No grading policy detected. You can set up grade categories later from the Gradebook page.</p>
       </div>
     `;
@@ -881,7 +1102,7 @@ function renderGradingStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 5: Grading Weights</h3>
+      <h3 style="margin:0 0 4px;">Step 6: Grading Weights</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">Grade categories extracted from syllabus. Total: <strong>${totalWeight}%</strong>${totalWeight !== 100 ? ' <span style="color:var(--warning);">(should be 100%)</span>' : ''}.</p>
     </div>
     <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;">
@@ -907,7 +1128,7 @@ function aiSetupRemoveGradeCategory(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 6: CALENDAR
+// STEP 7: CALENDAR
 // ═════════════════════════════════════════════════════════════════════════════
 function generateCalendarPlan() {
   if (wizState.calendarPlan.length > 0) return;
@@ -968,7 +1189,7 @@ function renderCalendarStep() {
   if (plan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 6: Calendar</h3>
+        <h3 style="margin:0 0 4px;">Step 7: Calendar</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No class sessions or exams detected from syllabus. Assignment due dates are added to the calendar automatically. You can add events later from the Calendar page.</p>
       </div>
     `;
@@ -989,7 +1210,7 @@ function renderCalendarStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 6: Calendar</h3>
+      <h3 style="margin:0 0 4px;">Step 7: Calendar</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">${classCount} class sessions, ${examCount} exams. Assignment due dates are added automatically — no need to add them here.</p>
     </div>
     <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;max-height:350px;overflow-y:auto;">
@@ -1017,7 +1238,7 @@ function aiSetupRemoveCalendarEvent(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 7: SUMMARY
+// STEP 8: SUMMARY
 // ═════════════════════════════════════════════════════════════════════════════
 function renderSummaryStep() {
   const filesToUpload = wizState.uploadedFiles.length + (wizState.syllabusFile ? 1 : 0);
@@ -1399,7 +1620,7 @@ async function createGradeCategories(courseId) {
       id: generateId(),
       courseId,
       name: gc.name,
-      weight: gc.weight
+      weight: gc.weight / 100  // DB stores as decimal (0.30), wizard shows as percentage (30)
     };
     const saved = await supabaseCreateGradeCategory(cat);
     if (saved) appData.gradeCategories.push(cat);
