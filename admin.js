@@ -1076,23 +1076,12 @@ function deleteCourse(courseId, courseName) {
     'Delete Course',
     `Delete "${courseName}" and all course-specific data (enrollments, assignments, submissions, discussions, files, quizzes, modules, etc.)? This cannot be undone.`,
     async () => {
-      // Clear FK references that would block cascade delete
-      // assignments.question_bank_id → question_banks(id) has no ON DELETE CASCADE
-      await admin.sb
-        .from('assignments')
-        .update({ question_bank_id: null })
-        .eq('course_id', courseId)
-        .not('question_bank_id', 'is', null);
-
-      // assignments.group_set_id → group_sets(id) has no ON DELETE CASCADE
-      await admin.sb
-        .from('assignments')
-        .update({ group_set_id: null })
-        .eq('course_id', courseId)
-        .not('group_set_id', 'is', null);
-
       const { error } = await admin.sb.rpc('delete_course_for_org_superadmin', { p_course_id: courseId });
-      if (error) { showToast(`Error deleting course: ${error.message}`, true); return; }
+      if (error) {
+        console.error('[Admin] deleteCourse RPC failed', { courseId, courseName, ...error });
+        showToast(`Error deleting course: ${error.message}. If this mentions "bank_id", run fix_delete_course_rpc.sql in the Supabase SQL Editor.`, true);
+        return;
+      }
 
       await auditLog('delete_course', 'course', courseId, { course_name: courseName });
       await loadOrgCourses();
