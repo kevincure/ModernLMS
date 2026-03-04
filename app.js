@@ -194,6 +194,12 @@ import {
   setActiveCourseId as setModalsActiveCourseId
 } from './modals.js';
 
+// AI Course Setup Wizard
+import {
+  initAiCourseSetupModule,
+  openAiCourseSetupWizard
+} from './ai_course_setup.js';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODULE INITIALIZATION
 // Initialize all imported modules with their dependencies
@@ -359,6 +365,43 @@ function initModules() {
     appData,
     setHTML,
     escapeHtml
+  });
+
+  // Initialize AI Course Setup wizard module
+  initAiCourseSetupModule({
+    appData,
+    supabaseClient,
+    showToast,
+    escapeHtml,
+    generateId,
+    formatDate,
+    openModal,
+    closeModal,
+    setHTML,
+    setText,
+    getCourseById,
+    getUserById,
+    isStaff,
+    callGeminiAPIWithRetry,
+    parseAiJsonResponse,
+    fileToBase64,
+    supabaseCreateCourse,
+    supabaseCreateEnrollment,
+    supabaseCreateFile,
+    supabaseUpdateFile,
+    supabaseCreateAssignment,
+    supabaseCreateModule,
+    supabaseCreateModuleItem,
+    supabaseCreateGradeCategory,
+    supabaseCreateCalendarEvent,
+    supabaseCreateQuestionBank,
+    supabaseCopyStorageFile,
+    renderAll,
+    navigateTo,
+    updateModuleActiveCourse,
+    getUserCourses,
+    switchCourse,
+    generateModals
   });
 
   console.log('[Modules] All modules initialized');
@@ -1550,7 +1593,12 @@ function renderCourses() {
   const activeCourses = allCourses.filter(c => c.active !== false);
   const inactiveCourses = allCourses.filter(c => c.active === false);
 
-  setHTML('coursesActions', '');
+  const aiEnabled = (appData.featureFlags || {}).ai_enabled !== false;
+  if (aiEnabled) {
+    setHTML('coursesActions', '<button class="btn btn-primary" onclick="openAiCourseSetupWizard()">Create Course with AI</button>');
+  } else {
+    setHTML('coursesActions', '');
+  }
 
   const courseCard = (c, dimmed) => {
     const roleLabels = { instructor: 'Instructor', ta: 'Teaching Assistant', student: 'Student' };
@@ -2181,31 +2229,59 @@ function renderHome() {
       const updatesCard = document.getElementById('homeUpdates')?.closest('.card');
       if (upcomingCard) upcomingCard.style.display = 'none';
       if (updatesCard) updatesCard.style.display = 'none';
-      // Show import prompt
+      // Show import prompt — use AI wizard when AI is enabled
       const startHereEl = document.getElementById('homeStartHere');
+      const aiEnabled = (appData.featureFlags || {}).ai_enabled !== false;
       if (startHereEl) {
-        startHereEl.insertAdjacentHTML('beforeend', `
-          <div class="card" style="margin-top:16px;">
-            <div class="card-header">
-              <div class="card-title">Get Started</div>
-            </div>
-            <div style="padding:20px;">
-              <p style="margin-bottom:16px; color:var(--text-secondary);">This course doesn't have any content yet. You can get a head start by importing from a syllabus or copying from another course.</p>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-                <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
-                  <div style="font-weight:600; margin-bottom:8px;">Import from Syllabus</div>
-                  <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Upload a PDF or document. The AI will create modules, assignments, quizzes, and a schedule automatically from your syllabus.</p>
-                  <button class="btn btn-primary" onclick="openSyllabusParserModal()">Upload Syllabus</button>
-                </div>
-                <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
-                  <div style="font-weight:600; margin-bottom:8px;">Import from Another Course</div>
-                  <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Copy modules, assignments, files, announcements, and question banks from one of your existing courses.</p>
-                  <button class="btn btn-primary" onclick="openImportCourseModal()">Choose Course</button>
+        if (aiEnabled) {
+          // AI-enabled: single "Create Course with AI Help" entry point
+          startHereEl.insertAdjacentHTML('beforeend', `
+            <div class="card" style="margin-top:16px;">
+              <div class="card-header">
+                <div class="card-title">Get Started</div>
+              </div>
+              <div style="padding:20px;">
+                <p style="margin-bottom:16px; color:var(--text-secondary);">This course doesn't have any content yet. Use the AI-assisted setup to import a syllabus, copy from a prior course, upload files, and build your assignments, grading, and calendar — all in one guided flow.</p>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+                  <div style="border:2px solid var(--primary); border-radius:var(--radius); padding:16px; background:var(--primary-light);">
+                    <div style="font-weight:600; margin-bottom:8px;">Set Up Course with AI</div>
+                    <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Upload a syllabus, import from a prior course, and let AI organize your files, assignments, grading, and calendar. You review and confirm each step.</p>
+                    <button class="btn btn-primary" onclick="openAiCourseSetupWizard()">Start AI Setup</button>
+                  </div>
+                  <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
+                    <div style="font-weight:600; margin-bottom:8px;">Manual Import</div>
+                    <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Import content from another course without AI assistance.</p>
+                    <button class="btn btn-secondary" onclick="openImportCourseModal()">Import from Course</button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        `);
+          `);
+        } else {
+          // Non-AI fallback: original import options
+          startHereEl.insertAdjacentHTML('beforeend', `
+            <div class="card" style="margin-top:16px;">
+              <div class="card-header">
+                <div class="card-title">Get Started</div>
+              </div>
+              <div style="padding:20px;">
+                <p style="margin-bottom:16px; color:var(--text-secondary);">This course doesn't have any content yet. You can get a head start by importing from a syllabus or copying from another course.</p>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+                  <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
+                    <div style="font-weight:600; margin-bottom:8px;">Import from Syllabus</div>
+                    <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Upload a PDF or document to create modules, assignments, quizzes, and a schedule automatically.</p>
+                    <button class="btn btn-primary" onclick="openSyllabusParserModal()">Upload Syllabus</button>
+                  </div>
+                  <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
+                    <div style="font-weight:600; margin-bottom:8px;">Import from Another Course</div>
+                    <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Copy modules, assignments, files, announcements, and question banks from one of your existing courses.</p>
+                    <button class="btn btn-primary" onclick="openImportCourseModal()">Choose Course</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `);
+        }
       }
       return;
     }
@@ -11711,6 +11787,9 @@ window.openImportContentModal = openImportContentModal;
 window.openImportCourseModal = function() { openImportContentModal(activeCourseId); };
 window.executeImportContent = executeImportContent;
 window.openLinkedFile = openLinkedFile;
+
+// AI Course Setup Wizard
+window.openAiCourseSetupWizard = openAiCourseSetupWizard;
 
 // Course management
 window.createCourse = createCourse;

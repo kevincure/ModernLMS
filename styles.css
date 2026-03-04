@@ -2242,3 +2242,36 @@ body.style-1 .ai-thread-container {
   margin: 0;
   resize: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   AI Course Setup Wizard Step Indicators
+═══════════════════════════════════════════════════════════════════════════════ */
+.wiz-step-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--border-color);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.wiz-step-dot.wiz-active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+.wiz-step-dot.wiz-done {
+  background: var(--success, #4caf50);
+  color: #fff;
+}
+.wiz-step-line {
+  flex: 1;
+  height: 2px;
+  background: var(--border-color);
+  max-width: 24px;
+}
