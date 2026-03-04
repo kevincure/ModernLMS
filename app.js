@@ -1607,10 +1607,14 @@ function renderCourses() {
             <div class="muted">${escapeHtml(c.code)} · ${roleLabel}</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            ${c.role === 'instructor' ? `
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openImportContentModal('${c.id}')">Import Content</button>
-              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openEditCourseModal('${c.id}')">Edit</button>
-            ` : ''}
+            ${c.role === 'instructor' ? (() => {
+              const isEmpty = !appData.files.some(f => f.courseId === c.id) && !appData.assignments.some(a => a.courseId === c.id) && !appData.announcements.some(a => a.courseId === c.id);
+              const aiEnabled = (appData.featureFlags || {}).ai_enabled !== false;
+              return (isEmpty && aiEnabled
+                ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); openAiCourseSetupWizard('${c.id}')">Set Up with AI</button>`
+                : `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openImportContentModal('${c.id}')">Import Content</button>`
+              ) + `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openEditCourseModal('${c.id}')">Edit</button>`;
+            })() : ''}
           </div>
         </div>
         ${c.description ? `<div style="margin-top:8px;" class="muted">${escapeHtml(c.description)}</div>` : ''}
@@ -2397,7 +2401,7 @@ function renderStartHere(course) {
         if (link.fileId) {
           const file = appData.files.find(f => f.id === link.fileId);
           if (file) {
-            return `<a href="#" onclick="openFile('${file.id}'); return false;" class="pill pill-link">${escapeHtml(link.label)}</a>`;
+            return `<a href="#" onclick="viewFile('${file.id}'); return false;" class="pill pill-link">${escapeHtml(link.label)}</a>`;
           }
           return ''; // File not found
         }
@@ -4307,6 +4311,9 @@ function openNewAssignmentModal(assignmentId = null) {
   // Populate question bank dropdown
   populateQuestionBankDropdown();
 
+  // Populate grade category dropdown from course's grade_categories
+  populateGradeCategoryDropdown(assignmentId ? appData.assignments.find(a => a.id === assignmentId)?.category : null);
+
   if (assignmentId) {
     // Editing existing assignment
     const assignment = appData.assignments.find(a => a.id === assignmentId);
@@ -4330,6 +4337,10 @@ function openNewAssignmentModal(assignmentId = null) {
     const atype = assignment.assignmentType ||
       (assignment.category === 'quiz' || assignment.category === 'exam' ? 'quiz' : 'essay');
     setAssignmentType(atype);
+
+    // Set grade category dropdown
+    const catSelect = document.getElementById('newAssignmentCategory');
+    if (catSelect && assignment.category) catSelect.value = assignment.category;
 
     if (atype === 'essay') {
       const mods = assignment.submissionModalities || ['text'];
@@ -4446,6 +4457,8 @@ function resetNewAssignmentModal() {
   if (masteryResetEl) { masteryResetEl.checked = false; document.getElementById('masteryThresholdRow').style.display = 'none'; document.getElementById('newAssignmentMasteryThreshold').value = '5'; }
   const quizGTEl = document.getElementById('quizGradingType');
   if (quizGTEl) quizGTEl.value = 'points';
+  const catReset = document.getElementById('newAssignmentCategory');
+  if (catReset) catReset.value = '';
   document.getElementById('newAssignmentModalityText').checked = true;
   document.getElementById('newAssignmentModalityFile').checked = false;
   document.getElementById('newAssignmentFileTypes').value = '';
@@ -4509,6 +4522,20 @@ function populateQuestionBankDropdown() {
   select.innerHTML = html;
 }
 
+function populateGradeCategoryDropdown(currentCategory) {
+  const select = document.getElementById('newAssignmentCategory');
+  if (!select) return;
+  const cats = (appData.gradeCategories || []).filter(c =>
+    c.courseId === activeCourseId && !c.name.startsWith('__')
+  );
+  let html = '<option value="">-- Auto (based on type) --</option>';
+  cats.forEach(c => {
+    const pct = c.weight != null ? ` (${Math.round(c.weight * 100)}%)` : '';
+    html += `<option value="${escapeHtml(c.name)}"${currentCategory === c.name ? ' selected' : ''}>${escapeHtml(c.name)}${pct}</option>`;
+  });
+  select.innerHTML = html;
+}
+
 // CC 1.4 assignment type selector — highlight active tab + show/hide sections
 function setAssignmentType(type) {
   // Label ID map (no_submission uses 'no-submission' not 'nosub')
@@ -4550,6 +4577,20 @@ function setAssignmentType(type) {
   // Grading notes only relevant for essay/quiz
   const gradingNotesGroup = document.querySelector('#newAssignmentGradingNotes')?.closest('.form-group');
   if (gradingNotesGroup) gradingNotesGroup.style.display = isNoSub ? 'none' : 'block';
+
+  // Description prompt — simplify hint for no_submission
+  const descLabel = document.querySelector('label[for="newAssignmentDescription"]');
+  if (descLabel) descLabel.textContent = isNoSub ? 'Description (optional)' : 'Description / Prompt *';
+
+  // Resubmission only for essay (quiz has its own attempts control)
+  const resubGroup = document.querySelector('#newAssignmentAllowResubmit')?.closest('.form-group');
+  if (resubGroup) resubGroup.style.display = type === 'essay' ? 'block' : 'none';
+
+  // Group assignment not relevant for no_submission
+  const groupSection = document.querySelector('#newAssignmentIsGroup')?.closest('.form-group');
+  if (groupSection) groupSection.style.display = isNoSub ? 'none' : 'block';
+  const groupOptions = document.getElementById('groupAssignmentOptions');
+  if (groupOptions && isNoSub) groupOptions.style.display = 'none';
 }
 window.setAssignmentType = setAssignmentType;
 
@@ -4847,9 +4888,12 @@ async function saveNewAssignment() {
     }
   }
 
-  // Map assignmentType to legacy category for gradebook compatibility
-  const legacyCategory = assignmentType === 'quiz' ? 'quiz' :
-                         assignmentType === 'no_submission' ? 'participation' : 'essay';
+  // Use selected grade category, or fall back to auto-mapping from type
+  const selectedCategory = document.getElementById('newAssignmentCategory')?.value;
+  const legacyCategory = selectedCategory || (
+    assignmentType === 'quiz' ? 'quiz' :
+    assignmentType === 'no_submission' ? 'participation' : 'homework'
+  );
 
   // Status/visibility follow the same logic for all assignment types
   const effectiveStatus = status;

@@ -47,6 +47,7 @@ let wizState = resetWizState();
 function resetWizState() {
   return {
     step: 'import',
+    aiProcessing: false,      // true while AI classification/parsing is running
     // syllabus (uploaded in import step)
     syllabusFile: null,
     syllabusData: null,       // parsed JSON from AI
@@ -124,10 +125,13 @@ export function initAiCourseSetupModule(deps) {
   window.aiSetupMoveFile = aiSetupMoveFile;
   window.aiSetupEditAssignment = aiSetupEditAssignment;
   window.aiSetupRemoveAssignment = aiSetupRemoveAssignment;
+  window.aiSetupAddAssignment = aiSetupAddAssignment;
   window.aiSetupEditGradeCategory = aiSetupEditGradeCategory;
   window.aiSetupRemoveGradeCategory = aiSetupRemoveGradeCategory;
+  window.aiSetupAddGradeCategory = aiSetupAddGradeCategory;
   window.aiSetupEditCalendarEvent = aiSetupEditCalendarEvent;
   window.aiSetupRemoveCalendarEvent = aiSetupRemoveCalendarEvent;
+  window.aiSetupAddCalendarEvent = aiSetupAddCalendarEvent;
   window.aiSetupExecute = aiSetupExecute;
   window.aiSetupEditModule = aiSetupEditModule;
   window.aiSetupRemoveModule = aiSetupRemoveModule;
@@ -314,9 +318,10 @@ async function aiSetupParseSyllabus() {
   }
 }
 Rules:
-- type: "assignment" for homework/essays/projects, "quiz" for tests/quizzes/exams, "reading" for chapters/readings
+- type: "assignment" for homework/essays/projects/participation/attendance, "quiz" for tests/quizzes/exams, "reading" for chapters/readings
+- IMPORTANT: If the syllabus has a "Participation" or "Attendance" grading category, create corresponding assignment items for them. For example, if participation is 10% of the grade with weekly check-ins, create a recurring "Participation" assignment per module/week. If attendance is graded, create "Attendance" assignment items. These are real gradeable items in the LMS.
 - Create a module for each week, unit, topic, or logical grouping
-- Extract grading weights/categories if mentioned (e.g. "Homework 30%, Exams 40%")
+- Extract grading weights/categories if mentioned (e.g. "Homework 30%, Exams 40%, Participation 10%")
 - Extract class meeting days/times and exam dates
 - If no due date found, use null
 - Points must add up sensibly: if a category (e.g. "Homework 30%") has 10 assignments, each might be 10 pts (100 total)
@@ -687,36 +692,50 @@ function generateOrganizePlan() {
 }
 
 async function classifyAmbiguousFiles() {
-  const ambiguous = wizState.fileOrgPlan.filter(f => f.folder === 'Course Documents' && f.source === 'upload');
-  if (ambiguous.length === 0) return;
+  // Classify files that need folder/module assignment via AI content analysis
+  // - Ambiguous folder files: defaulted to "Course Documents" from uploads
+  // - All files: need module assignment when modules exist
+  const needsClassification = wizState.fileOrgPlan.filter(f =>
+    (f.folder === 'Course Documents' && f.source === 'upload') ||
+    (wizState.modulePlan.length > 0 && !f.moduleName)
+  );
+  if (needsClassification.length === 0) return;
 
-  // Try to classify ambiguous files by reading their first page/content via AI
+  wizState.aiProcessing = true;
+  renderWizard();
+
+  // Build list of files we can actually read content from
   const classifiableFiles = [];
-  for (const f of ambiguous) {
-    const file = wizState.uploadedFiles[f.index];
-    if (!file) continue;
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (['pdf', 'doc', 'docx', 'txt', 'tex'].includes(ext)) {
-      classifiableFiles.push({ orgEntry: f, file });
+  for (const f of needsClassification) {
+    let file = null;
+    if (f.source === 'upload' && f.index !== undefined) {
+      file = wizState.uploadedFiles[f.index];
+    } else if (f.source === 'syllabus') {
+      file = wizState.syllabusFile;
     }
+    // For imported files we can't read content, but we can still classify by name
+    classifiableFiles.push({ orgEntry: f, file });
   }
 
   if (classifiableFiles.length === 0) return;
 
-  // Build a batch classification request
-  try {
-    const fileDescs = classifiableFiles.map(cf => cf.file.name).join(', ');
-    const modulesContext = wizState.modulePlan.length > 0
-      ? `Available modules: ${wizState.modulePlan.map(m => m.name).join(', ')}.`
-      : '';
+  const modulesContext = wizState.modulePlan.length > 0
+    ? `Available modules (pick the best match based on content/topic): ${wizState.modulePlan.map(m => m.name).join(', ')}.`
+    : '';
 
-    // For each classifiable file, read start and ask AI to classify
-    for (const cf of classifiableFiles.slice(0, 10)) { // limit to 10 files to avoid API overload
+  try {
+    // Files we can read content from (limit to 15 to avoid API overload)
+    const readable = classifiableFiles.filter(cf => cf.file).slice(0, 15);
+    const nameOnly = classifiableFiles.filter(cf => !cf.file);
+
+    // AI classification with file content
+    for (const cf of readable) {
       try {
         const base64Data = await fileToBase64(cf.file);
         const mimeType = cf.file.type || 'application/octet-stream';
-        const prompt = `Look at the beginning of this document and classify it into one of these folder categories: Slides, Readings, Handouts, Exams, Syllabus, Course Documents. ${modulesContext}
-Return ONLY JSON: {"folder": "CategoryName"${wizState.modulePlan.length > 0 ? ', "module": "ModuleName or null"' : ''}}`;
+        const needsFolder = cf.orgEntry.folder === 'Course Documents' && cf.orgEntry.source === 'upload';
+        const prompt = `Look at the first page/beginning of this document. ${needsFolder ? 'Classify it into one of these folder categories: Slides, Readings, Handouts, Exams, Syllabus, Course Documents.' : ''} ${modulesContext}
+Return ONLY JSON: {${needsFolder ? '"folder": "CategoryName", ' : ''}"module": "ModuleName or null"}`;
         const contents = [{
           parts: [
             { inlineData: { mimeType, data: base64Data } },
@@ -726,15 +745,45 @@ Return ONLY JSON: {"folder": "CategoryName"${wizState.modulePlan.length > 0 ? ',
         const data = await callGeminiAPIWithRetry({ contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.1 } });
         if (!data.error) {
           const result = parseAiJsonResponse(data.candidates[0].content.parts[0].text);
-          if (result.folder) cf.orgEntry.folder = result.folder;
+          if (result.folder && cf.orgEntry.folder === 'Course Documents' && cf.orgEntry.source === 'upload') {
+            cf.orgEntry.folder = result.folder;
+          }
           if (result.module && wizState.modulePlan.some(m => m.name === result.module)) {
             cf.orgEntry.moduleName = result.module;
           }
         }
       } catch (_) { /* keep default classification on failure */ }
     }
+
+    // For files we can't read (imported), classify by filename only
+    if (nameOnly.length > 0 && wizState.modulePlan.length > 0) {
+      try {
+        const fileNames = nameOnly.map(cf => cf.orgEntry.name).join('\n');
+        const prompt = `Given these filenames and available modules, assign each file to the best-matching module based on the filename.
+Filenames:\n${fileNames}\n\n${modulesContext}
+Return ONLY a JSON array: [{"filename": "...", "module": "ModuleName or null"}]`;
+        const contents = [{ parts: [{ text: prompt }] }];
+        const data = await callGeminiAPIWithRetry({ contents, generationConfig: { responseMimeType: 'application/json', temperature: 0.1 } });
+        if (!data.error) {
+          const results = parseAiJsonResponse(data.candidates[0].content.parts[0].text);
+          if (Array.isArray(results)) {
+            for (const r of results) {
+              const match = nameOnly.find(cf => cf.orgEntry.name === r.filename);
+              if (match && r.module && wizState.modulePlan.some(m => m.name === r.module)) {
+                match.orgEntry.moduleName = r.module;
+              }
+            }
+          }
+        }
+      } catch (_) { /* keep default on failure */ }
+    }
+
+    wizState.aiProcessing = false;
     renderWizard(); // Re-render with updated classifications
-  } catch (_) { /* silently fall back to heuristic classification */ }
+  } catch (_) {
+    wizState.aiProcessing = false;
+    renderWizard();
+  }
 }
 
 function renderOrganizeStep() {
@@ -769,11 +818,18 @@ function renderOrganizeStep() {
     </tr>
   `).join('');
 
+  const processingBanner = wizState.aiProcessing ? `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--primary-light);border-radius:var(--radius);margin-bottom:12px;">
+      <div class="ai-spinner" style="width:18px;height:18px;border-width:2px;"></div>
+      <span style="font-size:0.85rem;color:var(--primary);font-weight:500;">AI is analyzing file contents to suggest folders & modules...</span>
+    </div>` : '';
+
   return `
     <div style="margin-bottom:20px;">
       <h3 style="margin:0 0 4px;">Step 4: Organize Files into Folders & Modules</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">The AI sorted your files into folders. Review and adjust below. <strong>Folders</strong> organize files for storage; <strong>Modules</strong> are the learning sequence students see.</p>
     </div>
+    ${processingBanner}
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;">
         <thead>
@@ -884,7 +940,8 @@ function generateAssignmentPlan() {
       for (const item of (mod.items || [])) {
         if (item.type === 'reading') continue; // readings become files, not assignments
         const isQuiz = item.type === 'quiz';
-        const hasContent = !isQuiz; // quizzes without banks are placeholders
+        const isParticipation = /participation|attendance/i.test(item.title);
+        const hasContent = !isQuiz || isParticipation; // quizzes without banks are placeholders, participation always has content
 
         // Due date inference
         let dueDate = '';
@@ -904,7 +961,7 @@ function generateAssignmentPlan() {
           dueDate = inferDueDate(mi, totalModules);
         }
 
-        const cat = isQuiz ? 'quiz' : 'homework';
+        const cat = isParticipation ? 'participation' : (isQuiz ? 'quiz' : 'homework');
         if (!categoryItems[cat]) categoryItems[cat] = [];
         const entry = {
           title: hasContent ? item.title : `PLACEHOLDER: ${item.title} (CONTENT NEEDED)`,
@@ -935,7 +992,9 @@ function generateAssignmentPlan() {
               catName.includes('homework') && cat === 'homework' ||
               catName.includes('assignment') && cat === 'homework' ||
               catName.includes('quiz') && cat === 'quiz' ||
-              catName.includes('test') && cat === 'quiz') {
+              catName.includes('test') && cat === 'quiz' ||
+              catName.includes('participation') && cat === 'participation' ||
+              catName.includes('attendance') && cat === 'participation') {
             matchedItems = items;
             break;
           }
@@ -984,7 +1043,10 @@ function renderAssignmentsStep() {
     return `
       <div style="margin-bottom:20px;">
         <h3 style="margin:0 0 4px;">Step 5: Assignments</h3>
-        <p class="muted" style="margin:0;font-size:0.85rem;">No assignments detected from syllabus or import. You can add assignments later from the Assignments page.</p>
+        <p class="muted" style="margin:0;font-size:0.85rem;">No assignments detected from syllabus or import. Add some now, or skip and add them later.</p>
+      </div>
+      <div style="margin-top:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="aiSetupAddAssignment()">+ Add Assignment</button>
       </div>
     `;
   }
@@ -1027,6 +1089,9 @@ function renderAssignmentsStep() {
     <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;">
       ${rows}
     </div>
+    <div style="margin-top:12px;">
+      <button class="btn btn-secondary btn-sm" onclick="aiSetupAddAssignment()">+ Add Assignment</button>
+    </div>
   `;
 }
 
@@ -1047,6 +1112,26 @@ function aiSetupEditAssignment(index) {
 
 function aiSetupRemoveAssignment(index) {
   wizState.assignmentPlan.splice(index, 1);
+  renderWizard();
+}
+
+function aiSetupAddAssignment() {
+  const title = prompt('Assignment title:');
+  if (!title?.trim()) return;
+  const type = prompt('Type (assignment or quiz):', 'assignment');
+  const pts = prompt('Points:', '100');
+  const due = prompt('Due date (YYYY-MM-DD or leave empty):');
+  wizState.assignmentPlan.push({
+    title: title.trim(),
+    description: '',
+    dueDate: due ? new Date(due + 'T23:59:00.000Z').toISOString() : '',
+    points: parseInt(pts) || 100,
+    assignmentType: type === 'quiz' ? 'quiz' : 'essay',
+    status: 'draft',
+    isPlaceholder: false,
+    moduleName: '',
+    category: type === 'quiz' ? 'quiz' : 'homework'
+  });
   renderWizard();
 }
 
@@ -1085,7 +1170,10 @@ function renderGradingStep() {
     return `
       <div style="margin-bottom:20px;">
         <h3 style="margin:0 0 4px;">Step 6: Grading Weights</h3>
-        <p class="muted" style="margin:0;font-size:0.85rem;">No grading policy detected. You can set up grade categories later from the Gradebook page.</p>
+        <p class="muted" style="margin:0;font-size:0.85rem;">No grading policy detected. Add categories now, or skip and set them up later.</p>
+      </div>
+      <div style="margin-top:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="aiSetupAddGradeCategory()">+ Add Category</button>
       </div>
     `;
   }
@@ -1108,6 +1196,9 @@ function renderGradingStep() {
     <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;">
       ${rows}
     </div>
+    <div style="margin-top:12px;">
+      <button class="btn btn-secondary btn-sm" onclick="aiSetupAddGradeCategory()">+ Add Category</button>
+    </div>
   `;
 }
 
@@ -1124,6 +1215,14 @@ function aiSetupEditGradeCategory(index) {
 
 function aiSetupRemoveGradeCategory(index) {
   wizState.gradingPlan.splice(index, 1);
+  renderWizard();
+}
+
+function aiSetupAddGradeCategory() {
+  const name = prompt('Category name (e.g. Homework, Participation):');
+  if (!name?.trim()) return;
+  const weight = prompt('Weight (%):', '10');
+  wizState.gradingPlan.push({ name: name.trim(), weight: parseInt(weight) || 10 });
   renderWizard();
 }
 
@@ -1190,7 +1289,10 @@ function renderCalendarStep() {
     return `
       <div style="margin-bottom:20px;">
         <h3 style="margin:0 0 4px;">Step 7: Calendar</h3>
-        <p class="muted" style="margin:0;font-size:0.85rem;">No class sessions or exams detected from syllabus. Assignment due dates are added to the calendar automatically. You can add events later from the Calendar page.</p>
+        <p class="muted" style="margin:0;font-size:0.85rem;">No class sessions or exams detected from syllabus. Assignment due dates are added automatically. Add events now, or skip.</p>
+      </div>
+      <div style="margin-top:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="aiSetupAddCalendarEvent()">+ Add Event</button>
       </div>
     `;
   }
@@ -1216,6 +1318,9 @@ function renderCalendarStep() {
     <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;max-height:350px;overflow-y:auto;">
       ${rows}
     </div>
+    <div style="margin-top:12px;">
+      <button class="btn btn-secondary btn-sm" onclick="aiSetupAddCalendarEvent()">+ Add Event</button>
+    </div>
   `;
 }
 
@@ -1234,6 +1339,22 @@ function aiSetupEditCalendarEvent(index) {
 
 function aiSetupRemoveCalendarEvent(index) {
   wizState.calendarPlan.splice(index, 1);
+  renderWizard();
+}
+
+function aiSetupAddCalendarEvent() {
+  const title = prompt('Event title:');
+  if (!title?.trim()) return;
+  const date = prompt('Event date (YYYY-MM-DD):');
+  if (!date) return;
+  const type = prompt('Event type (Class, Exam, Event):', 'Event');
+  wizState.calendarPlan.push({
+    title: title.trim(),
+    eventDate: new Date(date + 'T10:00:00.000Z').toISOString(),
+    eventType: type || 'Event',
+    description: ''
+  });
+  wizState.calendarPlan.sort((a, b) => new Date(a.eventDate) - new Date(b.eventDate));
   renderWizard();
 }
 
@@ -1283,7 +1404,7 @@ async function aiSetupExecute() {
   wizState.executing = true;
 
   const execBtn = document.getElementById('wizExecuteBtn');
-  if (execBtn) { execBtn.disabled = true; execBtn.textContent = 'Setting up...'; }
+  if (execBtn) { execBtn.disabled = true; execBtn.innerHTML = '<div class="ai-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px;"></div> Setting up...'; }
 
   const courseId = wizState.courseId;
   if (!courseId) {
