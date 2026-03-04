@@ -1074,38 +1074,10 @@ function deleteCourse(courseId, courseName) {
     'Delete Course',
     `Delete "${courseName}" and all course-specific data (enrollments, assignments, submissions, discussions, files, quizzes, modules, etc.)? This cannot be undone.`,
     async () => {
-      // Clear FK references that would block cascade delete
-      // assignments.question_bank_id → question_banks(id) has no ON DELETE CASCADE
-      await admin.sb
-        .from('assignments')
-        .update({ question_bank_id: null })
-        .eq('course_id', courseId)
-        .not('question_bank_id', 'is', null);
-
-      // assignments.group_set_id → group_sets(id) has no ON DELETE CASCADE
-      await admin.sb
-        .from('assignments')
-        .update({ group_set_id: null })
-        .eq('course_id', courseId)
-        .not('group_set_id', 'is', null);
-
       const { error } = await admin.sb.rpc('delete_course_for_org_superadmin', { p_course_id: courseId });
       if (error) {
-        console.error('[Admin] deleteCourse RPC failed', {
-          courseId,
-          courseName,
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code
-        });
-
-        const extra = [error.details, error.hint].filter(Boolean).join(' | ');
-        const schemaMismatch = /column\s+"?bank_id"?\s+does not exist/i.test(error.message || '');
-        const userMsg = schemaMismatch
-          ? 'Delete failed because the server delete function is out of date (schema mismatch). Please apply the backend RPC fix.'
-          : `Error deleting course: ${error.message}`;
-        showToast(extra ? `${userMsg} (${extra})` : userMsg, true);
+        console.error('[Admin] deleteCourse RPC failed', { courseId, courseName, ...error });
+        showToast(`Error deleting course: ${error.message}. If this mentions "bank_id", run fix_delete_course_rpc.sql in the Supabase SQL Editor.`, true);
         return;
       }
 
