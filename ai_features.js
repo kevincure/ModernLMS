@@ -2542,14 +2542,14 @@ export async function confirmAiAction(idx, publish = false) {
       }
       const ok = await executeAiOperation(resolvedStep, false);
       if (!ok) {
-        showToast(`Pipeline stopped on step: ${resolvedStep.action || 'unknown'}`, 'error');
+        showToast(`Stopped on step: ${resolvedStep.action || 'unknown'}`, 'error');
         return;
       }
       // Store result for subsequent steps (ok is true or a result object)
       pipelineResults.push(typeof ok === 'object' ? ok : {});
     }
     msg.confirmed = true;
-    aiThread.push({ role: 'assistant', content: `Done! I completed all ${(msg.data.steps || []).length} steps in the pipeline successfully.` });
+    aiThread.push({ role: 'assistant', content: `Done! Completed all ${(msg.data.steps || []).length} steps successfully.` });
     renderAiThread();
     return;
   } else {
@@ -3473,7 +3473,7 @@ export function renderAiThread() {
         'group_set_create': 'Group Set',
         'group_set_delete': 'Group Set',
         'group_auto_assign': 'Groups',
-        'pipeline': 'Automation Pipeline'
+        'pipeline': 'Multi-Step Task'
       }[msg.actionType] || 'Content';
 
       // Determine the right verb for announcement_update based on what's being changed
@@ -3528,7 +3528,7 @@ export function renderAiThread() {
         'group_set_create': 'Create',
         'group_set_delete': 'Delete',
         'group_auto_assign': 'Auto-assign',
-        'pipeline': 'Run'
+        'pipeline': 'Run All'
       }[msg.actionType] || 'Run';
 
       return `

@@ -47,6 +47,7 @@ let wizState = resetWizState();
 function resetWizState() {
   return {
     step: 'import',
+    aiProcessing: false,      // true while AI classification/parsing is running
     // syllabus (uploaded in import step)
     syllabusFile: null,
     syllabusData: null,       // parsed JSON from AI
@@ -700,6 +701,9 @@ async function classifyAmbiguousFiles() {
   );
   if (needsClassification.length === 0) return;
 
+  wizState.aiProcessing = true;
+  renderWizard();
+
   // Build list of files we can actually read content from
   const classifiableFiles = [];
   for (const f of needsClassification) {
@@ -774,8 +778,12 @@ Return ONLY a JSON array: [{"filename": "...", "module": "ModuleName or null"}]`
       } catch (_) { /* keep default on failure */ }
     }
 
+    wizState.aiProcessing = false;
     renderWizard(); // Re-render with updated classifications
-  } catch (_) { /* silently fall back to heuristic classification */ }
+  } catch (_) {
+    wizState.aiProcessing = false;
+    renderWizard();
+  }
 }
 
 function renderOrganizeStep() {
@@ -810,11 +818,18 @@ function renderOrganizeStep() {
     </tr>
   `).join('');
 
+  const processingBanner = wizState.aiProcessing ? `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--primary-light);border-radius:var(--radius);margin-bottom:12px;">
+      <div class="ai-spinner" style="width:18px;height:18px;border-width:2px;"></div>
+      <span style="font-size:0.85rem;color:var(--primary);font-weight:500;">AI is analyzing file contents to suggest folders & modules...</span>
+    </div>` : '';
+
   return `
     <div style="margin-bottom:20px;">
       <h3 style="margin:0 0 4px;">Step 4: Organize Files into Folders & Modules</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">The AI sorted your files into folders. Review and adjust below. <strong>Folders</strong> organize files for storage; <strong>Modules</strong> are the learning sequence students see.</p>
     </div>
+    ${processingBanner}
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;">
         <thead>
@@ -1389,7 +1404,7 @@ async function aiSetupExecute() {
   wizState.executing = true;
 
   const execBtn = document.getElementById('wizExecuteBtn');
-  if (execBtn) { execBtn.disabled = true; execBtn.textContent = 'Setting up...'; }
+  if (execBtn) { execBtn.disabled = true; execBtn.innerHTML = '<div class="ai-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px;"></div> Setting up...'; }
 
   const courseId = wizState.courseId;
   if (!courseId) {

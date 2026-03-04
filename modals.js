@@ -901,6 +901,15 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <textarea class="form-textarea" id="newAssignmentDescription" placeholder="Describe the assignment prompt... (supports Markdown)" rows="4"></textarea>
           </div>
 
+          <!-- ── Grade Category ───────────────────────────── -->
+          <div class="form-group" id="assignmentCategoryGroup">
+            <label class="form-label" for="newAssignmentCategory">Gradebook Category</label>
+            <select class="form-select" id="newAssignmentCategory">
+              <option value="">-- Auto (based on type) --</option>
+            </select>
+            <div class="hint">Which grade category this assignment counts toward (set up weights in Gradebook)</div>
+          </div>
+
           <!-- ── Conditional: Essay / Free Text ──────────────── -->
           <div id="essaySection">
             <div style="background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:16px;">
