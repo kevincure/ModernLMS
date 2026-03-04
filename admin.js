@@ -985,10 +985,8 @@ async function openCreateCourseModal() {
     select.appendChild(opt);
   });
 
-  // Ensure departments are loaded before populating dropdown
-  if (admin.departments.length === 0) {
-    await loadDepartments();
-  }
+  // Always reload departments so create/edit group options stay in sync.
+  await loadDepartments();
 
   // Populate course group (department) dropdown
   const deptSelect = document.getElementById('courseDeptSelect');
@@ -1085,10 +1083,11 @@ function deleteCourse(courseId, courseName) {
           hint: error.hint,
           code: error.code
         });
+
         const extra = [error.details, error.hint].filter(Boolean).join(' | ');
-        const isRpc400 = error.code === 'PGRST116' || /column .* does not exist/i.test(error.message || '');
-        const userMsg = isRpc400
-          ? 'Server delete function failed due to schema mismatch. Contact support/admin.'
+        const schemaMismatch = /column\s+"?bank_id"?\s+does not exist/i.test(error.message || '');
+        const userMsg = schemaMismatch
+          ? 'Delete failed because the server delete function is out of date (schema mismatch). Please apply the backend RPC fix.'
           : `Error deleting course: ${error.message}`;
         showToast(extra ? `${userMsg} (${extra})` : userMsg, true);
         return;
@@ -1109,7 +1108,7 @@ function deleteCourse(courseId, courseName) {
 
 let editingCourseId = null;
 
-function openEditCourseModal(courseId) {
+async function openEditCourseModal(courseId) {
   const course = admin.orgCourses.find(c => c.id === courseId);
   if (!course) return;
   editingCourseId = courseId;
@@ -1120,6 +1119,9 @@ function openEditCourseModal(courseId) {
   document.getElementById('editCourseDescInput').value = course.description || '';
   document.getElementById('editCourseActive').checked  = course.active !== false;
   hideInlineError('editCourseError');
+
+  // Always reload departments to keep create/edit group options in sync.
+  await loadDepartments();
 
   // Populate department dropdown
   const deptSel = document.getElementById('editCourseDeptSelect');
