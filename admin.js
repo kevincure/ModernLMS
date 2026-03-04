@@ -252,7 +252,8 @@ async function loadAdminData() {
   const [membersRes, coursesRes] = await Promise.allSettled([
     loadOrgMembers(),
     loadOrgCourses(),
-    loadOrgInvites()
+    loadOrgInvites(),
+    loadDepartments()
   ]);
 
   if (membersRes.status === 'rejected') loadErrors.push(`members: ${membersRes.reason?.message || membersRes.reason}`);
@@ -665,7 +666,7 @@ function renderCoursesSection() {
     if (delBtn) { deleteCourse(delBtn.dataset.courseId, delBtn.dataset.courseName); return; }
     const editBtn = e.target.closest('[data-action="edit-course"]');
     if (editBtn) openEditCourseModal(editBtn.dataset.courseId);
-  }, { once: true });
+  });
 }
 
 // ─── Rendering: Enrollments ───────────────────────────────────────────────────
@@ -1075,6 +1076,21 @@ function deleteCourse(courseId, courseName) {
     'Delete Course',
     `Delete "${courseName}" and all course-specific data (enrollments, assignments, submissions, discussions, files, quizzes, modules, etc.)? This cannot be undone.`,
     async () => {
+      // Clear FK references that would block cascade delete
+      // assignments.question_bank_id → question_banks(id) has no ON DELETE CASCADE
+      await admin.sb
+        .from('assignments')
+        .update({ question_bank_id: null })
+        .eq('course_id', courseId)
+        .not('question_bank_id', 'is', null);
+
+      // assignments.group_set_id → group_sets(id) has no ON DELETE CASCADE
+      await admin.sb
+        .from('assignments')
+        .update({ group_set_id: null })
+        .eq('course_id', courseId)
+        .not('group_set_id', 'is', null);
+
       const { error } = await admin.sb.rpc('delete_course_for_org_superadmin', { p_course_id: courseId });
       if (error) { showToast(`Error deleting course: ${error.message}`, true); return; }
 
@@ -1543,7 +1559,7 @@ function renderDepartmentsList() {
   wrap.addEventListener('click', e => {
     const btn = e.target.closest('[data-action="remove-dept"]');
     if (btn) removeDepartment(btn.dataset.deptId, btn.dataset.deptName);
-  }, { once: true });
+  });
 }
 
 async function addDepartment() {
