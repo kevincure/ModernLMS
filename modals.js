@@ -1226,15 +1226,17 @@ student3@example.com, 92, Well done" rows="10"></textarea>
             <div class="wiz-step-line"></div>
             <div class="wiz-step-dot" id="wizStep_upload" title="Upload Files"><span>2</span></div>
             <div class="wiz-step-line"></div>
-            <div class="wiz-step-dot" id="wizStep_organize" title="Organize"><span>3</span></div>
+            <div class="wiz-step-dot" id="wizStep_modules" title="Modules"><span>3</span></div>
             <div class="wiz-step-line"></div>
-            <div class="wiz-step-dot" id="wizStep_assignments" title="Assignments"><span>4</span></div>
+            <div class="wiz-step-dot" id="wizStep_organize" title="Organize"><span>4</span></div>
             <div class="wiz-step-line"></div>
-            <div class="wiz-step-dot" id="wizStep_grading" title="Grading"><span>5</span></div>
+            <div class="wiz-step-dot" id="wizStep_assignments" title="Assignments"><span>5</span></div>
             <div class="wiz-step-line"></div>
-            <div class="wiz-step-dot" id="wizStep_calendar" title="Calendar"><span>6</span></div>
+            <div class="wiz-step-dot" id="wizStep_grading" title="Grading"><span>6</span></div>
             <div class="wiz-step-line"></div>
-            <div class="wiz-step-dot" id="wizStep_summary" title="Summary"><span>7</span></div>
+            <div class="wiz-step-dot" id="wizStep_calendar" title="Calendar"><span>7</span></div>
+            <div class="wiz-step-line"></div>
+            <div class="wiz-step-dot" id="wizStep_summary" title="Summary"><span>8</span></div>
           </div>
         </div>
         <div class="modal-body" id="aiSetupWizBody" style="flex:1;overflow-y:auto;padding:16px 20px;">
