@@ -1,0 +1,7 @@
+name = "modernlms-lti-platform"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+
+[vars]
+LTI_NONCE_TTL_SECONDS = "300"
+LTI_STATE_TTL_SECONDS = "300"
