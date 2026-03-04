@@ -986,10 +986,8 @@ async function openCreateCourseModal() {
     select.appendChild(opt);
   });
 
-  // Ensure departments are loaded before populating dropdown
-  if (admin.departments.length === 0) {
-    await loadDepartments();
-  }
+  // Always reload departments so create/edit group options stay in sync.
+  await loadDepartments();
 
   // Populate course group (department) dropdown
   const deptSelect = document.getElementById('courseDeptSelect');
@@ -1098,7 +1096,7 @@ function deleteCourse(courseId, courseName) {
 
 let editingCourseId = null;
 
-function openEditCourseModal(courseId) {
+async function openEditCourseModal(courseId) {
   const course = admin.orgCourses.find(c => c.id === courseId);
   if (!course) return;
   editingCourseId = courseId;
@@ -1109,6 +1107,9 @@ function openEditCourseModal(courseId) {
   document.getElementById('editCourseDescInput').value = course.description || '';
   document.getElementById('editCourseActive').checked  = course.active !== false;
   hideInlineError('editCourseError');
+
+  // Always reload departments to keep create/edit group options in sync.
+  await loadDepartments();
 
   // Populate department dropdown
   const deptSel = document.getElementById('editCourseDeptSelect');
@@ -1230,9 +1231,11 @@ async function addEnrollment() {
 
     setSubmitLoading('addEnrollSubmitBtn', true);
 
-    const { error } = await admin.sb
+    const { data: invite, error } = await admin.sb
       .from('invites')
-      .insert({ course_id: courseId, email, role, status: 'pending', invited_by: admin.user.id });
+      .insert({ course_id: courseId, email, role, status: 'pending', invited_by: admin.user.id })
+      .select('id, course_id, role, created_at')
+      .single();
 
     setSubmitLoading('addEnrollSubmitBtn', false);
 
@@ -1242,20 +1245,10 @@ async function addEnrollment() {
     }
 
     const course = admin.orgCourses.find(c => c.id === courseId);
-    await auditLog('add_invite', 'invite', null,
+    await auditLog('add_invite', 'invite', invite?.id || null,
       { course_id: courseId, email, role });
 
-    // Add to local enrollments list so the pending invite appears immediately
-    admin.enrollments.push({
-      id:          `pending-${Date.now()}`,
-      course_id:   courseId,
-      user_id:     null,
-      role,
-      enrolled_at: new Date().toISOString(),
-      _pending:    true,
-      profile:     { id: null, email, name: '' },
-      course
-    });
+    await loadEnrollments();
 
     closeModal('modal-addEnrollment');
     renderEnrollmentsSection();
@@ -1444,7 +1437,12 @@ async function postOrgAnnouncement() {
 
   const audience = audienceEl.value || 'all';
 
-  await auditLog('org_announcement', 'org', admin.org.id, { text, audience });
+  const auditRes = await auditLog('org_announcement', 'org', admin.org.id, { text, audience }, { required: true });
+  if (!auditRes.ok) {
+    showToast(`Failed to post announcement: ${auditRes.error?.message || 'unknown error'}`, true);
+    return;
+  }
+
   showToast('Announcement posted.');
 
   // Clear input
@@ -1460,26 +1458,15 @@ async function postOrgAnnouncement() {
 
 async function loadFeatureFlags() {
   try {
-    // Get the most recent feature_flag_change entries to derive current state
-    const { data, error } = await admin.sb
-      .from('admin_audit_log')
-      .select('details, created_at')
-      .eq('org_id', admin.org.id)
-      .eq('action', 'feature_flag_change')
-      .order('created_at', { ascending: false })
-      .limit(50);
+    const { data, error } = await admin.sb.rpc('get_org_feature_flags', { p_org_id: admin.org.id });
+    if (error) {
+      console.warn('[Admin] loadFeatureFlags RPC:', error.message);
+      return;
+    }
 
-    if (error) { console.warn('[Admin] loadFeatureFlags:', error.message); return; }
-
-    // Build current flag state from most recent entry per flag
     const flags = { ai_enabled: true, proctor_enabled: true, discussion_enabled: true };
-    const seen = new Set();
-    (data || []).forEach(row => {
-      const d = row.details || {};
-      if (d.flag && !seen.has(d.flag)) {
-        seen.add(d.flag);
-        flags[d.flag] = d.value;
-      }
+    Object.entries(data || {}).forEach(([k, v]) => {
+      flags[k] = v === true || v === 'true';
     });
 
     admin.featureFlags = flags;
@@ -1489,9 +1476,16 @@ async function loadFeatureFlags() {
 }
 
 async function saveFeatureFlag(flag, value) {
-  admin.featureFlags[flag] = value;
+  const auditRes = await auditLog('feature_flag_change', 'org', admin.org.id, { flag, value }, { required: true });
+  if (!auditRes.ok) {
+    showToast(`Failed to save feature flag: ${auditRes.error?.message || 'unknown error'}`, true);
+    await loadFeatureFlags();
+    if (admin.activeSec === 'settings') await renderSettingsSection();
+    return;
+  }
 
-  await auditLog('feature_flag_change', 'org', admin.org.id, { flag, value });
+  await loadFeatureFlags();
+  if (admin.activeSec === 'settings') await renderSettingsSection();
 
   const label = flag.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   showToast(`${label}: ${value ? 'enabled' : 'disabled'}`);
@@ -1583,8 +1577,8 @@ async function addDepartment() {
     return;
   }
 
-  admin.departments.push(data);
-  auditLog('create_department', 'org', data.id, { name });
+  await auditLog('create_department', 'org', data.id, { name });
+  await loadDepartments();
   showToast(`Department "${name}" created.`);
   nameEl.value = '';
   renderDepartmentsList();
@@ -1605,8 +1599,8 @@ function removeDepartment(deptId, deptName) {
         return;
       }
 
-      admin.departments = admin.departments.filter(d => d.id !== deptId);
-      auditLog('delete_department', 'org', deptId, { name: deptName });
+      await auditLog('delete_department', 'org', deptId, { name: deptName });
+      await loadDepartments();
       showToast(`Department "${deptName}" removed.`);
       renderDepartmentsList();
     },
@@ -1616,7 +1610,8 @@ function removeDepartment(deptId, deptName) {
 
 // ─── Audit Logging ────────────────────────────────────────────────────────────
 
-async function auditLog(action, targetType, targetId, details) {
+async function auditLog(action, targetType, targetId, details, options = {}) {
+  const { required = false } = options;
   const { error } = await admin.sb
     .from('admin_audit_log')
     .insert({
@@ -1629,9 +1624,12 @@ async function auditLog(action, targetType, targetId, details) {
     });
 
   if (error) {
-    // Non-fatal: log to console but don't block the operation
     console.warn('[Admin] Audit log insert failed:', error.message);
+    if (required) return { ok: false, error };
+    return { ok: false, error };
   }
+
+  return { ok: true, error: null };
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
