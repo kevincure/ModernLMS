@@ -385,8 +385,6 @@ function initModules() {
     callGeminiAPIWithRetry,
     parseAiJsonResponse,
     fileToBase64,
-    supabaseCreateCourse,
-    supabaseCreateEnrollment,
     supabaseCreateFile,
     supabaseUpdateFile,
     supabaseCreateAssignment,
@@ -1593,13 +1591,6 @@ function renderCourses() {
   const activeCourses = allCourses.filter(c => c.active !== false);
   const inactiveCourses = allCourses.filter(c => c.active === false);
 
-  const aiEnabled = (appData.featureFlags || {}).ai_enabled !== false;
-  if (aiEnabled) {
-    setHTML('coursesActions', '<button class="btn btn-primary" onclick="openAiCourseSetupWizard()">Create Course with AI</button>');
-  } else {
-    setHTML('coursesActions', '');
-  }
-
   const courseCard = (c, dimmed) => {
     const roleLabels = { instructor: 'Instructor', ta: 'Teaching Assistant', student: 'Student' };
     const roleLabel = roleLabels[c.role] || c.role;
@@ -2234,7 +2225,7 @@ function renderHome() {
       const aiEnabled = (appData.featureFlags || {}).ai_enabled !== false;
       if (startHereEl) {
         if (aiEnabled) {
-          // AI-enabled: single "Create Course with AI Help" entry point
+          // AI-enabled: "Set Up Course with AI" entry point for empty courses
           startHereEl.insertAdjacentHTML('beforeend', `
             <div class="card" style="margin-top:16px;">
               <div class="card-header">
@@ -2246,7 +2237,7 @@ function renderHome() {
                   <div style="border:2px solid var(--primary); border-radius:var(--radius); padding:16px; background:var(--primary-light);">
                     <div style="font-weight:600; margin-bottom:8px;">Set Up Course with AI</div>
                     <p class="muted" style="font-size:0.85rem; margin-bottom:12px;">Upload a syllabus, import from a prior course, and let AI organize your files, assignments, grading, and calendar. You review and confirm each step.</p>
-                    <button class="btn btn-primary" onclick="openAiCourseSetupWizard()">Start AI Setup</button>
+                    <button class="btn btn-primary" onclick="openAiCourseSetupWizard('${activeCourseId}')">Start AI Setup</button>
                   </div>
                   <div style="border:1px solid var(--border-color); border-radius:var(--radius); padding:16px;">
                     <div style="font-weight:600; margin-bottom:8px;">Manual Import</div>

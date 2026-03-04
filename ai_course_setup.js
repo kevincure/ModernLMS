@@ -1,7 +1,8 @@
 /* =============================================================================
    AI Course Setup Wizard
-   "Create Course with AI Help" — guided import replacing separate syllabus
-   and course-import flows. Only active when ai_enabled feature flag is on.
+   "Set Up Course with AI" — guided setup for existing empty courses.
+   Replaces separate syllabus and course-import flows with a single wizard.
+   Only active when ai_enabled feature flag is on.
 ============================================================================= */
 
 // Module dependencies (injected via init)
@@ -22,8 +23,6 @@ let callGeminiAPIWithRetry = null;
 let parseAiJsonResponse = null;
 let fileToBase64 = null;
 // Database helpers (reuse existing AI action surface)
-let supabaseCreateCourse = null;
-let supabaseCreateEnrollment = null;
 let supabaseCreateFile = null;
 let supabaseUpdateFile = null;
 let supabaseCreateAssignment = null;
@@ -42,19 +41,15 @@ let switchCourseCallback = null;
 let generateModalsCallback = null;
 
 // ─── Wizard state ────────────────────────────────────────────────────────────
-const STEPS = ['intake', 'import', 'upload', 'organize', 'assignments', 'grading', 'calendar', 'summary'];
+const STEPS = ['import', 'upload', 'organize', 'assignments', 'grading', 'calendar', 'summary'];
 let wizState = resetWizState();
 
 function resetWizState() {
   return {
-    step: 'intake',
-    // intake
+    step: 'import',
+    // syllabus (uploaded in import step)
     syllabusFile: null,
     syllabusData: null,       // parsed JSON from AI
-    courseName: '',
-    courseCode: '',
-    courseDescription: '',
-    studentEmails: '',
     // import
     importSourceCourseId: null,
     importTypes: new Set(['assignments', 'question_banks', 'modules', 'files']),
@@ -96,8 +91,6 @@ export function initAiCourseSetupModule(deps) {
   callGeminiAPIWithRetry = deps.callGeminiAPIWithRetry;
   parseAiJsonResponse = deps.parseAiJsonResponse;
   fileToBase64 = deps.fileToBase64;
-  supabaseCreateCourse = deps.supabaseCreateCourse;
-  supabaseCreateEnrollment = deps.supabaseCreateEnrollment;
   supabaseCreateFile = deps.supabaseCreateFile;
   supabaseUpdateFile = deps.supabaseUpdateFile;
   supabaseCreateAssignment = deps.supabaseCreateAssignment;
@@ -139,12 +132,17 @@ export function initAiCourseSetupModule(deps) {
 }
 
 // ─── Open wizard ─────────────────────────────────────────────────────────────
-export function openAiCourseSetupWizard() {
+export function openAiCourseSetupWizard(courseId) {
+  if (!courseId) {
+    showToast('No course selected', 'error');
+    return;
+  }
   // Ensure modals (including wizard modal) are rendered in DOM
   if (!document.getElementById('aiCourseSetupModal') && generateModalsCallback) {
     generateModalsCallback();
   }
   wizState = resetWizState();
+  wizState.courseId = courseId;
   renderWizard();
   openModal('aiCourseSetupModal');
 }
@@ -160,8 +158,6 @@ function aiSetupNextStep() {
   const idx = currentStepIndex();
   if (idx < STEPS.length - 1) {
     const nextStep = STEPS[idx + 1];
-    // Validate current step before proceeding
-    if (wizState.step === 'intake' && !validateIntake()) return;
     // On transition to organize, generate AI plan if we have syllabus data
     if (nextStep === 'organize') generateOrganizePlan();
     if (nextStep === 'assignments') generateAssignmentPlan();
@@ -187,20 +183,6 @@ function aiSetupGoToStep(step) {
   }
 }
 
-function validateIntake() {
-  const name = document.getElementById('wizCourseName')?.value.trim();
-  const code = document.getElementById('wizCourseCode')?.value.trim();
-  if (!name || !code) {
-    showToast('Please fill in course name and code', 'error');
-    return false;
-  }
-  wizState.courseName = name;
-  wizState.courseCode = code;
-  wizState.courseDescription = document.getElementById('wizCourseDesc')?.value.trim() || '';
-  wizState.studentEmails = document.getElementById('wizCourseEmails')?.value.trim() || '';
-  return true;
-}
-
 // ─── Master render ───────────────────────────────────────────────────────────
 function renderWizard() {
   const body = document.getElementById('aiSetupWizBody');
@@ -217,7 +199,6 @@ function renderWizard() {
 
   // Render step content
   switch (wizState.step) {
-    case 'intake': body.innerHTML = renderIntakeStep(); break;
     case 'import': body.innerHTML = renderImportStep(); break;
     case 'upload': body.innerHTML = renderUploadStep(); break;
     case 'organize': body.innerHTML = renderOrganizeStep(); break;
@@ -238,67 +219,10 @@ function renderWizard() {
       <div style="display:flex;gap:8px;">
         ${!isFirst ? '<button class="btn btn-secondary" onclick="aiSetupPrevStep()">Back</button>' : ''}
         ${!isLast ? '<button class="btn btn-primary" onclick="aiSetupNextStep()">Continue</button>' : ''}
-        ${isLast ? '<button class="btn btn-primary" onclick="aiSetupExecute()" id="wizExecuteBtn">Create Course</button>' : ''}
+        ${isLast ? '<button class="btn btn-primary" onclick="aiSetupExecute()" id="wizExecuteBtn">Set Up Course</button>' : ''}
       </div>
     `;
   }
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// STEP 1: INTAKE
-// ═════════════════════════════════════════════════════════════════════════════
-function renderIntakeStep() {
-  const sd = wizState.syllabusData;
-  const sf = wizState.syllabusFile;
-  const syllabusStatus = sd
-    ? `<div style="color:var(--success);margin-top:8px;">Parsed: ${sd.modules?.length || 0} modules, ${(sd.modules || []).reduce((s,m) => s + (m.items||[]).length, 0)} items</div>`
-    : '';
-  const syllabusFileDisplay = sf
-    ? `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg-color);border-radius:var(--radius);margin-top:8px;">
-         <span>📄 ${escapeHtml(sf.name)} (${(sf.size/1024).toFixed(1)} KB)</span>
-         ${!sd ? '<button class="btn btn-primary btn-sm" onclick="aiSetupParseSyllabus()">Parse</button>' : ''}
-         <button class="btn btn-secondary btn-sm" onclick="aiSetupClearSyllabus()">Remove</button>
-       </div>${syllabusStatus}`
-    : '';
-
-  return `
-    <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 1: Course Information</h3>
-      <p class="muted" style="margin:0;font-size:0.85rem;">Upload a syllabus and the AI will auto-fill course details, modules, assignments, grading, and schedule.</p>
-    </div>
-    <div class="form-group" style="padding:12px;background:var(--primary-light);border-radius:var(--radius);margin-bottom:16px;">
-      <label class="form-label">Upload Syllabus (recommended)</label>
-      <div id="wizSyllabusDropZone"
-           style="border:2px dashed var(--border-color);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;transition:all 0.2s;"
-           ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='rgba(99,102,241,0.08)';"
-           ondragleave="this.style.borderColor='var(--border-color)';this.style.background='';"
-           ondrop="aiSetupSyllabusDrop(event)"
-           onclick="document.getElementById('wizSyllabusInput').click()">
-        <div style="font-weight:500;">Drag & drop syllabus here</div>
-        <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
-        <input type="file" id="wizSyllabusInput" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="aiSetupSyllabusFileSelected()">
-      </div>
-      ${syllabusFileDisplay}
-      <div id="wizSyllabusParseStatus" style="margin-top:8px;"></div>
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="wizCourseName">Course Name *</label>
-      <input type="text" class="form-input" id="wizCourseName" placeholder="e.g., ECON 101 - Introduction to Economics" value="${escapeHtml(wizState.courseName)}">
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="wizCourseCode">Course Code *</label>
-      <input type="text" class="form-input" id="wizCourseCode" placeholder="e.g., ECON101" value="${escapeHtml(wizState.courseCode)}">
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="wizCourseDesc">Description (optional)</label>
-      <textarea class="form-textarea" id="wizCourseDesc" placeholder="Course description..." rows="2">${escapeHtml(wizState.courseDescription)}</textarea>
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="wizCourseEmails">Student Emails (optional)</label>
-      <textarea class="form-textarea" id="wizCourseEmails" placeholder="Enter emails separated by commas or newlines" rows="2">${escapeHtml(wizState.studentEmails)}</textarea>
-      <div class="hint">Students will be invited to join the course</div>
-    </div>
-  `;
 }
 
 // Syllabus handlers
@@ -405,13 +329,6 @@ Rules:
     const parsed = parseAiJsonResponse(text);
     wizState.syllabusData = parsed;
 
-    // Auto-fill course info
-    if (parsed.courseInfo) {
-      if (parsed.courseInfo.name && !wizState.courseName) wizState.courseName = parsed.courseInfo.name;
-      if (parsed.courseInfo.code && !wizState.courseCode) wizState.courseCode = parsed.courseInfo.code;
-      if (parsed.courseInfo.description && !wizState.courseDescription) wizState.courseDescription = parsed.courseInfo.description;
-    }
-
     showToast('Syllabus parsed successfully!', 'success');
     renderWizard();
   } catch (err) {
@@ -422,11 +339,26 @@ Rules:
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 2: IMPORT FROM PRIOR COURSE (optional)
+// STEP 1: SYLLABUS & IMPORT
 // ═════════════════════════════════════════════════════════════════════════════
 function renderImportStep() {
+  // Syllabus upload section
+  const sd = wizState.syllabusData;
+  const sf = wizState.syllabusFile;
+  const syllabusStatus = sd
+    ? `<div style="color:var(--success);margin-top:8px;">Parsed: ${sd.modules?.length || 0} modules, ${(sd.modules || []).reduce((s,m) => s + (m.items||[]).length, 0)} items</div>`
+    : '';
+  const syllabusFileDisplay = sf
+    ? `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg-color);border-radius:var(--radius);margin-top:8px;">
+         <span>📄 ${escapeHtml(sf.name)} (${(sf.size/1024).toFixed(1)} KB)</span>
+         ${!sd ? '<button class="btn btn-primary btn-sm" onclick="aiSetupParseSyllabus()">Parse</button>' : ''}
+         <button class="btn btn-secondary btn-sm" onclick="aiSetupClearSyllabus()">Remove</button>
+       </div>${syllabusStatus}`
+    : '';
+
+  // Import from prior course section
   const sourceCourses = getUserCoursesCallback
-    ? getUserCoursesCallback(appData.currentUser.id).filter(c => c.role === 'instructor')
+    ? getUserCoursesCallback(appData.currentUser.id).filter(c => c.role === 'instructor' && c.id !== wizState.courseId)
     : [];
 
   const typeLabels = {
@@ -461,8 +393,28 @@ function renderImportStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 2: Import from Prior Course (optional)</h3>
-      <p class="muted" style="margin:0;font-size:0.85rem;">Copy content from an existing course. This clones files, assignments, question banks, and modules. Skip this if starting fresh.</p>
+      <h3 style="margin:0 0 4px;">Step 1: Syllabus & Import</h3>
+      <p class="muted" style="margin:0;font-size:0.85rem;">Upload a syllabus for AI to extract modules, assignments, grading, and schedule. You can also import content from a prior course.</p>
+    </div>
+    <div class="form-group" style="padding:12px;background:var(--primary-light);border-radius:var(--radius);margin-bottom:16px;">
+      <label class="form-label">Upload Syllabus (recommended)</label>
+      <div id="wizSyllabusDropZone"
+           style="border:2px dashed var(--border-color);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;transition:all 0.2s;"
+           ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='rgba(99,102,241,0.08)';"
+           ondragleave="this.style.borderColor='var(--border-color)';this.style.background='';"
+           ondrop="aiSetupSyllabusDrop(event)"
+           onclick="document.getElementById('wizSyllabusInput').click()">
+        <div style="font-weight:500;">Drag & drop syllabus here</div>
+        <div class="muted" style="font-size:0.85rem;">or click to browse (PDF, DOC, TXT)</div>
+        <input type="file" id="wizSyllabusInput" accept=".pdf,.doc,.docx,.txt,.tex" style="display:none;" onchange="aiSetupSyllabusFileSelected()">
+      </div>
+      ${syllabusFileDisplay}
+      <div id="wizSyllabusParseStatus" style="margin-top:8px;"></div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--border-color);margin:20px 0;">
+    <div style="margin-bottom:12px;">
+      <div style="font-weight:600;">Import from Prior Course (optional)</div>
+      <p class="muted" style="margin:4px 0 0;font-size:0.85rem;">Copy content from an existing course. This clones files, assignments, question banks, and modules.</p>
     </div>
     <div class="form-group">
       <label class="form-label">Import from course</label>
@@ -501,7 +453,7 @@ function aiSetupToggleImportType(type, checked) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 3: UPLOAD FILES
+// STEP 2: UPLOAD FILES
 // ═════════════════════════════════════════════════════════════════════════════
 function renderUploadStep() {
   const fileList = wizState.uploadedFiles.map((f, i) => `
@@ -514,7 +466,7 @@ function renderUploadStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 3: Upload Course Files</h3>
+      <h3 style="margin:0 0 4px;">Step 2: Upload Course Files</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">Add any files you want for this course (slides, readings, handouts). Don't worry, you can add more later — the AI will automatically sort these into the right folders and modules for you.</p>
     </div>
     <div class="form-group">
@@ -564,7 +516,7 @@ function aiSetupRemoveUploadFile(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 4: ORGANIZE FILES INTO FOLDERS + MODULES (AI-proposed, user-editable)
+// STEP 3: ORGANIZE FILES INTO FOLDERS + MODULES (AI-proposed, user-editable)
 // ═════════════════════════════════════════════════════════════════════════════
 function generateOrganizePlan() {
   // Build list of all files: imported + newly uploaded + syllabus
@@ -684,7 +636,7 @@ function renderOrganizeStep() {
   if (wizState.fileOrgPlan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 4: Organize Files</h3>
+        <h3 style="margin:0 0 4px;">Step 3: Organize Files</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No files to organize. Continue to the next step.</p>
       </div>
     `;
@@ -711,7 +663,7 @@ function renderOrganizeStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 4: Organize Files into Folders & Modules</h3>
+      <h3 style="margin:0 0 4px;">Step 3: Organize Files into Folders & Modules</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">The AI sorted your files into folders. Review and adjust below. <strong>Folders</strong> organize files for storage; <strong>Modules</strong> are the learning sequence students see.</p>
     </div>
     <div style="overflow-x:auto;">
@@ -750,7 +702,7 @@ function aiSetupMoveFile(index, field, value) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 5: ASSIGNMENTS (AI-proposed from syllabus, user-editable)
+// STEP 4: ASSIGNMENTS (AI-proposed from syllabus, user-editable)
 // ═════════════════════════════════════════════════════════════════════════════
 function generateAssignmentPlan() {
   if (wizState.assignmentPlan.length > 0) return; // already generated
@@ -810,7 +762,7 @@ function renderAssignmentsStep() {
   if (plan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 5: Assignments</h3>
+        <h3 style="margin:0 0 4px;">Step 4: Assignments</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No assignments detected from syllabus or import. You can add assignments later from the Assignments page.</p>
       </div>
     `;
@@ -844,7 +796,7 @@ function renderAssignmentsStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 5: Assignments</h3>
+      <h3 style="margin:0 0 4px;">Step 4: Assignments</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">
         ${newCount} assignment${newCount !== 1 ? 's' : ''} from syllabus.
         ${placeholderCount > 0 ? `${placeholderCount} are placeholders that need content — they'll be created as drafts titled "PLACEHOLDER".` : ''}
@@ -878,7 +830,7 @@ function aiSetupRemoveAssignment(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 6: GRADING STRUCTURE
+// STEP 5: GRADING STRUCTURE
 // ═════════════════════════════════════════════════════════════════════════════
 function generateGradingPlan() {
   if (wizState.gradingPlan.length > 0) return;
@@ -911,7 +863,7 @@ function renderGradingStep() {
   if (plan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 6: Grading Weights</h3>
+        <h3 style="margin:0 0 4px;">Step 5: Grading Weights</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No grading policy detected. You can set up grade categories later from the Gradebook page.</p>
       </div>
     `;
@@ -929,7 +881,7 @@ function renderGradingStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 6: Grading Weights</h3>
+      <h3 style="margin:0 0 4px;">Step 5: Grading Weights</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">Grade categories extracted from syllabus. Total: <strong>${totalWeight}%</strong>${totalWeight !== 100 ? ' <span style="color:var(--warning);">(should be 100%)</span>' : ''}.</p>
     </div>
     <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;">
@@ -955,7 +907,7 @@ function aiSetupRemoveGradeCategory(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 7: CALENDAR
+// STEP 6: CALENDAR
 // ═════════════════════════════════════════════════════════════════════════════
 function generateCalendarPlan() {
   if (wizState.calendarPlan.length > 0) return;
@@ -1016,7 +968,7 @@ function renderCalendarStep() {
   if (plan.length === 0) {
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:0 0 4px;">Step 7: Calendar</h3>
+        <h3 style="margin:0 0 4px;">Step 6: Calendar</h3>
         <p class="muted" style="margin:0;font-size:0.85rem;">No class sessions or exams detected from syllabus. Assignment due dates are added to the calendar automatically. You can add events later from the Calendar page.</p>
       </div>
     `;
@@ -1037,7 +989,7 @@ function renderCalendarStep() {
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Step 7: Calendar</h3>
+      <h3 style="margin:0 0 4px;">Step 6: Calendar</h3>
       <p class="muted" style="margin:0;font-size:0.85rem;">${classCount} class sessions, ${examCount} exams. Assignment due dates are added automatically — no need to add them here.</p>
     </div>
     <div style="border:1px solid var(--border-color);border-radius:var(--radius);overflow:hidden;max-height:350px;overflow-y:auto;">
@@ -1065,7 +1017,7 @@ function aiSetupRemoveCalendarEvent(index) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STEP 8: SUMMARY
+// STEP 7: SUMMARY
 // ═════════════════════════════════════════════════════════════════════════════
 function renderSummaryStep() {
   const filesToUpload = wizState.uploadedFiles.length + (wizState.syllabusFile ? 1 : 0);
@@ -1074,15 +1026,18 @@ function renderSummaryStep() {
   const gradeCats = wizState.gradingPlan.length;
   const calEvents = wizState.calendarPlan.length;
   const importedItems = Object.values(wizState.importedIds).reduce((s, m) => s + Object.keys(m).length, 0);
+  const course = getCourseById(wizState.courseId);
+  const courseName = course?.name || 'Course';
+  const courseCode = course?.code || '';
 
   return `
     <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 4px;">Ready to Create Your Course</h3>
-      <p class="muted" style="margin:0;font-size:0.85rem;">Review the summary below. Click "Create Course" to build everything.</p>
+      <h3 style="margin:0 0 4px;">Ready to Set Up Your Course</h3>
+      <p class="muted" style="margin:0;font-size:0.85rem;">Review the summary below. Click "Set Up Course" to build everything.</p>
     </div>
     <div style="padding:16px;background:var(--primary-light);border-radius:var(--radius);margin-bottom:16px;">
-      <div style="font-weight:600;font-size:1rem;margin-bottom:4px;">${escapeHtml(wizState.courseName)}</div>
-      <div class="muted" style="font-size:0.85rem;">${escapeHtml(wizState.courseCode)}${wizState.courseDescription ? ' — ' + escapeHtml(wizState.courseDescription.substring(0, 100)) : ''}</div>
+      <div style="font-weight:600;font-size:1rem;margin-bottom:4px;">${escapeHtml(courseName)}</div>
+      <div class="muted" style="font-size:0.85rem;">${escapeHtml(courseCode)}</div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
       ${importedItems > 0 ? `<div class="card" style="padding:12px;"><strong>Imported</strong><div class="muted" style="font-size:0.85rem;">${importedItems} items from prior course</div></div>` : ''}
@@ -1107,79 +1062,37 @@ async function aiSetupExecute() {
   wizState.executing = true;
 
   const execBtn = document.getElementById('wizExecuteBtn');
-  if (execBtn) { execBtn.disabled = true; execBtn.textContent = 'Creating...'; }
+  if (execBtn) { execBtn.disabled = true; execBtn.textContent = 'Setting up...'; }
+
+  const courseId = wizState.courseId;
+  if (!courseId) {
+    showToast('No course selected', 'error');
+    wizState.executing = false;
+    return;
+  }
 
   try {
-    // 1. Create course
-    const courseId = generateId();
-    wizState.courseId = courseId;
-
-    let startHereContent = `Welcome to ${wizState.courseName}.`;
-    let startHereLinks = [];
-
-    const course = {
-      id: courseId,
-      name: wizState.courseName,
-      code: wizState.courseCode,
-      description: wizState.courseDescription,
-      createdBy: appData.currentUser.id,
-      startHereContent,
-      startHereLinks
-    };
-
-    const savedCourse = await supabaseCreateCourse(course);
-    if (!savedCourse) throw new Error('Failed to create course');
-    appData.courses.push(course);
-
-    // 2. Enroll instructor
-    const enrollment = { userId: appData.currentUser.id, courseId, role: 'instructor' };
-    const savedEnrollment = await supabaseCreateEnrollment(enrollment);
-    if (!savedEnrollment) throw new Error('Failed to enroll instructor');
-    appData.enrollments.push(enrollment);
-
-    // 3. Process student invites
-    if (wizState.studentEmails) {
-      const emails = wizState.studentEmails.split(/[\n,;]+/).map(e => e.trim()).filter(e => e && e.includes('@'));
-      for (const email of emails) {
-        const user = (appData.users || []).find(u => u.email === email);
-        if (user) {
-          const existing = appData.enrollments.find(e => e.userId === user.id && e.courseId === courseId);
-          if (!existing) {
-            const se = { userId: user.id, courseId, role: 'student' };
-            const saved = await supabaseCreateEnrollment(se);
-            if (saved) appData.enrollments.push(se);
-          }
-        } else {
-          if (!appData.invites) appData.invites = [];
-          const invite = { courseId, email, role: 'student', status: 'pending', sentAt: new Date().toISOString() };
-          // Use dynamic import to avoid adding supabaseCreateInvite to deps
-          try {
-            const { supabaseCreateInvite } = await import('./database_interactions.js');
-            const saved = await supabaseCreateInvite(invite);
-            if (saved?.id) appData.invites.push({ ...invite, id: saved.id });
-          } catch (_) { /* skip invite on failure */ }
-        }
-      }
-    }
-
-    // 4. Execute import from prior course (if selected)
+    // 1. Execute import from prior course (if selected)
     if (wizState.importSourceCourseId) {
       await executeImport(courseId);
     }
 
-    // 5. Upload syllabus file
+    // 2. Upload syllabus file
     if (wizState.syllabusFile) {
       const syllabusFileId = await uploadFileToStorage(wizState.syllabusFile, courseId, 'Syllabus');
       if (syllabusFileId) {
-        course.startHereLinks = [{ label: 'Syllabus', fileId: syllabusFileId }];
-        try {
-          const { supabaseUpdateCourse } = await import('./database_interactions.js');
-          await supabaseUpdateCourse(course);
-        } catch (_) {}
+        const course = getCourseById(courseId);
+        if (course) {
+          course.startHereLinks = [...(course.startHereLinks || []), { label: 'Syllabus', fileId: syllabusFileId }];
+          try {
+            const { supabaseUpdateCourse } = await import('./database_interactions.js');
+            await supabaseUpdateCourse(course);
+          } catch (_) {}
+        }
       }
     }
 
-    // 6. Upload user files
+    // 3. Upload user files
     for (let i = 0; i < wizState.uploadedFiles.length; i++) {
       const f = wizState.uploadedFiles[i];
       const orgEntry = wizState.fileOrgPlan.find(e => e.source === 'upload' && e.index === i);
@@ -1187,34 +1100,34 @@ async function aiSetupExecute() {
       await uploadFileToStorage(f, courseId, folder);
     }
 
-    // 7. Create modules from syllabus + place files
+    // 4. Create modules from syllabus + place files
     if (wizState.modulePlan.length > 0) {
       await createModules(courseId);
     }
 
-    // 8. Create assignments
+    // 5. Create assignments
     await createAssignments(courseId);
 
-    // 9. Create grade categories
+    // 6. Create grade categories
     await createGradeCategories(courseId);
 
-    // 10. Create calendar events
+    // 7. Create calendar events
     await createCalendarEvents(courseId);
 
-    // 11. Set active course and navigate
-    showToast('Course created successfully!', 'success');
+    // 8. Navigate to the course home
+    showToast('Course set up successfully!', 'success');
     closeModal('aiCourseSetupModal');
 
-    // Switch to the new course (sets activeCourseId, re-renders, navigates to home)
+    // Re-render the course to show new content
     if (switchCourseCallback) switchCourseCallback(courseId);
 
   } catch (err) {
     console.error('AI Course Setup execution error:', err);
-    showToast('Error creating course: ' + err.message, 'error');
+    showToast('Error setting up course: ' + err.message, 'error');
   } finally {
     wizState.executing = false;
     const execBtn = document.getElementById('wizExecuteBtn');
-    if (execBtn) { execBtn.disabled = false; execBtn.textContent = 'Create Course'; }
+    if (execBtn) { execBtn.disabled = false; execBtn.textContent = 'Set Up Course'; }
   }
 }
 
