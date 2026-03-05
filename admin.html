@@ -318,10 +318,13 @@
         <section id="section-tools" class="admin-section" style="display:none;">
           <div class="admin-section-header">
             <div>
-              <h2 class="admin-section-title">Authorized LTI Tools</h2>
-              <p class="muted" style="margin-top:4px; font-size:0.875rem;">Tools currently active for this organization and course scopes.</p>
+              <h2 class="admin-section-title">LTI Tools</h2>
+              <p class="muted" style="margin-top:4px; font-size:0.875rem;">Register and authorize LTI 1.3 tools for use in this organization. Faculty can then add authorized tools to their courses.</p>
             </div>
-            <button class="btn btn-secondary" onclick="refreshLtiToolsSection()">↺ Refresh</button>
+            <div style="display:flex; gap:10px;">
+              <button class="btn btn-secondary" onclick="refreshLtiToolsSection()">↺ Refresh</button>
+              <button class="btn btn-primary" onclick="openAddToolModal()">+ Add LTI Tool</button>
+            </div>
           </div>
           <div id="toolsTableWrap"></div>
         </section>
@@ -667,6 +670,78 @@
        Toast notification (non-blocking feedback)
   ════════════════════════════════════════════════════════ -->
   <div id="adminToast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       Modal: Register LTI Tool
+  ════════════════════════════════════════════════════════ -->
+  <div id="modal-addTool" class="modal-overlay"
+    role="dialog" aria-modal="true" aria-labelledby="addToolModalTitle"
+    style="display:none;">
+    <div class="modal" style="max-width:580px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="addToolModalTitle">Register LTI 1.3 Tool</h3>
+        <button class="modal-close" onclick="closeModal('modal-addTool')" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:var(--bg-alt,#f8f9fa); border:1px solid var(--border-light,#e5e7eb); border-radius:8px; padding:12px 14px; margin-bottom:18px; font-size:0.83rem; line-height:1.6;">
+          <strong>Give these platform values to the tool vendor:</strong><br>
+          JWKS: <code id="addToolPlatformJwks">see IMPLEMENTATION_GUIDE.md</code><br>
+          OIDC login: <code id="addToolPlatformOidc">see IMPLEMENTATION_GUIDE.md</code><br>
+          The platform issuer, token endpoint and deep-link return URLs are in the worker config.
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="addToolName">Tool Name <span style="color:var(--danger);">*</span></label>
+          <input type="text" id="addToolName" class="form-input" placeholder="e.g. Turnitin, Kaltura, H5P…" autocomplete="off" />
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label" for="addToolIssuer">Tool Issuer URL <span style="color:var(--danger);">*</span></label>
+            <input type="url" id="addToolIssuer" class="form-input" placeholder="https://tool.vendor.com" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="addToolClientId">Client ID <span style="color:var(--danger);">*</span></label>
+            <input type="text" id="addToolClientId" class="form-input" placeholder="e.g. my-lms-client-001" autocomplete="off" />
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label" for="addToolDeploymentId">Deployment ID <span style="color:var(--danger);">*</span></label>
+            <input type="text" id="addToolDeploymentId" class="form-input" placeholder="deploy-1" autocomplete="off" />
+            <p class="hint" style="margin-top:4px; font-size:0.78rem;">Share with tool vendor — must match their deployment config.</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="addToolJwksUrl">Tool JWKS URL <span style="color:var(--danger);">*</span></label>
+            <input type="url" id="addToolJwksUrl" class="form-input" placeholder="https://tool.vendor.com/.well-known/jwks.json" autocomplete="off" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="addToolLaunchUrl">Tool Launch URL <span style="color:var(--danger);">*</span></label>
+          <input type="url" id="addToolLaunchUrl" class="form-input" placeholder="https://tool.vendor.com/lti/launch" autocomplete="off" />
+          <p class="hint" style="margin-top:4px; font-size:0.78rem;">Used as both auth_login_url and target_link_uri. Tool vendor will provide this.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="addToolDeepLinkUrl">Deep Link Return URL (optional)</label>
+          <input type="url" id="addToolDeepLinkUrl" class="form-input" placeholder="Leave blank to use platform worker default" autocomplete="off" />
+        </div>
+        <div class="form-group" style="display:flex; gap:24px; flex-wrap:wrap; padding-top:4px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem;">
+            <input type="checkbox" id="addToolEnableDl" checked /> Deep Linking 2.0
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem;">
+            <input type="checkbox" id="addToolEnableAgs" checked /> Assignment &amp; Grade Services
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem;">
+            <input type="checkbox" id="addToolEnableNrps" checked /> Names &amp; Roles
+          </label>
+        </div>
+        <div id="addToolError" class="admin-inline-error" style="display:none;" role="alert"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-addTool')">Cancel</button>
+        <button class="btn btn-primary" id="addToolSubmitBtn" onclick="saveLtiTool()">Register Tool</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Admin application logic -->
   <script src="admin.js"></script>
