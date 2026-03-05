@@ -7133,6 +7133,7 @@ function getCourseLtiTools(courseId) {
       return {
         depId:            d.id,           // deployment row UUID (for update/remove)
         registrationId:   reg.id,
+        clientId:         reg.clientId,   // needed for /lti/initiate-launch
         ltiDeploymentId:  d.deploymentId, // the LTI deployment_id string
         toolName:         reg.toolName || reg.clientId,
         issuer:           reg.issuer,
@@ -7238,16 +7239,20 @@ function renderTools() {
                <strong>${escapeHtml(e.fileName)}</strong>
                <div class="muted" style="font-size:0.85rem;margin-top:4px;">${escapeHtml(e.filePreview50 || '')}</div>
              </div>`).join('')
-        : '<div class="muted" style="margin-top:8px;font-size:0.85rem;">No files shared yet.</div>';
+        : '';
       return `<div class="card" style="margin-bottom:14px;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:1.25rem;">🧩</span>
-          <div>
-            <div style="font-weight:600;">${escapeHtml(t.toolName)}</div>
-            <div class="muted" style="font-size:0.8rem;">${escapeHtml(t.issuer)}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:1.25rem;">🧩</span>
+            <div>
+              <div style="font-weight:600;">${escapeHtml(t.toolName)}</div>
+              <div class="muted" style="font-size:0.8rem;">${escapeHtml(t.issuer)}</div>
+            </div>
           </div>
+          <button class="btn btn-primary" style="font-size:0.85rem;"
+            onclick="launchLtiTool('${escapeHtml(t.clientId)}')">Open ${escapeHtml(t.toolName)}</button>
         </div>
-        <div style="margin-top:10px;">${echoList}</div>
+        ${echoList ? `<div style="margin-top:10px;">${echoList}</div>` : ''}
       </div>`;
     }).join('');
     return;
@@ -7291,6 +7296,8 @@ function renderTools() {
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary" style="font-size:0.8rem;padding:5px 11px;"
+                onclick="launchLtiTool('${escapeHtml(t.clientId)}')">Launch</button>
               <button class="btn btn-secondary" style="font-size:0.8rem;padding:5px 11px;"
                 onclick="toggleToolVisibility('${t.depId}', ${t.visibleToStudents})">${visBtnLabel}</button>
               <button class="btn btn-secondary" style="font-size:0.8rem;padding:5px 11px;color:var(--danger);"
@@ -7405,11 +7412,23 @@ async function removeToolFromCourse(depId, toolName) {
   showToast(`"${toolName}" removed from this course.`, 'success');
 }
 
+function launchLtiTool(clientId) {
+  const LTI_WORKER = 'https://modernlms-lti-platform.kevin-eb3.workers.dev';
+  const userId = appData.currentUser?.id;
+  if (!userId || !activeCourseId) return;
+  const url = `${LTI_WORKER}/lti/initiate-launch`
+    + `?client_id=${encodeURIComponent(clientId)}`
+    + `&course_id=${encodeURIComponent(activeCourseId)}`
+    + `&user_id=${encodeURIComponent(userId)}`;
+  window.open(url, '_blank', 'noopener');
+}
+
 // Expose LTI tool functions called from inline onclick handlers.
 // Required because app.js is loaded as type="module" (module scope ≠ global scope).
-window.addToolToCourse     = addToolToCourse;
+window.addToolToCourse      = addToolToCourse;
 window.toggleToolVisibility = toggleToolVisibility;
 window.removeToolFromCourse = removeToolFromCourse;
+window.launchLtiTool        = launchLtiTool;
 
 function renderGradebook() {
   if (!activeCourseId) {
@@ -9487,9 +9506,23 @@ async function addPersonToCourse() {
       }
     }
   } else {
-    // User not found in loaded profiles — they must be added to the org first by an admin
-    showToast('User not found. This person must be added to the organization by an admin before they can be enrolled.', 'error');
-    return;
+    // User not yet in the system — create a pending invite so they're enrolled on sign-up
+    const invite = {
+      courseId: activeCourseId,
+      email:    email,
+      role:     role,
+      status:   'pending',
+      sentAt:   new Date().toISOString()
+    };
+    const savedInvite = await supabaseCreateInvite(invite);
+    if (savedInvite?.id) {
+      if (!appData.invites) appData.invites = [];
+      appData.invites.push({ ...invite, id: savedInvite.id });
+      showToast(`Invite sent to ${email}. They'll be enrolled as ${role} when they sign in.`, 'success');
+    } else {
+      showToast('Failed to send invite.', 'error');
+      return;
+    }
   }
 
   closeModal('addPersonModal');
