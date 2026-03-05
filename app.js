@@ -7250,7 +7250,7 @@ function renderTools() {
             </div>
           </div>
           <button class="btn btn-primary" style="font-size:0.85rem;"
-            onclick="launchLtiTool('${escapeHtml(t.clientId)}')">Open ${escapeHtml(t.toolName)}</button>
+            onclick="launchLtiTool('${escapeHtml(t.clientId)}','${escapeHtml(t.toolName)}')">Open ${escapeHtml(t.toolName)}</button>
         </div>
         ${echoList ? `<div style="margin-top:10px;">${echoList}</div>` : ''}
       </div>`;
@@ -7297,7 +7297,7 @@ function renderTools() {
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-primary" style="font-size:0.8rem;padding:5px 11px;"
-                onclick="launchLtiTool('${escapeHtml(t.clientId)}')">Launch</button>
+                onclick="launchLtiTool('${escapeHtml(t.clientId)}','${escapeHtml(t.toolName)}')">Launch</button>
               <button class="btn btn-secondary" style="font-size:0.8rem;padding:5px 11px;"
                 onclick="toggleToolVisibility('${t.depId}', ${t.visibleToStudents})">${visBtnLabel}</button>
               <button class="btn btn-secondary" style="font-size:0.8rem;padding:5px 11px;color:var(--danger);"
@@ -7412,16 +7412,77 @@ async function removeToolFromCourse(depId, toolName) {
   showToast(`"${toolName}" removed from this course.`, 'success');
 }
 
-function launchLtiTool(clientId) {
+function launchLtiTool(clientId, toolName) {
   const LTI_WORKER = 'https://modernlms-lti-platform.kevin-eb3.workers.dev';
   const userId = appData.currentUser?.id;
   if (!userId || !activeCourseId) return;
-  const url = `${LTI_WORKER}/lti/initiate-launch`
+
+  const launchUrl = `${LTI_WORKER}/lti/initiate-launch`
     + `?client_id=${encodeURIComponent(clientId)}`
     + `&course_id=${encodeURIComponent(activeCourseId)}`
     + `&user_id=${encodeURIComponent(userId)}`;
-  window.open(url, '_blank', 'noopener');
+
+  // Build the modal once; reuse on subsequent launches.
+  let modal = document.getElementById('ltiLaunchModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'ltiLaunchModal';
+    modal.className = 'modal-overlay';
+    // Click backdrop to close
+    modal.addEventListener('click', e => { if (e.target === modal) closeLtiLaunchModal(); });
+    modal.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ltiLaunchTitle"
+           style="width:90vw;max-width:1200px;height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;">
+        <div class="modal-header" style="flex-shrink:0;padding:12px 16px;">
+          <h2 class="modal-title" id="ltiLaunchTitle" style="font-size:1rem;margin:0;"></h2>
+          <button class="modal-close" aria-label="Close tool" onclick="closeLtiLaunchModal()">&times;</button>
+        </div>
+        <div style="flex:1;position:relative;min-height:0;">
+          <div id="ltiLaunchSpinner"
+               style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+                      justify-content:center;gap:12px;color:var(--text-muted);background:var(--bg,#fff);">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 style="animation:ai-spin 1s linear infinite;">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4
+                       M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            <span>Connecting to tool…</span>
+          </div>
+          <iframe id="ltiLaunchFrame"
+            style="position:absolute;inset:0;width:100%;height:100%;border:none;"
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
+            allow="camera; microphone; fullscreen; clipboard-write"
+            referrerpolicy="no-referrer-when-downgrade">
+          </iframe>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    // Hide spinner once the tool's page has loaded; re-show on each navigation.
+    const frame = modal.querySelector('#ltiLaunchFrame');
+    const spinner = modal.querySelector('#ltiLaunchSpinner');
+    frame.addEventListener('load', () => { spinner.style.display = 'none'; });
+  }
+
+  // Update title and (re-)point the iframe at the launch URL.
+  modal.querySelector('#ltiLaunchTitle').textContent = toolName || 'External Tool';
+  const frame  = modal.querySelector('#ltiLaunchFrame');
+  const spinner = modal.querySelector('#ltiLaunchSpinner');
+  spinner.style.display = 'flex';
+  frame.src = launchUrl;
+
+  modal.classList.add('visible');
 }
+
+function closeLtiLaunchModal() {
+  const modal = document.getElementById('ltiLaunchModal');
+  if (!modal) return;
+  modal.classList.remove('visible');
+  // Unload the tool so it stops running in the background.
+  const frame = modal.querySelector('#ltiLaunchFrame');
+  if (frame) frame.src = '';
+}
+window.closeLtiLaunchModal = closeLtiLaunchModal;
 
 // Expose LTI tool functions called from inline onclick handlers.
 // Required because app.js is loaded as type="module" (module scope ≠ global scope).
