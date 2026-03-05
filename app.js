@@ -7405,6 +7405,12 @@ async function removeToolFromCourse(depId, toolName) {
   showToast(`"${toolName}" removed from this course.`, 'success');
 }
 
+// Expose LTI tool functions called from inline onclick handlers.
+// Required because app.js is loaded as type="module" (module scope ≠ global scope).
+window.addToolToCourse     = addToolToCourse;
+window.toggleToolVisibility = toggleToolVisibility;
+window.removeToolFromCourse = removeToolFromCourse;
+
 function renderGradebook() {
   if (!activeCourseId) {
     setText('gradebookSubtitle', 'Select a course');
