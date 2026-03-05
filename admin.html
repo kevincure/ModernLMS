@@ -673,6 +673,38 @@
   <div id="adminToast" class="toast" role="status" aria-live="polite"></div>
 
   <!-- ═══════════════════════════════════════════════════════
+       Modal: Dynamic LTI Registration
+  ════════════════════════════════════════════════════════ -->
+  <div id="modal-dynReg" class="modal-overlay"
+    role="dialog" aria-modal="true" aria-labelledby="dynRegModalTitle"
+    style="display:none;">
+    <div class="modal" style="max-width:500px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="dynRegModalTitle">Dynamic LTI Registration</h3>
+        <button class="modal-close" onclick="closeModal('modal-dynReg')" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:0.875rem; color:var(--muted,#6b7280); margin-bottom:18px;">
+          Enter the tool's LTI dynamic registration URL. The platform will generate a
+          short-lived token and open that URL with the required parameters.
+        </p>
+        <div class="form-group">
+          <label class="form-label" for="dynRegTargetUrl">Tool Registration URL <span style="color:var(--danger);">*</span></label>
+          <input type="url" id="dynRegTargetUrl" class="form-input"
+            placeholder="https://tool-vendor.com/lti/register"
+            autocomplete="off" />
+          <p class="hint" style="margin-top:4px;font-size:0.78rem;">The base URL the tool uses for LTI dynamic registration (without query params).</p>
+        </div>
+        <div id="dynRegError" class="admin-inline-error" style="display:none;" role="alert"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-dynReg')">Cancel</button>
+        <button class="btn btn-primary" id="dynRegSubmitBtn" onclick="submitDynamicRegistration()">Open Registration Page</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
        Modal: Register LTI Tool
   ════════════════════════════════════════════════════════ -->
   <div id="modal-addTool" class="modal-overlay"

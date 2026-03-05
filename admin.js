@@ -528,11 +528,26 @@ function renderToolsSection() {
 }
 
 // ── Dynamic Registration (LTI-DR) ─────────────────────────────────────────────
-// Generates a short-lived registration token via the platform worker, then
-// opens ADTA's /lti-register page so the admin can complete registration there.
 
-async function startDynamicRegistration() {
-  const LTI_WORKER = 'https://modernlms-lti-platform.kevin-eb3.workers.dev';
+const LTI_WORKER = 'https://modernlms-lti-platform.kevin-eb3.workers.dev';
+
+function startDynamicRegistration() {
+  document.getElementById('dynRegTargetUrl').value = '';
+  hideInlineError('dynRegError');
+  openModal('modal-dynReg');
+  setTimeout(() => document.getElementById('dynRegTargetUrl')?.focus(), 80);
+}
+
+async function submitDynamicRegistration() {
+  const targetUrl = document.getElementById('dynRegTargetUrl').value.trim();
+  if (!targetUrl) {
+    showInlineError('dynRegError', 'Tool registration URL is required.');
+    return;
+  }
+
+  setSubmitLoading('dynRegSubmitBtn', true);
+  hideInlineError('dynRegError');
+
   try {
     const resp = await fetch(
       `${LTI_WORKER}/lti/admin/registration-token?org_id=${encodeURIComponent(admin.org.id)}`,
@@ -540,13 +555,20 @@ async function startDynamicRegistration() {
     );
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
-      showToast(`Failed to generate registration link: ${body.error || resp.status}`);
+      showInlineError('dynRegError', `Failed to generate token: ${body.error || resp.status}`);
       return;
     }
-    const { registration_url } = await resp.json();
-    window.open(registration_url, '_blank', 'noopener');
+    const { token } = await resp.json();
+    const openidConfigUrl = `${LTI_WORKER}/.well-known/openid-configuration?org_id=${encodeURIComponent(admin.org.id)}`;
+    const registrationUrl = `${targetUrl}`
+      + `?openid_configuration=${encodeURIComponent(openidConfigUrl)}`
+      + `&registration_token=${encodeURIComponent(token)}`;
+    closeModal('modal-dynReg');
+    window.open(registrationUrl, '_blank', 'noopener');
   } catch (e) {
-    showToast(`Failed to generate registration link: ${e.message}`);
+    showInlineError('dynRegError', `Error: ${e.message}`);
+  } finally {
+    setSubmitLoading('dynRegSubmitBtn', false);
   }
 }
 
