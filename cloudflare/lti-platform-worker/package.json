@@ -1,0 +1,19 @@
+{
+  "name": "modernlms-lti-platform-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.8",
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "wrangler": "^3.91.0"
+  }
+}
