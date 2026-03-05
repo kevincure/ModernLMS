@@ -527,6 +527,29 @@ function renderToolsSection() {
     </div>`;
 }
 
+// ── Dynamic Registration (LTI-DR) ─────────────────────────────────────────────
+// Generates a short-lived registration token via the platform worker, then
+// opens ADTA's /lti-register page so the admin can complete registration there.
+
+async function startDynamicRegistration() {
+  const LTI_WORKER = 'https://modernlms-lti-platform.kevin-eb3.workers.dev';
+  try {
+    const resp = await fetch(
+      `${LTI_WORKER}/lti/admin/registration-token?org_id=${encodeURIComponent(admin.org.id)}`,
+      { method: 'POST' }
+    );
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      showToast(`Failed to generate registration link: ${body.error || resp.status}`);
+      return;
+    }
+    const { registration_url } = await resp.json();
+    window.open(registration_url, '_blank', 'noopener');
+  } catch (e) {
+    showToast(`Failed to generate registration link: ${e.message}`);
+  }
+}
+
 // ── Open Add Tool modal ───────────────────────────────────────────────────────
 
 function openAddToolModal() {

@@ -13,6 +13,7 @@ interface Env {
   LTI_PRIVATE_JWK_NEXT_JSON?: string;
   LTI_NONCE_TTL_SECONDS?: string;
   LTI_STATE_TTL_SECONDS?: string;
+  LTI_TOOL_REGISTRATION_URL?: string;
 }
 
 interface ServiceAuthContext {
@@ -1106,6 +1107,33 @@ async function handleOpenIdConfig(req: Request, env: Env) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  HANDLER: Generate Registration Token (admin-initiated LTI-DR)     */
+/*  POST /lti/admin/registration-token?org_id=<uuid>                  */
+/*  Returns a short-lived token + the full ADTA registration URL.     */
+/* ------------------------------------------------------------------ */
+
+async function handleGenerateRegistrationToken(req: Request, env: Env, supabase: any) {
+  const url   = new URL(req.url);
+  const orgId = url.searchParams.get('org_id');
+  if (!orgId) return err('Missing org_id query param', 400);
+
+  const token     = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+
+  const { error: insertErr } = await supabase
+    .from('lti_registration_tokens')
+    .insert({ token, org_id: orgId, expires_at: expiresAt });
+
+  if (insertErr) return err(`Failed to create registration token: ${insertErr.message}`, 500);
+
+  const openidConfigUrl = `${env.LTI_PLATFORM_ISSUER}/.well-known/openid-configuration?org_id=${encodeURIComponent(orgId)}`;
+  const toolRegBase     = env.LTI_TOOL_REGISTRATION_URL || 'https://staging-app.alldayta.com/lti-register';
+  const registrationUrl = `${toolRegBase}?openid_configuration=${encodeURIComponent(openidConfigUrl)}&registration_token=${encodeURIComponent(token)}`;
+
+  return json({ token, registration_url: registrationUrl, expires_at: expiresAt }, 201, corsHeaders());
+}
+
+/* ------------------------------------------------------------------ */
 /*  HANDLER: Dynamic Registration (LTI-DR v1.0)                       */
 /*  Tool POSTs its client metadata here; we create the registration.  */
 /* ------------------------------------------------------------------ */
@@ -1114,6 +1142,28 @@ async function handleDynamicRegister(req: Request, env: Env, supabase: any) {
   const url = new URL(req.url);
   const orgId = url.searchParams.get('org_id');
   if (!orgId) return err('Missing org_id query param', 400);
+
+  // Validate registration token if provided (ADTA forwards it as Bearer)
+  const authHeader = req.headers.get('Authorization') || '';
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+  if (bearerToken) {
+    const { data: regToken, error: tokenErr } = await supabase
+      .from('lti_registration_tokens')
+      .select('*')
+      .eq('token', bearerToken)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (tokenErr || !regToken) return err('Invalid registration token', 401);
+    if (regToken.consumed_at)  return err('Registration token already used', 401);
+    if (new Date(regToken.expires_at) < new Date()) return err('Registration token expired', 401);
+
+    // Consume the token so it can't be reused
+    await supabase
+      .from('lti_registration_tokens')
+      .update({ consumed_at: new Date().toISOString() })
+      .eq('id', regToken.id);
+  }
 
   let body: any;
   try { body = await req.json(); } catch { return err('Expected JSON body', 400); }
@@ -1413,6 +1463,7 @@ export default {
         return json(await (await handleJwks(env)).json(), 200, corsHeaders());
       }
       if (req.method === 'GET' && url.pathname === '/.well-known/openid-configuration') return handleOpenIdConfig(req, env);
+      if (req.method === 'POST' && url.pathname === '/lti/admin/registration-token') return handleGenerateRegistrationToken(req, env, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/register') return handleDynamicRegister(req, env, supabase);
       if (req.method === 'GET'  && url.pathname === '/lti/initiate-launch') return handleInitiateLaunch(req, env, supabase);
       if (req.method === 'GET'  && url.pathname === '/lti/oidc/auth') return handleOidcAuth(req, env, supabase);
