@@ -24,6 +24,16 @@ if (!TOOL_ISSUER || !TOOL_CLIENT_ID || !TOOL_DEPLOYMENT_ID || !TOOL_PRIVATE_JWK_
 
 const toolPrivateJwk = JSON.parse(TOOL_PRIVATE_JWK_JSON);
 
+function toPublicJwk(privateJwk) {
+  const { d, p, q, dp, dq, qi, oth, ...pub } = privateJwk;
+  return {
+    ...pub,
+    use: 'sig',
+    alg: pub.alg || 'RS256',
+    kid: pub.kid || 'tool-key-1'
+  };
+}
+
 async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLinkRequest', deepLinkReturnUrl = null, userSub = 'demo-user-1', courseId = 'demo-course-1' }) {
   const key = await importJWK(toolPrivateJwk, 'RS256');
   const now = Math.floor(Date.now() / 1000);
@@ -108,6 +118,10 @@ app.get('/start-resource-launch', (req, res) => {
   login.searchParams.set('lti_message_hint', 'resource-launch');
   login.searchParams.set('target_link_uri', targetLinkUri);
   res.redirect(login.toString());
+});
+
+app.get('/.well-known/jwks.json', (_req, res) => {
+  res.json({ keys: [toPublicJwk(toolPrivateJwk)] });
 });
 
 app.get('/start-deep-link-launch', (_req, res) => {
