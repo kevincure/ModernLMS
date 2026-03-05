@@ -1,6 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 import { createRemoteJWKSet, decodeJwt, importJWK, jwtVerify, SignJWT } from 'jose';
 
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
+
 interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
@@ -18,33 +22,97 @@ interface ServiceAuthContext {
   courseId: string | null;
 }
 
+/* ------------------------------------------------------------------ */
+/*  LTI Claim URIs                                                     */
+/* ------------------------------------------------------------------ */
+
 const CLAIMS = {
-  VERSION: 'https://purl.imsglobal.org/spec/lti/claim/version',
-  MESSAGE_TYPE: 'https://purl.imsglobal.org/spec/lti/claim/message_type',
-  DEPLOYMENT_ID: 'https://purl.imsglobal.org/spec/lti/claim/deployment_id',
-  CONTEXT: 'https://purl.imsglobal.org/spec/lti/claim/context',
-  RESOURCE_LINK: 'https://purl.imsglobal.org/spec/lti/claim/resource_link',
-  DL_ITEMS: 'https://purl.imsglobal.org/spec/lti-dl/claim/content_items',
-  DL_SETTINGS: 'https://purl.imsglobal.org/spec/lti-dl/claim/deep_linking_settings',
-  LAUNCH_PRESENTATION: 'https://purl.imsglobal.org/spec/lti/claim/launch_presentation'
+  VERSION:             'https://purl.imsglobal.org/spec/lti/claim/version',
+  MESSAGE_TYPE:        'https://purl.imsglobal.org/spec/lti/claim/message_type',
+  DEPLOYMENT_ID:       'https://purl.imsglobal.org/spec/lti/claim/deployment_id',
+  CONTEXT:             'https://purl.imsglobal.org/spec/lti/claim/context',
+  RESOURCE_LINK:       'https://purl.imsglobal.org/spec/lti/claim/resource_link',
+  ROLES:               'https://purl.imsglobal.org/spec/lti/claim/roles',
+  CUSTOM:              'https://purl.imsglobal.org/spec/lti/claim/custom',
+  LIS:                 'https://purl.imsglobal.org/spec/lti/claim/lis',
+  TOOL_PLATFORM:       'https://purl.imsglobal.org/spec/lti/claim/tool_platform',
+  LAUNCH_PRESENTATION: 'https://purl.imsglobal.org/spec/lti/claim/launch_presentation',
+  DL_ITEMS:            'https://purl.imsglobal.org/spec/lti-dl/claim/content_items',
+  DL_SETTINGS:         'https://purl.imsglobal.org/spec/lti-dl/claim/deep_linking_settings',
+  DL_DATA:             'https://purl.imsglobal.org/spec/lti-dl/claim/data',
+  AGS_ENDPOINT:        'https://purl.imsglobal.org/spec/lti-ags/claim/endpoint',
+  NRPS_ENDPOINT:       'https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice',
 };
 
+/* ------------------------------------------------------------------ */
+/*  AGS / NRPS Scopes                                                  */
+/* ------------------------------------------------------------------ */
+
 const AGS_SCOPES = {
-  LINEITEM: 'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem',
+  LINEITEM:          'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem',
   LINEITEM_READONLY: 'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly',
-  SCORE: 'https://purl.imsglobal.org/spec/lti-ags/scope/score',
-  RESULT_READONLY: 'https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly'
+  SCORE:             'https://purl.imsglobal.org/spec/lti-ags/scope/score',
+  RESULT_READONLY:   'https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly',
 };
 
 const NRPS_SCOPE = 'https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly';
 
+/* ------------------------------------------------------------------ */
+/*  Vendor Media Types (LTI Advantage spec-required)                   */
+/* ------------------------------------------------------------------ */
+
+const MEDIA = {
+  LINEITEM:              'application/vnd.ims.lis.v2.lineitem+json',
+  LINEITEM_CONTAINER:    'application/vnd.ims.lis.v2.lineitemcontainer+json',
+  SCORE:                 'application/vnd.ims.lis.v1.score+json',
+  RESULT_CONTAINER:      'application/vnd.ims.lis.v2.resultcontainer+json',
+  MEMBERSHIP_CONTAINER:  'application/vnd.ims.lis.v2.membershipcontainer+json',
+};
+
+/* ------------------------------------------------------------------ */
+/*  Valid AGS enum values                                              */
+/* ------------------------------------------------------------------ */
+
+const VALID_ACTIVITY_PROGRESS = new Set([
+  'Initialized', 'Started', 'InProgress', 'Submitted', 'Completed',
+]);
+const VALID_GRADING_PROGRESS = new Set([
+  'FullyGraded', 'Pending', 'PendingManual', 'Failed', 'NotReady',
+]);
+
+/* ------------------------------------------------------------------ */
+/*  Response helpers                                                   */
+/* ------------------------------------------------------------------ */
+
+function corsHeaders(): Record<string, string> {
+  return {
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    'access-control-allow-headers': 'content-type,authorization,accept',
+  };
+}
+
+function respond(data: unknown, status: number, contentType: string, extra: Record<string, string> = {}) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { 'content-type': contentType, ...corsHeaders(), ...extra },
+  });
+}
+
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
-  new Response(JSON.stringify(data, null, 2), { status, headers: { 'content-type': 'application/json', ...headers } });
+  respond(data, status, 'application/json', headers);
 
 const html = (body: string, status = 200) =>
-  new Response(`<!doctype html><html><body>${body}</body></html>`, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
+  new Response(`<!doctype html><html><body>${body}</body></html>`, {
+    status,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  });
 
 const err = (message: string, status = 400) => json({ error: message }, status);
+
+/* ------------------------------------------------------------------ */
+/*  Utility functions                                                  */
+/* ------------------------------------------------------------------ */
 
 function randomToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -56,11 +124,33 @@ function toInt(v: string | undefined, d: number) {
   return Number.isFinite(n) ? n : d;
 }
 
-function roleToLti(role: string): string {
+/* ------------------------------------------------------------------ */
+/*  LTI Role mapping                                                   */
+/* ------------------------------------------------------------------ */
+
+function roleToLtiContext(role: string): string {
   if (role === 'instructor') return 'http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor';
-  if (role === 'ta') return 'http://purl.imsglobal.org/vocab/lis/v2/membership#TeachingAssistant';
+  if (role === 'ta')         return 'http://purl.imsglobal.org/vocab/lis/v2/membership#Mentor';
   return 'http://purl.imsglobal.org/vocab/lis/v2/membership#Learner';
 }
+
+function roleToLtiSystem(role: string): string {
+  if (role === 'instructor') return 'http://purl.imsglobal.org/vocab/lis/v2/institution/person#Instructor';
+  if (role === 'ta')         return 'http://purl.imsglobal.org/vocab/lis/v2/institution/person#Mentor';
+  return 'http://purl.imsglobal.org/vocab/lis/v2/institution/person#Learner';
+}
+
+/** Reverse-map an IMS role URI back to internal role name for filtering. */
+function ltiRoleToInternal(ltiRole: string): string | null {
+  if (ltiRole.includes('#Instructor')) return 'instructor';
+  if (ltiRole.includes('#Mentor') || ltiRole.includes('#TeachingAssistant')) return 'ta';
+  if (ltiRole.includes('#Learner') || ltiRole.includes('#Student')) return 'student';
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  JWK helpers                                                        */
+/* ------------------------------------------------------------------ */
 
 function toPublicJwk(privateJwk: any) {
   if (!privateJwk?.kty || !privateJwk?.n || !privateJwk?.e) throw new Error('Invalid private JWK: missing kty/n/e');
@@ -70,15 +160,84 @@ function toPublicJwk(privateJwk: any) {
     e: privateJwk.e,
     kid: privateJwk.kid || 'platform-key',
     use: 'sig',
-    alg: 'RS256'
+    alg: 'RS256',
   };
 }
+
+/* ------------------------------------------------------------------ */
+/*  AGS / NRPS response formatters                                     */
+/* ------------------------------------------------------------------ */
+
+function formatLineItem(row: any, baseUrl: string): any {
+  const obj: any = {
+    id: `${baseUrl}/lti/ags/lineitems/${row.id}`,
+    scoreMaximum: Number(row.score_max),
+    label: row.label,
+  };
+  if (row.resource_id)      obj.resourceId = row.resource_id;
+  if (row.resource_link_id) obj.resourceLinkId = row.resource_link_id;
+  if (row.tag)              obj.tag = row.tag;
+  if (row.start_date_time)  obj.startDateTime = row.start_date_time;
+  if (row.end_date_time)    obj.endDateTime = row.end_date_time;
+  return obj;
+}
+
+function formatResult(score: any, lineItemId: string, baseUrl: string): any {
+  const obj: any = {
+    id: `${baseUrl}/lti/ags/lineitems/${lineItemId}/results/${score.id}`,
+    scoreOf: `${baseUrl}/lti/ags/lineitems/${lineItemId}`,
+    userId: score.user_id,
+  };
+  if (score.score_given != null) obj.resultScore = Number(score.score_given);
+  if (score.score_max != null)   obj.resultMaximum = Number(score.score_max);
+  if (score.comment)             obj.comment = score.comment;
+  return obj;
+}
+
+function formatMember(enrollment: any): any {
+  const obj: any = {
+    user_id: enrollment.user_id,
+    roles: [roleToLtiContext(enrollment.role), roleToLtiSystem(enrollment.role)],
+    status: enrollment.oneroster_status === 'active' ? 'Active' : 'Inactive',
+  };
+  if (enrollment.profiles?.name)  obj.name = enrollment.profiles.name;
+  if (enrollment.profiles?.email) obj.email = enrollment.profiles.email;
+  return obj;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Link-header pagination helper                                      */
+/* ------------------------------------------------------------------ */
+
+function paginationHeaders(
+  reqUrl: string,
+  page: number,
+  limit: number,
+  returnedCount: number,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (returnedCount >= limit) {
+    const next = new URL(reqUrl);
+    next.searchParams.set('page', String(page + 1));
+    next.searchParams.set('limit', String(limit));
+    headers['link'] = `<${next.toString()}>; rel="next"`;
+  }
+  return headers;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Form parsing                                                       */
+/* ------------------------------------------------------------------ */
 
 async function parseForm(req: Request) {
   const ctype = req.headers.get('content-type') || '';
   if (!ctype.includes('application/x-www-form-urlencoded')) return null;
   return req.formData();
 }
+
+/* ------------------------------------------------------------------ */
+/*  DB resolvers                                                       */
+/* ------------------------------------------------------------------ */
 
 function parseCourseIdFromContext(payload: any): string | null {
   const ctx = payload?.[CLAIMS.CONTEXT];
@@ -122,24 +281,14 @@ async function resolveCourseOrgId(supabase: any, courseId: string | null): Promi
   return data?.org_id || null;
 }
 
+/* ------------------------------------------------------------------ */
+/*  JWT verification helpers                                           */
+/* ------------------------------------------------------------------ */
+
 async function verifyToolJwt(idToken: string, registration: any) {
   if (!registration?.jwks_url) throw new Error('Registration missing jwks_url');
   const JWKS = createRemoteJWKSet(new URL(registration.jwks_url));
   return jwtVerify(idToken, JWKS, { issuer: registration.issuer, audience: registration.client_id });
-}
-
-function corsHeaders() {
-  return {
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type,authorization'
-  };
-}
-
-function tokenFromAuth(req: Request): string | null {
-  const auth = req.headers.get('authorization') || '';
-  if (!auth.toLowerCase().startsWith('bearer ')) return null;
-  return auth.slice(7).trim() || null;
 }
 
 async function verifyPlatformAccessToken(token: string, env: Env) {
@@ -148,20 +297,26 @@ async function verifyPlatformAccessToken(token: string, env: Env) {
   const key = await importJWK(pub, 'RS256');
   return jwtVerify(token, key, {
     issuer: env.LTI_PLATFORM_ISSUER,
-    audience: 'lti-services'
+    audience: 'lti-services',
   });
 }
 
-function hasScope(scopes: Set<string>, scope: string) {
-  return scopes.has(scope);
+function tokenFromAuth(req: Request): string | null {
+  const auth = req.headers.get('authorization') || '';
+  if (!auth.toLowerCase().startsWith('bearer ')) return null;
+  return auth.slice(7).trim() || null;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Service authorization (bearer token for AGS/NRPS calls)            */
+/* ------------------------------------------------------------------ */
 
 async function authorizeServiceRequest(
   req: Request,
   env: Env,
   supabase: any,
   requiredScopes: string[],
-  courseId: string | null
+  courseId: string | null,
 ): Promise<ServiceAuthContext> {
   const token = tokenFromAuth(req);
   if (!token) throw new Error('Missing bearer access token');
@@ -173,7 +328,9 @@ async function authorizeServiceRequest(
   const tokenCourseId = payload.course_id ? String(payload.course_id) : null;
 
   if (!clientId || !issuer || !deploymentId) throw new Error('Invalid service token claims');
-  if (courseId && tokenCourseId && String(courseId) !== String(tokenCourseId)) throw new Error('Token not valid for this course');
+  if (courseId && tokenCourseId && String(courseId) !== String(tokenCourseId)) {
+    throw new Error('Token not valid for this course');
+  }
 
   const registration = await resolveRegistration(supabase, issuer, clientId);
   if (!registration) throw new Error('Registration not found for token');
@@ -181,20 +338,39 @@ async function authorizeServiceRequest(
   const deployment = await resolveDeployment(supabase, registration.id, deploymentId, courseId || tokenCourseId);
   if (!deployment) throw new Error('Deployment not active for requested context');
 
+  // Enforce deployment-level service flags against requested scopes
   const scopes = new Set(String(payload.scope || '').split(' ').filter(Boolean));
-  if (requiredScopes.length > 0 && !requiredScopes.some(scope => hasScope(scopes, scope))) {
+  const agsScopes = [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY, AGS_SCOPES.SCORE, AGS_SCOPES.RESULT_READONLY];
+  if (!deployment.enable_ags && agsScopes.some(s => scopes.has(s))) {
+    throw new Error('AGS is disabled for this deployment');
+  }
+  if (!deployment.enable_nrps && scopes.has(NRPS_SCOPE)) {
+    throw new Error('NRPS is disabled for this deployment');
+  }
+
+  if (requiredScopes.length > 0 && !requiredScopes.some(scope => scopes.has(scope))) {
     throw new Error('Insufficient scope');
   }
 
   return { registration, deployment, scopes, courseId: tokenCourseId };
 }
 
+/* ------------------------------------------------------------------ */
+/*  HANDLER: JWKS                                                      */
+/* ------------------------------------------------------------------ */
+
 async function handleJwks(env: Env) {
   const activePrivate = JSON.parse(env.LTI_PRIVATE_JWK_ACTIVE_JSON);
   const keys = [toPublicJwk(activePrivate)];
-  if (env.LTI_PRIVATE_JWK_NEXT_JSON) keys.push(toPublicJwk(JSON.parse(env.LTI_PRIVATE_JWK_NEXT_JSON)));
+  if (env.LTI_PRIVATE_JWK_NEXT_JSON) {
+    try { keys.push(toPublicJwk(JSON.parse(env.LTI_PRIVATE_JWK_NEXT_JSON))); } catch { /* skip */ }
+  }
   return json({ keys });
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: OIDC Login Initiation                                     */
+/* ------------------------------------------------------------------ */
 
 async function handleOidcLogin(req: Request, env: Env, supabase: any) {
   const url = new URL(req.url);
@@ -212,13 +388,24 @@ async function handleOidcLogin(req: Request, env: Env, supabase: any) {
   const nonce = randomToken();
   const ttlMs = toInt(env.LTI_STATE_TTL_SECONDS, 300) * 1000;
 
+  // Resolve deployment_id if a course-scoped deployment exists
+  let deploymentId: string | null = null;
+  const { data: depRows } = await supabase
+    .from('lti_deployments')
+    .select('deployment_id')
+    .eq('registration_id', reg.id)
+    .eq('status', 'active')
+    .limit(1);
+  if (depRows?.[0]) deploymentId = depRows[0].deployment_id;
+
   const { error: insErr } = await supabase.from('lti_state_nonce').insert({
     org_id: reg.org_id,
     registration_id: reg.id,
     state,
     nonce,
+    deployment_id: deploymentId,
     launch_redirect_uri: targetLinkUri,
-    expires_at: new Date(Date.now() + ttlMs).toISOString()
+    expires_at: new Date(Date.now() + ttlMs).toISOString(),
   });
   if (insErr) return err(`Failed to save state/nonce: ${insErr.message}`, 500);
 
@@ -233,9 +420,15 @@ async function handleOidcLogin(req: Request, env: Env, supabase: any) {
   redirect.searchParams.set('nonce', nonce);
   if (loginHint) redirect.searchParams.set('login_hint', loginHint);
   if (ltiMessageHint) redirect.searchParams.set('lti_message_hint', ltiMessageHint);
+  // Spec SHOULD: forward lti_deployment_id
+  if (deploymentId) redirect.searchParams.set('lti_deployment_id', deploymentId);
 
   return Response.redirect(redirect.toString(), 302);
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: OAuth2 Token Endpoint                                     */
+/* ------------------------------------------------------------------ */
 
 async function handleToken(req: Request, env: Env, supabase: any) {
   const form = await parseForm(req);
@@ -249,58 +442,108 @@ async function handleToken(req: Request, env: Env, supabase: any) {
   if (grantType !== 'client_credentials') return err('Unsupported grant_type', 400);
   if (!clientAssertion || !clientAssertionType.includes('jwt-bearer')) return err('Missing client_assertion', 400);
 
+  // Decode first to extract identity fields
   const decoded = decodeJwt(clientAssertion);
-  const clientId = String(decoded.sub || decoded.iss || '');
+  const clientId = String(decoded.sub || '');
   const toolIss = String(decoded.tool_iss || decoded.iss || '');
-  if (!clientId || !toolIss) return err('Invalid client assertion', 401);
+  if (!clientId || !toolIss) return err('Invalid client assertion: missing sub/iss', 401);
+
+  // Spec: iss MUST equal client_id
+  if (String(decoded.iss) !== clientId) {
+    return err('Client assertion iss must equal sub (client_id)', 401);
+  }
 
   const reg = await resolveRegistration(supabase, toolIss, clientId);
   if (!reg) return err('Registration not found', 404);
 
+  // Verify signature against tool JWKS
   try {
     const JWKS = createRemoteJWKSet(new URL(reg.jwks_url));
     await jwtVerify(clientAssertion, JWKS, {
       issuer: clientId,
-      audience: `${env.LTI_PLATFORM_ISSUER}/lti/oauth2/token`
+      audience: `${env.LTI_PLATFORM_ISSUER}/lti/oauth2/token`,
     });
   } catch (e: any) {
     return err(`Client assertion verify failed: ${e?.message || 'unknown'}`, 401);
   }
 
-  const now = Math.floor(Date.now() / 1000);
+  // JTI replay prevention (spec MUST)
+  const jti = decoded.jti ? String(decoded.jti) : null;
+  if (jti) {
+    const { data: existingJti } = await supabase
+      .from('lti_client_assertion_jti')
+      .select('jti')
+      .eq('jti', jti)
+      .eq('client_id', clientId)
+      .maybeSingle();
+    if (existingJti) return err('Client assertion jti already used (replay)', 401);
+
+    const jtiExpires = decoded.exp ? new Date(Number(decoded.exp) * 1000).toISOString() : new Date(Date.now() + 600_000).toISOString();
+    await supabase.from('lti_client_assertion_jti').insert({
+      jti,
+      client_id: clientId,
+      expires_at: jtiExpires,
+    });
+  }
+
+  // iat clock skew check: reject if iat is more than 5 minutes old or in the future
+  if (decoded.iat) {
+    const iatTime = Number(decoded.iat) * 1000;
+    const now = Date.now();
+    if (iatTime > now + 60_000) return err('Client assertion iat is in the future', 401);
+    if (iatTime < now - 300_000) return err('Client assertion iat too old (>5min)', 401);
+  }
+
+  // Resolve deployment and enforce service flags on scopes
+  const deploymentId = String(form.get('deployment_id') || '');
+  const courseId = String(form.get('course_id') || '');
+  const deployment = deploymentId
+    ? await resolveDeployment(supabase, reg.id, deploymentId, courseId || null)
+    : null;
+
   const reqScopes = scope.split(' ').filter(Boolean);
   const allowedScopes = new Set([
     AGS_SCOPES.LINEITEM,
     AGS_SCOPES.LINEITEM_READONLY,
     AGS_SCOPES.SCORE,
     AGS_SCOPES.RESULT_READONLY,
-    NRPS_SCOPE
+    NRPS_SCOPE,
   ]);
-  const granted = reqScopes.filter(s => allowedScopes.has(s));
+
+  // Filter by deployment feature flags when available
+  let granted = reqScopes.filter(s => allowedScopes.has(s));
+  if (deployment) {
+    const agsScopes = [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY, AGS_SCOPES.SCORE, AGS_SCOPES.RESULT_READONLY];
+    if (!deployment.enable_ags) granted = granted.filter(s => !agsScopes.includes(s));
+    if (!deployment.enable_nrps) granted = granted.filter(s => s !== NRPS_SCOPE);
+  }
   if (granted.length === 0) return err('No allowed scopes requested', 400);
 
+  const now = Math.floor(Date.now() / 1000);
   const privateJwk = JSON.parse(env.LTI_PRIVATE_JWK_ACTIVE_JSON);
   const key = await importJWK(privateJwk, 'RS256');
-  const deploymentId = String(form.get('deployment_id') || '');
-  const courseId = String(form.get('course_id') || '');
 
   const accessToken = await new SignJWT({
     scope: granted.join(' '),
     client_id: reg.client_id,
     tool_iss: reg.issuer,
     deployment_id: deploymentId,
-    course_id: courseId
+    course_id: courseId,
   })
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: privateJwk.kid || 'platform-key' })
     .setIssuer(env.LTI_PLATFORM_ISSUER)
     .setAudience('lti-services')
     .setSubject(reg.client_id)
     .setIssuedAt(now)
-    .setExpirationTime(now + 300)
+    .setExpirationTime(now + 3600)
     .sign(key);
 
-  return json({ access_token: accessToken, token_type: 'Bearer', expires_in: 300, scope: granted.join(' ') });
+  return json({ access_token: accessToken, token_type: 'Bearer', expires_in: 3600, scope: granted.join(' ') });
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: Launch (receives id_token from tool)                      */
+/* ------------------------------------------------------------------ */
 
 async function handleLaunch(req: Request, supabase: any) {
   const form = await parseForm(req);
@@ -341,7 +584,7 @@ async function handleLaunch(req: Request, supabase: any) {
       status: 'failed',
       error_code: 'jwt_verify_failed',
       error_detail: e?.message || 'verify failed',
-      raw_claims: decoded
+      raw_claims: decoded,
     });
     return err(`JWT verify failed: ${e?.message || 'unknown'}`, 401);
   }
@@ -350,7 +593,9 @@ async function handleLaunch(req: Request, supabase: any) {
   if (payload[CLAIMS.VERSION] !== '1.3.0') return err('Invalid LTI version', 401);
 
   const msgType = String(payload[CLAIMS.MESSAGE_TYPE] || '');
-  if (!['LtiResourceLinkRequest', 'LtiDeepLinkingRequest'].includes(msgType)) return err('Unsupported LTI message type', 401);
+  if (!['LtiResourceLinkRequest', 'LtiDeepLinkingRequest'].includes(msgType)) {
+    return err('Unsupported LTI message type', 401);
+  }
 
   const deploymentId = String(payload[CLAIMS.DEPLOYMENT_ID] || '');
   const courseId = parseCourseIdFromContext(payload);
@@ -359,8 +604,15 @@ async function handleLaunch(req: Request, supabase: any) {
 
   const userId = payload.sub ? String(payload.sub) : null;
   const resourceLinkId = payload?.[CLAIMS.RESOURCE_LINK]?.id || null;
+  const roles = payload[CLAIMS.ROLES] || [];
+  const customClaims = payload[CLAIMS.CUSTOM] || null;
+  const lisClaims = payload[CLAIMS.LIS] || null;
+  const toolPlatformClaims = payload[CLAIMS.TOOL_PLATFORM] || null;
 
-  await supabase.from('lti_state_nonce').update({ consumed_at: new Date().toISOString(), deployment_id: deploymentId }).eq('id', sn.id);
+  await supabase.from('lti_state_nonce').update({
+    consumed_at: new Date().toISOString(),
+    deployment_id: deploymentId,
+  }).eq('id', sn.id);
 
   const { data: launchRow } = await supabase
     .from('lti_launches')
@@ -375,19 +627,39 @@ async function handleLaunch(req: Request, supabase: any) {
       resource_link_id: resourceLinkId,
       status: 'success',
       raw_claims: payload,
-      correlation_id: crypto.randomUUID()
+      correlation_id: crypto.randomUUID(),
     })
     .select('*')
     .single();
 
   if (msgType === 'LtiDeepLinkingRequest') {
     const settings = payload[CLAIMS.DL_SETTINGS] || {};
-    return html(`<h2>Deep Linking Request Received</h2><p>Launch ID: ${launchRow?.id || ''}</p><p>Return URL: ${settings.deep_link_return_url || reg.deep_link_return_url || '(none)'}</p>`);
+    return html(
+      `<h2>Deep Linking Request Received</h2>` +
+      `<p>Launch ID: ${launchRow?.id || ''}</p>` +
+      `<p>Return URL: ${settings.deep_link_return_url || reg.deep_link_return_url || '(none)'}</p>` +
+      `<p>Roles: ${JSON.stringify(roles)}</p>` +
+      `<p>Custom: ${JSON.stringify(customClaims)}</p>`,
+    );
   }
 
   const presentation = payload[CLAIMS.LAUNCH_PRESENTATION] || {};
-  return html(`<h1>LTI launch ok</h1><p>Course: ${courseId || 'unknown'}</p><p>User: ${userId || 'unknown'}</p><p>Message type: ${msgType || 'unknown'}</p><p>Document target: ${presentation.document_target || 'iframe'}</p>`);
+  return html(
+    `<h1>LTI launch ok</h1>` +
+    `<p>Course: ${courseId || 'unknown'}</p>` +
+    `<p>User: ${userId || 'unknown'}</p>` +
+    `<p>Message type: ${msgType || 'unknown'}</p>` +
+    `<p>Document target: ${presentation.document_target || 'iframe'}</p>` +
+    `<p>Roles: ${JSON.stringify(roles)}</p>` +
+    `<p>Custom: ${JSON.stringify(customClaims)}</p>` +
+    `<p>LIS: ${JSON.stringify(lisClaims)}</p>` +
+    `<p>Tool Platform: ${JSON.stringify(toolPlatformClaims)}</p>`,
+  );
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: Deep Link Return                                          */
+/* ------------------------------------------------------------------ */
 
 async function handleDeepLinkReturn(req: Request, supabase: any) {
   const form = await parseForm(req);
@@ -405,14 +677,19 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
   if (payload[CLAIMS.VERSION] !== '1.3.0') return err('Invalid LTI version', 401);
   if (payload[CLAIMS.MESSAGE_TYPE] !== 'LtiDeepLinkingResponse') return err('Invalid message type for deep-link return', 401);
 
+  // Check for error responses (errMsg / errLog)
+  const errMsg = payload['https://purl.imsglobal.org/spec/lti-dl/claim/errormsg'] || null;
+  const errLog = payload['https://purl.imsglobal.org/spec/lti-dl/claim/errorlog'] || null;
+
   const courseId = parseCourseIdFromContext(payload);
   const deploymentId = String(payload[CLAIMS.DEPLOYMENT_ID] || '');
   const deployment = await resolveDeployment(supabase, reg.id, deploymentId, courseId);
   if (!deployment) return err('Invalid or inactive deployment', 401);
 
+  // Find the original DL request launch to verify data echo
   const { data: recentDlLaunch } = await supabase
     .from('lti_launches')
-    .select('id')
+    .select('id, raw_claims')
     .eq('registration_id', reg.id)
     .eq('deployment_id', deploymentId)
     .eq('course_id', courseId)
@@ -423,10 +700,49 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
     .maybeSingle();
   if (!recentDlLaunch) return err('No matching deep-link launch found', 401);
 
+  // Verify data echo if original request included data
+  const originalSettings = recentDlLaunch.raw_claims?.[CLAIMS.DL_SETTINGS] || {};
+  if (originalSettings.data) {
+    const echoedData = payload[CLAIMS.DL_DATA];
+    if (echoedData !== originalSettings.data) {
+      return err('Deep linking data claim does not match original request', 401);
+    }
+  }
+
+  // If tool returned an error, log it and return
+  if (errMsg) {
+    await supabase.from('lti_launches').insert({
+      org_id: reg.org_id,
+      registration_id: reg.id,
+      deployment_id: deploymentId,
+      course_id: courseId,
+      message_type: 'LtiDeepLinkingResponse',
+      status: 'failed',
+      error_code: 'tool_error',
+      error_detail: `${errMsg}${errLog ? ' | log: ' + errLog : ''}`,
+      raw_claims: payload,
+    });
+    return html(`<h3>Deep link error from tool</h3><p>${errMsg}</p>${errLog ? `<p>Log: ${errLog}</p>` : ''}`);
+  }
+
   const items = Array.isArray(payload[CLAIMS.DL_ITEMS]) ? payload[CLAIMS.DL_ITEMS] : [];
+
+  // Validate accept_types if original request specified them
+  const acceptTypes = originalSettings.accept_types || [];
+  // Validate accept_multiple
+  const acceptMultiple = originalSettings.accept_multiple !== false; // default true
+  if (!acceptMultiple && items.length > 1) {
+    return err('Tool returned multiple items but accept_multiple is false', 400);
+  }
 
   for (const item of items) {
     const itemType = String(item.type || 'unknown');
+
+    // Validate item type against accepted types
+    if (acceptTypes.length > 0 && !acceptTypes.includes(itemType)) {
+      continue; // skip items that don't match accepted types
+    }
+
     const preview = itemType === 'file' ? String(item.title || item.text || '').slice(0, 50) : null;
     await supabase.from('lti_deep_link_items').insert({
       org_id: reg.org_id,
@@ -439,12 +755,16 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
       content_url: item.url || null,
       custom_claims: { ...item, file_preview_50: preview },
       created_lms_type: itemType,
-      created_lms_id: null
+      created_lms_id: null,
     });
   }
 
-  return html('<h3>Deep link response accepted.</h3>');
+  return html(`<h3>Deep link response accepted.</h3><p>${items.length} item(s) stored.</p>`);
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: AGS Line Items (container)                                */
+/* ------------------------------------------------------------------ */
 
 async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseId: string) {
   try {
@@ -454,14 +774,35 @@ async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseI
   }
 
   if (req.method === 'GET') {
-    const { data, error } = await supabase.from('lti_ags_line_items').select('*').eq('course_id', courseId);
+    const u = new URL(req.url);
+    const limit = Math.max(1, Math.min(500, Number(u.searchParams.get('limit') || 100)));
+    const page = Math.max(1, Number(u.searchParams.get('page') || 1));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    // Build query with optional filters (spec: resource_id, resource_link_id, tag)
+    let query = supabase.from('lti_ags_line_items').select('*').eq('course_id', courseId);
+    const resourceId = u.searchParams.get('resource_id');
+    const resourceLinkId = u.searchParams.get('resource_link_id');
+    const tag = u.searchParams.get('tag');
+    if (resourceId)     query = query.eq('resource_id', resourceId);
+    if (resourceLinkId) query = query.eq('resource_link_id', resourceLinkId);
+    if (tag)            query = query.eq('tag', tag);
+    query = query.range(from, to);
+
+    const { data, error } = await query;
     if (error) return err(error.message, 500);
-    return json(data || []);
+
+    const formatted = (data || []).map((row: any) => formatLineItem(row, env.LTI_PLATFORM_ISSUER));
+    const pgHeaders = paginationHeaders(req.url, page, limit, formatted.length);
+    return respond(formatted, 200, MEDIA.LINEITEM_CONTAINER, pgHeaders);
   }
+
   if (req.method === 'POST') {
     const body: any = await req.json();
     const orgId = body.org_id || (await resolveCourseOrgId(supabase, courseId));
     if (!orgId) return err('Missing org_id (and could not infer from course)', 400);
+
     const { data, error } = await supabase
       .from('lti_ags_line_items')
       .insert({
@@ -470,20 +811,30 @@ async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseI
         registration_id: body.registration_id || null,
         deployment_id: body.deployment_id || null,
         assignment_id: body.assignment_id || null,
-        lineitem_url: body.id || body.lineitem_url || crypto.randomUUID(),
+        lineitem_url: crypto.randomUUID(),
         label: body.label || 'Line Item',
         score_max: body.scoreMaximum ?? body.score_max ?? 100,
         resource_id: body.resourceId || null,
+        resource_link_id: body.resourceLinkId || null,
         tag: body.tag || null,
-        lti_context_id: body.contextId || null
+        lti_context_id: body.contextId || null,
+        start_date_time: body.startDateTime || null,
+        end_date_time: body.endDateTime || null,
       })
       .select('*')
       .single();
     if (error) return err(error.message, 500);
-    return json(data, 201);
+
+    const formatted = formatLineItem(data, env.LTI_PLATFORM_ISSUER);
+    return respond(formatted, 201, MEDIA.LINEITEM);
   }
+
   return err('Method not allowed', 405);
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: AGS Line Item by ID                                       */
+/* ------------------------------------------------------------------ */
 
 async function handleAgsLineitemById(req: Request, env: Env, supabase: any, lineItemId: string) {
   const { data: existing } = await supabase.from('lti_ags_line_items').select('course_id').eq('id', lineItemId).maybeSingle();
@@ -496,26 +847,43 @@ async function handleAgsLineitemById(req: Request, env: Env, supabase: any, line
   if (req.method === 'GET') {
     const { data } = await supabase.from('lti_ags_line_items').select('*').eq('id', lineItemId).maybeSingle();
     if (!data) return err('Line item not found', 404);
-    return json(data);
+    return respond(formatLineItem(data, env.LTI_PLATFORM_ISSUER), 200, MEDIA.LINEITEM);
   }
+
   if (req.method === 'PUT') {
     const body: any = await req.json();
+    const updates: any = {};
+    if (body.label !== undefined)        updates.label = body.label;
+    if (body.scoreMaximum !== undefined)  updates.score_max = body.scoreMaximum;
+    if (body.score_max !== undefined)     updates.score_max = body.score_max;
+    if (body.tag !== undefined)           updates.tag = body.tag;
+    if (body.resourceId !== undefined)    updates.resource_id = body.resourceId;
+    if (body.resourceLinkId !== undefined) updates.resource_link_id = body.resourceLinkId;
+    if (body.startDateTime !== undefined) updates.start_date_time = body.startDateTime;
+    if (body.endDateTime !== undefined)   updates.end_date_time = body.endDateTime;
+
     const { data, error } = await supabase
       .from('lti_ags_line_items')
-      .update({ label: body.label, score_max: body.scoreMaximum ?? body.score_max, tag: body.tag, resource_id: body.resourceId ?? undefined })
+      .update(updates)
       .eq('id', lineItemId)
       .select('*')
       .single();
     if (error) return err(error.message, 500);
-    return json(data);
+    return respond(formatLineItem(data, env.LTI_PLATFORM_ISSUER), 200, MEDIA.LINEITEM);
   }
+
   if (req.method === 'DELETE') {
     const { error } = await supabase.from('lti_ags_line_items').delete().eq('id', lineItemId);
     if (error) return err(error.message, 500);
-    return new Response('', { status: 204 });
+    return new Response('', { status: 204, headers: corsHeaders() });
   }
+
   return err('Method not allowed', 405);
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: AGS Scores                                                */
+/* ------------------------------------------------------------------ */
 
 async function handleAgsScores(req: Request, env: Env, supabase: any, lineItemId: string) {
   if (req.method !== 'POST') return err('Method not allowed', 405);
@@ -530,27 +898,48 @@ async function handleAgsScores(req: Request, env: Env, supabase: any, lineItemId
 
   const body: any = await req.json();
   const userId = body.userId || body.user_id || null;
-  const scoreGiven = Number(body.scoreGiven ?? body.score_given ?? 0);
-  const scoreMax = Number(body.scoreMaximum ?? body.score_max ?? li.score_max);
+  const scoreGiven = body.scoreGiven ?? body.score_given ?? null;
+  const scoreMax = body.scoreMaximum ?? body.score_max ?? li.score_max;
+  const comment = body.comment || null;
 
-  const { data, error } = await supabase
+  // Validate activityProgress
+  const activityProgress = body.activityProgress || null;
+  if (activityProgress && !VALID_ACTIVITY_PROGRESS.has(activityProgress)) {
+    return err(`Invalid activityProgress: ${activityProgress}. Valid: ${[...VALID_ACTIVITY_PROGRESS].join(', ')}`, 400);
+  }
+
+  // Validate gradingProgress
+  const gradingProgress = body.gradingProgress || null;
+  if (gradingProgress && !VALID_GRADING_PROGRESS.has(gradingProgress)) {
+    return err(`Invalid gradingProgress: ${gradingProgress}. Valid: ${[...VALID_GRADING_PROGRESS].join(', ')}`, 400);
+  }
+
+  // Require timestamp per spec
+  const timestamp = body.timestamp || new Date().toISOString();
+
+  const { error } = await supabase
     .from('lti_ags_scores')
     .insert({
       org_id: li.org_id,
       line_item_id: lineItemId,
       user_id: userId,
-      score_given: scoreGiven,
-      score_max: scoreMax,
-      activity_progress: body.activityProgress || null,
-      grading_progress: body.gradingProgress || null,
-      timestamp_from_tool: body.timestamp || new Date().toISOString(),
-      raw_payload: body
-    })
-    .select('*')
-    .single();
+      score_given: scoreGiven != null ? Number(scoreGiven) : null,
+      score_max: Number(scoreMax),
+      activity_progress: activityProgress,
+      grading_progress: gradingProgress,
+      comment,
+      timestamp_from_tool: timestamp,
+      raw_payload: body,
+    });
   if (error) return err(error.message, 500);
-  return json(data, 201);
+
+  // AGS spec: score POST returns 200 with empty body
+  return new Response('', { status: 200, headers: { 'content-type': MEDIA.SCORE, ...corsHeaders() } });
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: AGS Results                                               */
+/* ------------------------------------------------------------------ */
 
 async function handleAgsResults(req: Request, env: Env, supabase: any, lineItemId: string) {
   if (req.method !== 'GET') return err('Method not allowed', 405);
@@ -563,14 +952,34 @@ async function handleAgsResults(req: Request, env: Env, supabase: any, lineItemI
     return err(e?.message || 'Unauthorized', 401);
   }
 
-  const { data, error } = await supabase
+  const u = new URL(req.url);
+  const limit = Math.max(1, Math.min(500, Number(u.searchParams.get('limit') || 100)));
+  const page = Math.max(1, Number(u.searchParams.get('page') || 1));
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  // Optional user_id filter
+  let query = supabase
     .from('lti_ags_scores')
-    .select('user_id, score_given, score_max, activity_progress, grading_progress, timestamp_from_tool, created_at')
+    .select('id, user_id, score_given, score_max, comment, activity_progress, grading_progress, timestamp_from_tool, created_at')
     .eq('line_item_id', lineItemId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  const userIdFilter = u.searchParams.get('user_id');
+  if (userIdFilter) query = query.eq('user_id', userIdFilter);
+
+  const { data, error } = await query;
   if (error) return err(error.message, 500);
-  return json(data || []);
+
+  const formatted = (data || []).map((s: any) => formatResult(s, lineItemId, env.LTI_PLATFORM_ISSUER));
+  const pgHeaders = paginationHeaders(req.url, page, limit, formatted.length);
+  return respond(formatted, 200, MEDIA.RESULT_CONTAINER, pgHeaders);
 }
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: NRPS Memberships                                          */
+/* ------------------------------------------------------------------ */
 
 async function handleNrps(req: Request, env: Env, supabase: any, courseId: string) {
   if (req.method !== 'GET') return err('Method not allowed', 405);
@@ -587,37 +996,81 @@ async function handleNrps(req: Request, env: Env, supabase: any, courseId: strin
   const from = (page - 1) * limit;
   const to = from + limit - 1;
 
-  const { data: enrollments, error } = await supabase
+  // Spec filters
+  const roleFilter = u.searchParams.get('role');
+  const rlid = u.searchParams.get('rlid');
+  const since = u.searchParams.get('since');
+
+  let query = supabase
     .from('enrollments')
-    .select('user_id, role, profiles!inner(id, name, email)')
+    .select('user_id, role, oneroster_status, date_last_modified, profiles!inner(id, name, email)')
     .eq('course_id', courseId)
     .range(from, to);
+
+  // Apply role filter: convert IMS role URI to internal role name
+  if (roleFilter) {
+    const internalRole = ltiRoleToInternal(roleFilter);
+    if (internalRole) {
+      query = query.eq('role', internalRole);
+    } else {
+      // Unknown role = empty result
+      return respond(
+        { id: `${env.LTI_PLATFORM_ISSUER}/lti/nrps/courses/${courseId}/memberships`, context: { id: courseId }, members: [] },
+        200,
+        MEDIA.MEMBERSHIP_CONTAINER,
+      );
+    }
+  }
+
+  // Differential membership: ?since= ISO date
+  if (since) {
+    query = query.gte('date_last_modified', since);
+  }
+
+  const { data: enrollments, error } = await query;
   if (error) return err(error.message, 500);
 
-  const members = (enrollments || []).map((e: any) => ({
-    user_id: e.user_id,
-    roles: [roleToLti(e.role)],
-    status: 'Active',
-    name: e.profiles?.name || null,
-    email: e.profiles?.email || null
-  }));
+  // Fetch course metadata for context object
+  const { data: course } = await supabase.from('courses').select('id, name, code').eq('id', courseId).maybeSingle();
 
+  const members = (enrollments || []).map((e: any) => formatMember(e));
+
+  const pgHeaders = paginationHeaders(req.url, page, limit, members.length);
+
+  // Audit log
   const orgId = await resolveCourseOrgId(supabase, courseId);
   if (orgId) {
     await supabase.from('lti_nrps_requests').insert({
       org_id: orgId,
       course_id: courseId,
-      role_filter: null,
+      role_filter: roleFilter || null,
       limit_n: limit,
       page_n: page,
       result_count: members.length,
       status_code: 200,
-      correlation_id: crypto.randomUUID()
+      correlation_id: crypto.randomUUID(),
     });
   }
 
-  return json({ id: courseId, context: { id: courseId }, members });
+  return respond(
+    {
+      id: `${env.LTI_PLATFORM_ISSUER}/lti/nrps/courses/${courseId}/memberships`,
+      context: {
+        id: courseId,
+        label: course?.code || null,
+        title: course?.name || null,
+      },
+      members,
+    },
+    200,
+    MEDIA.MEMBERSHIP_CONTAINER,
+    pgHeaders,
+  );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Router                                                             */
+/* ------------------------------------------------------------------ */
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -627,24 +1080,31 @@ export default {
     try {
       if (req.method === 'OPTIONS') return new Response('', { status: 204, headers: corsHeaders() });
       if (req.method === 'GET' && url.pathname === '/healthz') return json({ ok: true }, 200, corsHeaders());
-      if (req.method === 'GET' && url.pathname === '/.well-known/jwks.json') return json(await (await handleJwks(env)).json(), 200, corsHeaders());
+      if (req.method === 'GET' && url.pathname === '/.well-known/jwks.json') {
+        return json(await (await handleJwks(env)).json(), 200, corsHeaders());
+      }
       if (req.method === 'GET' && url.pathname === '/lti/oidc/login') return handleOidcLogin(req, env, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/launch') return handleLaunch(req, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/deep-link/return') return handleDeepLinkReturn(req, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/oauth2/token') return handleToken(req, env, supabase);
 
+      // AGS: line items container
       const agsCourse = url.pathname.match(/^\/lti\/ags\/courses\/([^/]+)\/lineitems$/);
       if (agsCourse) return handleAgsLineitems(req, env, supabase, agsCourse[1]);
 
+      // AGS: single line item
       const agsLineItem = url.pathname.match(/^\/lti\/ags\/lineitems\/([^/]+)$/);
       if (agsLineItem) return handleAgsLineitemById(req, env, supabase, agsLineItem[1]);
 
+      // AGS: scores
       const agsScores = url.pathname.match(/^\/lti\/ags\/lineitems\/([^/]+)\/scores$/);
       if (agsScores) return handleAgsScores(req, env, supabase, agsScores[1]);
 
+      // AGS: results
       const agsResults = url.pathname.match(/^\/lti\/ags\/lineitems\/([^/]+)\/results$/);
       if (agsResults) return handleAgsResults(req, env, supabase, agsResults[1]);
 
+      // NRPS: memberships
       const nrps = url.pathname.match(/^\/lti\/nrps\/courses\/([^/]+)\/memberships$/);
       if (nrps) return handleNrps(req, env, supabase, nrps[1]);
 
@@ -652,5 +1112,5 @@ export default {
     } catch (e: any) {
       return err(e?.message || 'Unhandled error', 500);
     }
-  }
+  },
 };
