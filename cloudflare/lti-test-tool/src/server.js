@@ -61,6 +61,9 @@ function randomText() {
   return crypto.randomUUID();
 }
 
+// Stores the deepLinkData from the most recent DL launch so /emit-deep-links can echo it back
+let pendingDlData = null;
+
 /* ------------------------------------------------------------------ */
 /*  JWT signing                                                        */
 /* ------------------------------------------------------------------ */
@@ -236,6 +239,18 @@ app.get('/', (_req, res) => {
 /*  Routes: OIDC Launch flows                                          */
 /* ------------------------------------------------------------------ */
 
+// Auth dispatch: platform redirects here after OIDC init; route to correct handler
+// based on lti_message_hint (forwarding all query params).
+app.get('/auth-dispatch', (req, res) => {
+  const hint = String(req.query.lti_message_hint || '');
+  const targetPath = hint === 'deep-link' ? '/deep-link-launch' : '/launch';
+  const redirect = new URL(`http://localhost:${PORT}${targetPath}`);
+  for (const [k, v] of Object.entries(req.query)) {
+    redirect.searchParams.set(k, String(v));
+  }
+  res.redirect(redirect.toString());
+});
+
 app.get('/start-resource-launch', (_req, res) => {
   const targetLinkUri = `${TOOL_ISSUER}/launch`;
   const login = new URL(PLATFORM_LOGIN_URL);
@@ -276,6 +291,7 @@ app.get('/deep-link-launch', async (req, res) => {
   const nonce = String(req.query.nonce || randomText());
   const deepLinkReturnUrl = `${PLATFORM_AGS_BASE}/lti/deep-link/return`;
   const deepLinkData = 'echo-test-' + Date.now(); // data for echo verification
+  pendingDlData = deepLinkData; // store so /emit-deep-links can echo it back
   const idToken = await signIdToken({
     nonce,
     targetLinkUri: `${TOOL_ISSUER}/deep-link-launch`,
@@ -336,8 +352,8 @@ app.post('/emit-deep-links', async (_req, res) => {
     'https://purl.imsglobal.org/spec/lti/claim/message_type': 'LtiDeepLinkingResponse',
     'https://purl.imsglobal.org/spec/lti/claim/deployment_id': TOOL_DEPLOYMENT_ID,
     'https://purl.imsglobal.org/spec/lti/claim/context': { id: TOOL_COURSE_ID },
-    // Data echo: tool echoes back whatever the platform set
-    'https://purl.imsglobal.org/spec/lti-dl/claim/data': 'echo-test-placeholder',
+    // Data echo: tool echoes back whatever the platform set in the original DL request
+    'https://purl.imsglobal.org/spec/lti-dl/claim/data': pendingDlData || '',
     'https://purl.imsglobal.org/spec/lti-dl/claim/content_items': [
       { type: 'link', title: 'External reading link', url: 'https://example.org/reading' },
       { type: 'ltiResourceLink', title: 'Practice quiz placeholder', url: `${TOOL_ISSUER}/tool-ui` },
