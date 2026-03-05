@@ -34,7 +34,7 @@ function toPublicJwk(privateJwk) {
   };
 }
 
-async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLinkRequest', deepLinkReturnUrl = null, userSub = 'demo-user-1', courseId = 'demo-course-1' }) {
+async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLinkRequest', deepLinkReturnUrl = null, userSub = '0ee10db1-d209-446b-9dbc-6ff4b5852de7', courseId = '02f36da0-9869-4596-8cd0-3a56710d23b2' }) {
   const key = await importJWK(toolPrivateJwk, 'RS256');
   const now = Math.floor(Date.now() / 1000);
 
@@ -191,7 +191,7 @@ app.post('/emit-deep-links', async (_req, res) => {
   const dlPayload = {
     iss: TOOL_ISSUER,
     aud: TOOL_CLIENT_ID,
-    sub: 'demo-user-1',
+    sub: '0ee10db1-d209-446b-9dbc-6ff4b5852de7',
     nonce,
     'https://purl.imsglobal.org/spec/lti/claim/version': '1.3.0',
     'https://purl.imsglobal.org/spec/lti/claim/message_type': 'LtiDeepLinkingResponse',
@@ -218,15 +218,15 @@ app.post('/emit-deep-links', async (_req, res) => {
 });
 
 app.post('/post-grade', async (_req, res) => {
-  const lineitemsUrl = `${process.env.PLATFORM_AGS_BASE}/lti/ags/courses/demo-course-1/lineitems`;
+  const lineitemsUrl = `${process.env.PLATFORM_AGS_BASE}/lti/ags/courses/02f36da0-9869-4596-8cd0-3a56710d23b2/lineitems`;
   const createRes = await fetch(lineitemsUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      org_id: null,
+      org_id: c7527e36-3073-41bc-b030-48a9191ffbeb,
       label: 'Demo AGS Item',
       scoreMaximum: 10,
-      assignment_id: null
+      assignment_id: df509195-4416-46cd-989a-beb210708504
     })
   });
   const lineItem = await createRes.json();
@@ -236,7 +236,7 @@ app.post('/post-grade', async (_req, res) => {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      userId: 'demo-user-1',
+      userId: '0ee10db1-d209-446b-9dbc-6ff4b5852de7',
       scoreGiven: 8,
       scoreMaximum: 10,
       activityProgress: 'Completed',
@@ -250,7 +250,7 @@ app.post('/post-grade', async (_req, res) => {
 });
 
 app.get('/roster', async (_req, res) => {
-  const r = await fetch(`${process.env.PLATFORM_NRPS_BASE}/lti/nrps/courses/demo-course-1/memberships`);
+  const r = await fetch(`${process.env.PLATFORM_NRPS_BASE}/lti/nrps/courses/02f36da0-9869-4596-8cd0-3a56710d23b2/memberships`);
   const body = await r.text();
   res.type('application/json').send(body);
 });
