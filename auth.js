@@ -111,6 +111,15 @@ export async function handleAuthStateChange(event, session) {
     // For true sign-ins (new user in app state), bootstrap normally.
     await handleSignedIn(session.user);
   } else if (event === 'SIGNED_OUT') {
+    // If a bootstrap is in progress, a SIGNED_OUT can arrive spuriously
+    // (e.g. admin.html calling signOut() while sharing the same Supabase
+    // session in localStorage).  Wait for the bootstrap to settle, then
+    // re-check whether the session is actually gone before tearing down.
+    if (bootstrappingPromise) {
+      try { await bootstrappingPromise; } catch (_) {}
+      const { data: { session: stillActive } } = await supabaseClient.auth.getSession();
+      if (stillActive) return; // session was restored / was spurious
+    }
     handleSignedOut();
   }
 }
