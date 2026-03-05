@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { createRemoteJWKSet, decodeJwt, jwtVerify, JWK } from 'jose';
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
 
 interface Env {
   SUPABASE_URL: string;
@@ -22,30 +22,21 @@ const CLAIMS = {
 };
 
 const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { 'content-type': 'application/json' }
-  });
+  new Response(JSON.stringify(data, null, 2), { status, headers: { 'content-type': 'application/json' } });
 
 const html = (body: string, status = 200) =>
-  new Response(`<!doctype html><html><body>${body}</body></html>`, {
-    status,
-    headers: { 'content-type': 'text/html; charset=utf-8' }
-  });
+  new Response(`<!doctype html><html><body>${body}</body></html>`, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
 
 const err = (message: string, status = 400) => json({ error: message }, status);
+
+function randomToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 function toInt(v: string | undefined, d: number) {
   const n = Number(v);
   return Number.isFinite(n) ? n : d;
-}
-
-function randomToken() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
 }
 
 function roleToLti(role: string): string {
@@ -55,9 +46,7 @@ function roleToLti(role: string): string {
 }
 
 function toPublicJwk(privateJwk: any) {
-  if (!privateJwk?.kty || !privateJwk?.n || !privateJwk?.e) {
-    throw new Error('Invalid private JWK: missing kty/n/e');
-  }
+  if (!privateJwk?.kty || !privateJwk?.n || !privateJwk?.e) throw new Error('Invalid private JWK: missing kty/n/e');
   return {
     kty: privateJwk.kty,
     n: privateJwk.n,
@@ -101,25 +90,13 @@ async function resolveCourseOrgId(supabase: any, courseId: string | null): Promi
 async function verifyToolJwt(idToken: string, registration: any) {
   if (!registration?.jwks_url) throw new Error('Registration missing jwks_url');
   const JWKS = createRemoteJWKSet(new URL(registration.jwks_url));
-  return jwtVerify(idToken, JWKS, {
-    issuer: registration.issuer,
-    audience: registration.client_id
-  });
-}
-
-async function handleHealthz() {
-  return json({ ok: true });
+  return jwtVerify(idToken, JWKS, { issuer: registration.issuer, audience: registration.client_id });
 }
 
 async function handleJwks(env: Env) {
   const activePrivate = JSON.parse(env.LTI_PRIVATE_JWK_ACTIVE_JSON);
   const keys = [toPublicJwk(activePrivate)];
-
-  if (env.LTI_PRIVATE_JWK_NEXT_JSON) {
-    const nextPrivate = JSON.parse(env.LTI_PRIVATE_JWK_NEXT_JSON);
-    keys.push(toPublicJwk(nextPrivate));
-  }
-
+  if (env.LTI_PRIVATE_JWK_NEXT_JSON) keys.push(toPublicJwk(JSON.parse(env.LTI_PRIVATE_JWK_NEXT_JSON)));
   return json({ keys });
 }
 
@@ -130,7 +107,6 @@ async function handleOidcLogin(req: Request, env: Env, supabase: any) {
   const targetLinkUri = url.searchParams.get('target_link_uri');
   const loginHint = url.searchParams.get('login_hint');
   const ltiMessageHint = url.searchParams.get('lti_message_hint');
-
   if (!iss || !clientId || !targetLinkUri) return err('Missing iss/client_id/target_link_uri');
 
   const reg = await resolveRegistration(supabase, iss, clientId);
@@ -192,8 +168,7 @@ async function handleLaunch(req: Request, supabase: any) {
 
   let payload: any;
   try {
-    const verified = await verifyToolJwt(idToken, reg);
-    payload = verified.payload;
+    payload = (await verifyToolJwt(idToken, reg)).payload;
   } catch (e: any) {
     await supabase.from('lti_launches').insert({
       org_id: reg.org_id,
@@ -237,20 +212,10 @@ async function handleLaunch(req: Request, supabase: any) {
 
   if (msgType === 'LtiDeepLinkingRequest') {
     const settings = payload[CLAIMS.DL_SETTINGS] || {};
-    return html(`
-      <h2>Deep Linking Request Received</h2>
-      <p>Launch ID: ${launchRow?.id || ''}</p>
-      <p>Return URL: ${settings.deep_link_return_url || reg.deep_link_return_url || '(none)'}</p>
-      <p>Now submit deep-link response JWT to <code>/lti/deep-link/return</code>.</p>
-    `);
+    return html(`<h2>Deep Linking Request Received</h2><p>Launch ID: ${launchRow?.id || ''}</p><p>Return URL: ${settings.deep_link_return_url || reg.deep_link_return_url || '(none)'}</p>`);
   }
 
-  return html(`
-    <h1>LTI launch ok</h1>
-    <p>Course: ${courseId || 'unknown'}</p>
-    <p>User: ${userId || 'unknown'}</p>
-    <p>Message type: ${msgType || 'unknown'}</p>
-  `);
+  return html(`<h1>LTI launch ok</h1><p>Course: ${courseId || 'unknown'}</p><p>User: ${userId || 'unknown'}</p><p>Message type: ${msgType || 'unknown'}</p>`);
 }
 
 async function handleDeepLinkReturn(req: Request, supabase: any) {
@@ -265,8 +230,7 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
   const reg = await resolveRegistration(supabase, iss, aud);
   if (!reg) return err('Registration not found', 404);
 
-  const verified = await verifyToolJwt(jwt, reg);
-  const payload: any = verified.payload;
+  const payload: any = (await verifyToolJwt(jwt, reg)).payload;
   const courseId = parseCourseIdFromContext(payload);
   const deploymentId = String(payload[CLAIMS.DEPLOYMENT_ID] || '');
   const items = payload[CLAIMS.DL_ITEMS] || [];
@@ -295,12 +259,10 @@ async function handleAgsLineitems(req: Request, supabase: any, courseId: string)
     if (error) return err(error.message, 500);
     return json(data || []);
   }
-
   if (req.method === 'POST') {
     const body: any = await req.json();
     const orgId = body.org_id || (await resolveCourseOrgId(supabase, courseId));
     if (!orgId) return err('Missing org_id (and could not infer from course)', 400);
-
     const { data, error } = await supabase
       .from('lti_ags_line_items')
       .insert({
@@ -318,11 +280,9 @@ async function handleAgsLineitems(req: Request, supabase: any, courseId: string)
       })
       .select('*')
       .single();
-
     if (error) return err(error.message, 500);
     return json(data, 201);
   }
-
   return err('Method not allowed', 405);
 }
 
@@ -332,36 +292,27 @@ async function handleAgsLineitemById(req: Request, supabase: any, lineItemId: st
     if (!data) return err('Line item not found', 404);
     return json(data);
   }
-
   if (req.method === 'PUT') {
     const body: any = await req.json();
     const { data, error } = await supabase
       .from('lti_ags_line_items')
-      .update({
-        label: body.label,
-        score_max: body.scoreMaximum ?? body.score_max,
-        tag: body.tag,
-        resource_id: body.resourceId ?? undefined
-      })
+      .update({ label: body.label, score_max: body.scoreMaximum ?? body.score_max, tag: body.tag, resource_id: body.resourceId ?? undefined })
       .eq('id', lineItemId)
       .select('*')
       .single();
     if (error) return err(error.message, 500);
     return json(data);
   }
-
   if (req.method === 'DELETE') {
     const { error } = await supabase.from('lti_ags_line_items').delete().eq('id', lineItemId);
     if (error) return err(error.message, 500);
     return new Response('', { status: 204 });
   }
-
   return err('Method not allowed', 405);
 }
 
 async function handleAgsScores(req: Request, supabase: any, lineItemId: string) {
   if (req.method !== 'POST') return err('Method not allowed', 405);
-
   const body: any = await req.json();
   const { data: li } = await supabase.from('lti_ags_line_items').select('*').eq('id', lineItemId).maybeSingle();
   if (!li) return err('Line item not found', 404);
@@ -385,27 +336,23 @@ async function handleAgsScores(req: Request, supabase: any, lineItemId: string) 
     })
     .select('*')
     .single();
-
   if (error) return err(error.message, 500);
   return json(data, 201);
 }
 
 async function handleAgsResults(req: Request, supabase: any, lineItemId: string) {
   if (req.method !== 'GET') return err('Method not allowed', 405);
-
   const { data, error } = await supabase
     .from('lti_ags_scores')
     .select('user_id, score_given, score_max, activity_progress, grading_progress, timestamp_from_tool, created_at')
     .eq('line_item_id', lineItemId)
     .order('created_at', { ascending: false });
-
   if (error) return err(error.message, 500);
   return json(data || []);
 }
 
 async function handleNrps(req: Request, supabase: any, courseId: string) {
   if (req.method !== 'GET') return err('Method not allowed', 405);
-
   const u = new URL(req.url);
   const limit = Math.max(1, Math.min(1000, Number(u.searchParams.get('limit') || 100)));
   const page = Math.max(1, Number(u.searchParams.get('page') || 1));
@@ -417,7 +364,6 @@ async function handleNrps(req: Request, supabase: any, courseId: string) {
     .select('user_id, role, profiles!inner(id, name, email)')
     .eq('course_id', courseId)
     .range(from, to);
-
   if (error) return err(error.message, 500);
 
   const members = (enrollments || []).map((e: any) => ({
@@ -442,11 +388,7 @@ async function handleNrps(req: Request, supabase: any, courseId: string) {
     });
   }
 
-  return json({
-    id: courseId,
-    context: { id: courseId },
-    members
-  });
+  return json({ id: courseId, context: { id: courseId }, members });
 }
 
 export default {
@@ -455,7 +397,7 @@ export default {
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
     try {
-      if (req.method === 'GET' && url.pathname === '/healthz') return handleHealthz();
+      if (req.method === 'GET' && url.pathname === '/healthz') return json({ ok: true });
       if (req.method === 'GET' && url.pathname === '/.well-known/jwks.json') return handleJwks(env);
       if (req.method === 'GET' && url.pathname === '/lti/oidc/login') return handleOidcLogin(req, env, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/launch') return handleLaunch(req, supabase);

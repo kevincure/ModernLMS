@@ -14,10 +14,16 @@ const TOOL_ISSUER = process.env.TOOL_ISSUER;
 const TOOL_CLIENT_ID = process.env.TOOL_CLIENT_ID;
 const TOOL_DEPLOYMENT_ID = process.env.TOOL_DEPLOYMENT_ID;
 const TOOL_PRIVATE_JWK_JSON = process.env.TOOL_PRIVATE_JWK_JSON;
+const TOOL_ORG_ID = process.env.TOOL_ORG_ID;
+const TOOL_COURSE_ID = process.env.TOOL_COURSE_ID;
+const TOOL_USER_ID = process.env.TOOL_USER_ID;
+
 const PLATFORM_LOGIN_URL = process.env.PLATFORM_LOGIN_URL;
 const PLATFORM_LAUNCH_URL = process.env.PLATFORM_LAUNCH_URL;
+const PLATFORM_AGS_BASE = process.env.PLATFORM_AGS_BASE;
+const PLATFORM_NRPS_BASE = process.env.PLATFORM_NRPS_BASE;
 
-if (!TOOL_ISSUER || !TOOL_CLIENT_ID || !TOOL_DEPLOYMENT_ID || !TOOL_PRIVATE_JWK_JSON || !PLATFORM_LOGIN_URL || !PLATFORM_LAUNCH_URL) {
+if (!TOOL_ISSUER || !TOOL_CLIENT_ID || !TOOL_DEPLOYMENT_ID || !TOOL_PRIVATE_JWK_JSON || !PLATFORM_LOGIN_URL || !PLATFORM_LAUNCH_URL || !PLATFORM_AGS_BASE || !PLATFORM_NRPS_BASE || !TOOL_ORG_ID || !TOOL_COURSE_ID || !TOOL_USER_ID) {
   console.error('Missing required env vars; copy .env.example to .env and fill values');
   process.exit(1);
 }
@@ -34,7 +40,7 @@ function toPublicJwk(privateJwk) {
   };
 }
 
-async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLinkRequest', deepLinkReturnUrl = null, userSub = '0ee10db1-d209-446b-9dbc-6ff4b5852de7', courseId = '02f36da0-9869-4596-8cd0-3a56710d23b2' }) {
+async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLinkRequest', deepLinkReturnUrl = null, userSub = TOOL_USER_ID, courseId = TOOL_COURSE_ID }) {
   const key = await importJWK(toolPrivateJwk, 'RS256');
   const now = Math.floor(Date.now() / 1000);
 
@@ -66,7 +72,7 @@ async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLin
       'http://purl.imsglobal.org/vocab/lis/v2/membership#Learner'
     ],
     'https://purl.imsglobal.org/spec/lti-ags/claim/endpoint': {
-      lineitems: `${process.env.PLATFORM_AGS_BASE}/lti/ags/courses/${courseId}/lineitems`,
+      lineitems: `${PLATFORM_AGS_BASE}/lti/ags/courses/${courseId}/lineitems`,
       lineitem: null,
       scope: [
         'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem',
@@ -75,7 +81,7 @@ async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLin
       ]
     },
     'https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice': {
-      context_memberships_url: `${process.env.PLATFORM_NRPS_BASE}/lti/nrps/courses/${courseId}/memberships`,
+      context_memberships_url: `${PLATFORM_NRPS_BASE}/lti/nrps/courses/${courseId}/memberships`,
       service_versions: ['2.0']
     }
   };
@@ -98,6 +104,10 @@ async function signIdToken({ nonce, targetLinkUri, messageType = 'LtiResourceLin
     .sign(key);
 }
 
+app.get('/.well-known/jwks.json', (_req, res) => {
+  res.json({ keys: [toPublicJwk(toolPrivateJwk)] });
+});
+
 app.get('/', (_req, res) => {
   res.send(`
     <h1>ModernLMS LTI Test Tool</h1>
@@ -105,11 +115,12 @@ app.get('/', (_req, res) => {
       <li><a href="/start-resource-launch">Start resource launch</a></li>
       <li><a href="/start-deep-link-launch">Start deep-link launch</a></li>
       <li><a href="/tool-ui">Tool UI</a></li>
+      <li><a href="/.well-known/jwks.json">JWKS</a></li>
     </ul>
   `);
 });
 
-app.get('/start-resource-launch', (req, res) => {
+app.get('/start-resource-launch', (_req, res) => {
   const targetLinkUri = `${TOOL_ISSUER}/launch`;
   const login = new URL(PLATFORM_LOGIN_URL);
   login.searchParams.set('iss', TOOL_ISSUER);
@@ -118,10 +129,6 @@ app.get('/start-resource-launch', (req, res) => {
   login.searchParams.set('lti_message_hint', 'resource-launch');
   login.searchParams.set('target_link_uri', targetLinkUri);
   res.redirect(login.toString());
-});
-
-app.get('/.well-known/jwks.json', (_req, res) => {
-  res.json({ keys: [toPublicJwk(toolPrivateJwk)] });
 });
 
 app.get('/start-deep-link-launch', (_req, res) => {
@@ -152,7 +159,7 @@ app.get('/launch', async (req, res) => {
 app.get('/deep-link-launch', async (req, res) => {
   const state = String(req.query.state || randomText());
   const nonce = String(req.query.nonce || randomText());
-  const deepLinkReturnUrl = `${process.env.PLATFORM_AGS_BASE}/lti/deep-link/return`;
+  const deepLinkReturnUrl = `${PLATFORM_AGS_BASE}/lti/deep-link/return`;
   const idToken = await signIdToken({
     nonce,
     targetLinkUri: `${TOOL_ISSUER}/deep-link-launch`,
@@ -172,16 +179,12 @@ app.get('/deep-link-launch', async (req, res) => {
 app.get('/tool-ui', (_req, res) => {
   res.send(`
     <h2>LTI launch ok</h2>
+    <p>Course: ${TOOL_COURSE_ID}</p>
+    <p>User: ${TOOL_USER_ID}</p>
     <p>Use buttons to emulate deep links and AGS score passback.</p>
-    <form method="post" action="/emit-deep-links">
-      <button>Emit deep links</button>
-    </form>
-    <form method="post" action="/post-grade">
-      <button>Post grade 8/10</button>
-    </form>
-    <form method="get" action="/roster">
-      <button>Get roster (NRPS)</button>
-    </form>
+    <form method="post" action="/emit-deep-links"><button>Emit deep links</button></form>
+    <form method="post" action="/post-grade"><button>Post grade 8/10</button></form>
+    <form method="get" action="/roster"><button>Get roster (NRPS)</button></form>
   `);
 });
 
@@ -191,11 +194,12 @@ app.post('/emit-deep-links', async (_req, res) => {
   const dlPayload = {
     iss: TOOL_ISSUER,
     aud: TOOL_CLIENT_ID,
-    sub: '0ee10db1-d209-446b-9dbc-6ff4b5852de7',
+    sub: TOOL_USER_ID,
     nonce,
     'https://purl.imsglobal.org/spec/lti/claim/version': '1.3.0',
     'https://purl.imsglobal.org/spec/lti/claim/message_type': 'LtiDeepLinkingResponse',
     'https://purl.imsglobal.org/spec/lti/claim/deployment_id': TOOL_DEPLOYMENT_ID,
+    'https://purl.imsglobal.org/spec/lti/claim/context': { id: TOOL_COURSE_ID },
     'https://purl.imsglobal.org/spec/lti-dl/claim/content_items': [
       { type: 'link', title: 'External reading link', url: 'https://example.org/reading' },
       { type: 'ltiResourceLink', title: 'Practice quiz placeholder', url: `${TOOL_ISSUER}/tool-ui` }
@@ -210,7 +214,7 @@ app.post('/emit-deep-links', async (_req, res) => {
     .sign(key);
 
   res.send(`
-    <form id="f" method="post" action="${process.env.PLATFORM_AGS_BASE}/lti/deep-link/return">
+    <form id="f" method="post" action="${PLATFORM_AGS_BASE}/lti/deep-link/return">
       <input type="hidden" name="JWT" value="${jwt}" />
     </form>
     <script>document.getElementById('f').submit()</script>
@@ -218,25 +222,22 @@ app.post('/emit-deep-links', async (_req, res) => {
 });
 
 app.post('/post-grade', async (_req, res) => {
-  const lineitemsUrl = `${process.env.PLATFORM_AGS_BASE}/lti/ags/courses/02f36da0-9869-4596-8cd0-3a56710d23b2/lineitems`;
+  const lineitemsUrl = `${PLATFORM_AGS_BASE}/lti/ags/courses/${TOOL_COURSE_ID}/lineitems`;
   const createRes = await fetch(lineitemsUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      org_id: 'c7527e36-3073-41bc-b030-48a9191ffbeb',
-      label: 'Demo AGS Item',
-      scoreMaximum: 10,
-      assignment_id: 'df509195-4416-46cd-989a-beb210708504'
-    })
+    body: JSON.stringify({ org_id: TOOL_ORG_ID, label: 'Demo AGS Item', scoreMaximum: 10, assignment_id: null })
   });
   const lineItem = await createRes.json();
   const lineItemId = lineItem.id;
 
-  const scoreRes = await fetch(`${process.env.PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemId}/scores`, {
+  if (!lineItemId) return res.status(500).json({ createdLineItem: lineItem, postedScore: { error: 'Line item creation failed' } });
+
+  const scoreRes = await fetch(`${PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemId}/scores`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      userId: '0ee10db1-d209-446b-9dbc-6ff4b5852de7',
+      userId: TOOL_USER_ID,
       scoreGiven: 8,
       scoreMaximum: 10,
       activityProgress: 'Completed',
@@ -250,7 +251,7 @@ app.post('/post-grade', async (_req, res) => {
 });
 
 app.get('/roster', async (_req, res) => {
-  const r = await fetch(`${process.env.PLATFORM_NRPS_BASE}/lti/nrps/courses/02f36da0-9869-4596-8cd0-3a56710d23b2/memberships`);
+  const r = await fetch(`${PLATFORM_NRPS_BASE}/lti/nrps/courses/${TOOL_COURSE_ID}/memberships`);
   const body = await r.text();
   res.type('application/json').send(body);
 });
