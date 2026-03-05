@@ -223,10 +223,10 @@ app.post('/post-grade', async (_req, res) => {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      org_id: c7527e36-3073-41bc-b030-48a9191ffbeb,
+      org_id: 'c7527e36-3073-41bc-b030-48a9191ffbeb',
       label: 'Demo AGS Item',
       scoreMaximum: 10,
-      assignment_id: df509195-4416-46cd-989a-beb210708504
+      assignment_id: 'df509195-4416-46cd-989a-beb210708504'
     })
   });
   const lineItem = await createRes.json();
