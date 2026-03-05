@@ -306,7 +306,8 @@ function initModules() {
     renderPeople,
     renderCalendar,
     renderDiscussion,
-    renderFiles
+    renderFiles,
+    renderTools
   });
 
   // Initialize quiz module
@@ -1432,6 +1433,7 @@ function renderAll() {
   renderCalendar();
   renderModules();
   renderFiles();
+  renderTools();
   renderGradebook();
   renderPeople();
   renderDiscussion();
@@ -1560,6 +1562,7 @@ function navigateTo(page) {
       calendar:      renderCalendar,
       modules:       renderModules,
       files:         renderFiles,
+      tools:         renderTools,
       gradebook:     renderGradebook,
       people:        renderPeople,
       discussion:    renderDiscussion,
@@ -7118,6 +7121,113 @@ function gbGradeNaturalCompare(aScore, bScore, assignment) {
   }
 }
 
+function getCourseLtiTools(courseId) {
+  const regs = appData.ltiRegistrations || [];
+  const deps = appData.ltiDeployments || [];
+  const matchedDeployments = deps.filter(d => d.status === 'active' && d.scopeType === 'course' && String(d.scopeRef) === String(courseId));
+  return matchedDeployments
+    .map(d => {
+      const reg = regs.find(r => r.id === d.registrationId);
+      if (!reg || reg.status !== 'active') return null;
+      return {
+        registrationId: reg.id,
+        deploymentId: d.deploymentId,
+        toolName: reg.toolName || reg.clientId,
+        issuer: reg.issuer
+      };
+    })
+    .filter(Boolean);
+}
+
+async function submitToolFilePreview(registrationId) {
+  if (!activeCourseId || !appData.currentUser?.id) return;
+  const input = document.getElementById(`toolFileInput-${registrationId}`);
+  const file = input?.files?.[0];
+  if (!file) {
+    showToast('Choose a text file first.', 'error');
+    return;
+  }
+
+  const text = await file.text();
+  const preview = (text || '').slice(0, 50);
+  const course = appData.courses.find(c => c.id === activeCourseId);
+  const payload = {
+    org_id: course?.orgId,
+    course_id: activeCourseId,
+    registration_id: registrationId,
+    created_by: appData.currentUser.id,
+    file_name: file.name,
+    file_preview_50: preview
+  };
+
+  const { data, error } = await supabaseClient.from('lti_tool_file_echoes').insert(payload).select('*').single();
+  if (error) {
+    showToast(`Failed to send file to tool: ${error.message}`, 'error');
+    return;
+  }
+
+  appData.ltiToolFileEchoes = [
+    ...(appData.ltiToolFileEchoes || []),
+    {
+      id: data.id,
+      orgId: data.org_id,
+      courseId: data.course_id,
+      registrationId: data.registration_id,
+      createdBy: data.created_by,
+      fileName: data.file_name,
+      filePreview50: data.file_preview_50,
+      createdAt: data.created_at
+    }
+  ];
+  renderTools();
+  showToast('File sent to tool. Preview saved for students.', 'success');
+}
+
+function renderTools() {
+  const subtitle = document.getElementById('toolsSubtitle');
+  const actions = document.getElementById('toolsActions');
+  const content = document.getElementById('toolsContent');
+  if (!subtitle || !actions || !content) return;
+
+  if (!activeCourseId) {
+    subtitle.textContent = 'Select a course to view tools.';
+    actions.innerHTML = '';
+    content.innerHTML = '<div class="card"><div class="muted">No course selected.</div></div>';
+    return;
+  }
+
+  const tools = getCourseLtiTools(activeCourseId);
+  const isStaffUser = isStaff(appData.currentUser?.id, activeCourseId) && !studentViewMode;
+  subtitle.textContent = `${tools.length} authorized tool${tools.length === 1 ? '' : 's'} in this course`;
+  actions.innerHTML = '';
+
+  if (tools.length === 0) {
+    content.innerHTML = '<div class="card"><div class="muted">No authorized LTI tools for this course.</div></div>';
+    return;
+  }
+
+  const echoes = (appData.ltiToolFileEchoes || [])
+    .filter(e => String(e.courseId) === String(activeCourseId))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  content.innerHTML = tools.map(t => {
+    const toolEchoes = echoes.filter(e => e.registrationId === t.registrationId);
+    const uploadBlock = isStaffUser ? `
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="file" id="toolFileInput-${t.registrationId}" accept=".txt,text/plain" class="form-input" style="max-width:280px;" />
+        <button class="btn btn-primary" onclick="submitToolFilePreview('${t.registrationId}')">Send file to tool</button>
+      </div>
+      <div class="muted" style="font-size:0.8rem; margin-top:6px;">Stores first 50 chars for student view.</div>
+    ` : '';
+
+    const list = toolEchoes.length
+      ? `<div style="margin-top:12px;">${toolEchoes.slice(0, 10).map(e => `<div style="padding:8px 10px; border:1px solid var(--border-light); border-radius:8px; margin-bottom:8px;"><strong>${escapeHtml(e.fileName)}</strong><div class="muted" style="font-size:0.85rem; margin-top:4px;">${escapeHtml(e.filePreview50 || '')}</div></div>`).join('')}</div>`
+      : '<div class="muted" style="margin-top:10px;">No file previews yet.</div>';
+
+    return `<div class="card" style="margin-bottom:14px;"><div style="display:flex; align-items:center; gap:10px;"><span style="font-size:1.25rem;">🧩</span><div><div style="font-weight:600;">${escapeHtml(t.toolName)}</div><div class="muted" style="font-size:0.8rem;">${escapeHtml(t.issuer)}</div></div></div>${uploadBlock}${list}</div>`;
+  }).join('');
+}
+
 function renderGradebook() {
   if (!activeCourseId) {
     setText('gradebookSubtitle', 'Select a course');
@@ -12492,3 +12602,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   console.log('[Boot] Initialization complete');
 });
+
+window.submitToolFilePreview = submitToolFilePreview;

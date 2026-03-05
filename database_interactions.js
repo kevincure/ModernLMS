@@ -123,7 +123,10 @@ export async function loadDataFromSupabase() {
       assignmentOverridesRes,
       quizTimeOverridesRes,
       gradeSettingsRes,
-      questionBanksRes
+      questionBanksRes,
+      ltiRegistrationsRes,
+      ltiDeploymentsRes,
+      ltiToolFileEchoesRes
     ] = await Promise.all([
       // Exclude sensitive profile-only fields from the client payload.
       // Row-level RLS (Section 1 migration) limits which profiles are visible.
@@ -149,7 +152,10 @@ export async function loadDataFromSupabase() {
       supabaseClient.from('assignment_overrides').select('*'),
       supabaseClient.from('quiz_time_overrides').select('*'),
       supabaseClient.from('grade_settings').select('*'),
-      supabaseClient.from('question_banks').select('*')
+      supabaseClient.from('question_banks').select('*'),
+      supabaseClient.from('lti_registrations').select('*').eq('status', 'active'),
+      supabaseClient.from('lti_deployments').select('*').eq('status', 'active'),
+      supabaseClient.from('lti_tool_file_echoes').select('*')
     ]);
 
     // Log any errors
@@ -176,7 +182,10 @@ export async function loadDataFromSupabase() {
       { name: 'assignment_overrides', res: assignmentOverridesRes },
       { name: 'quiz_time_overrides', res: quizTimeOverridesRes },
       { name: 'grade_settings', res: gradeSettingsRes },
-      { name: 'question_banks', res: questionBanksRes }
+      { name: 'question_banks', res: questionBanksRes },
+      { name: 'lti_registrations', res: ltiRegistrationsRes },
+      { name: 'lti_deployments', res: ltiDeploymentsRes },
+      { name: 'lti_tool_file_echoes', res: ltiToolFileEchoesRes }
     ];
 
 
@@ -448,6 +457,41 @@ export async function loadDataFromSupabase() {
           isAi: r.is_ai || false,
           createdAt: r.created_at
         }))
+    }));
+
+
+
+    appData.ltiRegistrations = (ltiRegistrationsRes.data || []).map(r => ({
+      id: r.id,
+      orgId: r.org_id,
+      issuer: r.issuer,
+      clientId: r.client_id,
+      toolName: r.tool_name,
+      status: r.status
+    }));
+
+    appData.ltiDeployments = (ltiDeploymentsRes.data || []).map(d => ({
+      id: d.id,
+      orgId: d.org_id,
+      registrationId: d.registration_id,
+      deploymentId: d.deployment_id,
+      scopeType: d.scope_type,
+      scopeRef: d.scope_ref,
+      enableDeepLinking: d.enable_deep_linking,
+      enableAgs: d.enable_ags,
+      enableNrps: d.enable_nrps,
+      status: d.status
+    }));
+
+    appData.ltiToolFileEchoes = (ltiToolFileEchoesRes.data || []).map(e => ({
+      id: e.id,
+      orgId: e.org_id,
+      courseId: e.course_id,
+      registrationId: e.registration_id,
+      createdBy: e.created_by,
+      fileName: e.file_name,
+      filePreview50: e.file_preview_50,
+      createdAt: e.created_at
     }));
 
     // Assignment overrides (per-student due dates)

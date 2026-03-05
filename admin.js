@@ -54,6 +54,8 @@ const admin = {
   announcements: [],   // org announcements from audit log
   departments:   [],   // child orgs (departments)
   featureFlags:  {},   // { flag_name: boolean }
+  ltiRegistrations: [],
+  ltiDeployments: [],
   activeSec:   'users',
   filters: {
     usersSearch: '',
@@ -253,7 +255,8 @@ async function loadAdminData() {
     loadOrgMembers(),
     loadOrgCourses(),
     loadOrgInvites(),
-    loadDepartments()
+    loadDepartments(),
+    loadLtiTools()
   ]);
 
   if (membersRes.status === 'rejected') loadErrors.push(`members: ${membersRes.reason?.message || membersRes.reason}`);
@@ -434,6 +437,80 @@ async function loadAuditLog() {
   }));
 }
 
+
+async function loadLtiTools() {
+  const [{ data: regs, error: regErr }, { data: deps, error: depErr }] = await Promise.all([
+    admin.sb
+      .from('lti_registrations')
+      .select('id, org_id, tool_name, issuer, client_id, status, created_at')
+      .eq('org_id', admin.org.id)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false }),
+    admin.sb
+      .from('lti_deployments')
+      .select('id, registration_id, deployment_id, scope_type, scope_ref, enable_deep_linking, enable_ags, enable_nrps, status, created_at')
+      .eq('org_id', admin.org.id)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+  ]);
+
+  if (regErr) throw new Error(`[Admin] loadLtiTools registrations: ${regErr.message}`);
+  if (depErr) throw new Error(`[Admin] loadLtiTools deployments: ${depErr.message}`);
+
+  admin.ltiRegistrations = regs || [];
+  admin.ltiDeployments = deps || [];
+}
+
+async function refreshLtiToolsSection() {
+  try {
+    await loadLtiTools();
+    renderToolsSection();
+    showToast('LTI tools refreshed.');
+  } catch (e) {
+    showToast(`Could not refresh tools: ${e.message || e}`, true);
+  }
+}
+
+function renderToolsSection() {
+  const wrap = document.getElementById('toolsTableWrap');
+  if (!wrap) return;
+
+  if (!admin.ltiRegistrations.length) {
+    wrap.innerHTML = '<div class="admin-empty">No active LTI tool registrations for this organization.</div>';
+    return;
+  }
+
+  const rows = admin.ltiRegistrations.map(r => {
+    const d = admin.ltiDeployments.filter(dep => dep.registration_id === r.id);
+    const depBadges = d.length
+      ? d.map(dep => `<span class="role-badge" style="margin-right:6px;">${escHtml(dep.scope_type)}:${escHtml(dep.scope_ref || 'all')} · DL:${dep.enable_deep_linking ? 'Y' : 'N'} AGS:${dep.enable_ags ? 'Y' : 'N'} NRPS:${dep.enable_nrps ? 'Y' : 'N'}</span>`).join('')
+      : '<span class="muted">No active deployments</span>';
+
+    return `<tr>
+      <td><strong>${escHtml(r.tool_name || '(unnamed)')}</strong></td>
+      <td><code>${escHtml(r.client_id)}</code></td>
+      <td>${escHtml(r.issuer)}</td>
+      <td>${depBadges}</td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Client ID</th>
+            <th>Issuer</th>
+            <th>Deployments / services</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 // ─── Navigation ───────────────────────────────────────────────────────────────
 
 function adminNav(section) {
@@ -452,6 +529,7 @@ function adminNav(section) {
     users:       'Members',
     courses:     'Courses',
     enrollments: 'Enrollments',
+    tools:       'LTI Tools',
     audit:       'Audit Log',
     settings:    'Settings'
   };
@@ -472,6 +550,7 @@ function renderCurrentSection() {
     case 'users':       renderUsersSection();       break;
     case 'courses':     renderCoursesSection();     break;
     case 'enrollments': renderEnrollmentsSection(); break;
+    case 'tools':       renderToolsSection();       break;
     case 'audit':       renderAuditSection();       break;
     case 'settings':    renderSettingsSection();    break;
   }
@@ -1968,3 +2047,5 @@ window.postOrgAnnouncement    = postOrgAnnouncement;
 window.saveFeatureFlag        = saveFeatureFlag;
 window.addDepartment          = addDepartment;
 window.removeDepartment       = removeDepartment;
+
+window.refreshLtiToolsSection = refreshLtiToolsSection;
