@@ -206,7 +206,6 @@ async function verifyAndLoad(user) {
     );
 
     if (orgErr || !org) {
-      await admin.sb.auth.signOut();
       showScreen('error', `Organization #${escHtml(orgNumericId)} not found. Check your database setup.`);
       return;
     }
@@ -219,7 +218,6 @@ async function verifyAndLoad(user) {
     );
 
     if (superErr || !isSuperadmin) {
-      await admin.sb.auth.signOut();
       showScreen('denied',
         `${user.email} does not have superadmin access to "${org.name}" (org #${orgNumericId}).`
       );
@@ -242,7 +240,6 @@ async function verifyAndLoad(user) {
     renderCurrentSection();
   } catch (err) {
     console.error('[Admin] verifyAndLoad failed:', err);
-    await admin.sb.auth.signOut();
     showScreen('error', `Admin verification failed: ${err.message || 'Unknown error'}`);
   }
 }
