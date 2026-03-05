@@ -1069,6 +1069,335 @@ async function handleNrps(req: Request, env: Env, supabase: any, courseId: strin
 }
 
 /* ------------------------------------------------------------------ */
+/*  HANDLER: OpenID Configuration (platform metadata for LTI-DR)      */
+/* ------------------------------------------------------------------ */
+
+async function handleOpenIdConfig(req: Request, env: Env) {
+  const url = new URL(req.url);
+  const orgId = url.searchParams.get('org_id');
+  const base = env.LTI_PLATFORM_ISSUER;
+  const regEndpoint = orgId
+    ? `${base}/lti/register?org_id=${encodeURIComponent(orgId)}`
+    : `${base}/lti/register`;
+
+  return json({
+    issuer: base,
+    authorization_endpoint: `${base}/lti/oidc/auth`,
+    token_endpoint: `${base}/lti/oauth2/token`,
+    jwks_uri: `${base}/.well-known/jwks.json`,
+    registration_endpoint: regEndpoint,
+    scopes_supported: ['openid'],
+    response_types_supported: ['id_token'],
+    response_modes_supported: ['form_post'],
+    grant_types_supported: ['implicit', 'client_credentials'],
+    subject_types_supported: ['public'],
+    id_token_signing_alg_values_supported: ['RS256'],
+    claims_supported: ['sub', 'iss', 'aud', 'iat', 'exp', 'nonce', 'name', 'email'],
+    'https://purl.imsglobal.org/spec/lti-platform-configuration': {
+      product_family_code: 'modernlms',
+      version: '1.0',
+      messages_supported: [
+        { type: 'LtiResourceLinkRequest', placements: ['CourseSection'] },
+        { type: 'LtiDeepLinkingRequest',  placements: ['ContentArea'] },
+      ],
+      variables: [],
+    },
+  }, 200, corsHeaders());
+}
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: Dynamic Registration (LTI-DR v1.0)                       */
+/*  Tool POSTs its client metadata here; we create the registration.  */
+/* ------------------------------------------------------------------ */
+
+async function handleDynamicRegister(req: Request, env: Env, supabase: any) {
+  const url = new URL(req.url);
+  const orgId = url.searchParams.get('org_id');
+  if (!orgId) return err('Missing org_id query param', 400);
+
+  let body: any;
+  try { body = await req.json(); } catch { return err('Expected JSON body', 400); }
+
+  const toolConfig  = body['https://purl.imsglobal.org/spec/lti-tool-configuration'] || {};
+  const redirectUris: string[] = body.redirect_uris || [];
+  const clientName: string    = body.client_name || toolConfig.domain || 'Unknown Tool';
+  const loginUri: string      = body.initiate_login_uri || '';
+  const jwksUri: string       = body.jwks_uri || '';
+  const targetLinkUri: string = toolConfig.target_link_uri || redirectUris[0] || '';
+  const domain: string        = toolConfig.domain || '';
+  const issuer: string        = domain ? `https://${domain}` : targetLinkUri;
+
+  if (!loginUri || !jwksUri || !targetLinkUri) {
+    return err('Missing required fields: initiate_login_uri, jwks_uri, target_link_uri', 400);
+  }
+
+  const clientId    = crypto.randomUUID();
+  const scopeStr    = String(body.scope || '');
+  const enableAgs   = scopeStr.includes('lti-ags');
+  const enableNrps  = scopeStr.includes('lti-nrps');
+  const enableDl    = (toolConfig.messages || []).some((m: any) => m.type === 'LtiDeepLinkingRequest');
+
+  const { data: reg, error: regErr } = await supabase
+    .from('lti_registrations')
+    .insert({
+      org_id:              orgId,
+      tool_name:           clientName,
+      issuer,
+      client_id:           clientId,
+      auth_login_url:      loginUri,
+      jwks_url:            jwksUri,
+      target_link_uri:     targetLinkUri,
+      deep_link_return_url: `${env.LTI_PLATFORM_ISSUER}/lti/deep-link/return`,
+      status:              'active',
+      metadata:            { dynamic_registration: true, raw_client_metadata: body },
+    })
+    .select('*')
+    .single();
+
+  if (regErr || !reg) {
+    return err(`Failed to create registration: ${regErr?.message || 'unknown'}`, 500);
+  }
+
+  const deploymentId = `auto-${clientId.slice(0, 8)}`;
+  await supabase.from('lti_deployments').insert({
+    org_id:           orgId,
+    registration_id:  reg.id,
+    deployment_id:    deploymentId,
+    scope_type:       'org',
+    scope_ref:        null,
+    enable_deep_linking: enableDl,
+    enable_ags:       enableAgs,
+    enable_nrps:      enableNrps,
+    status:           'active',
+  });
+
+  return json({
+    client_id:            clientId,
+    client_name:          clientName,
+    redirect_uris:        redirectUris,
+    initiate_login_uri:   loginUri,
+    jwks_uri:             jwksUri,
+    token_endpoint_auth_method: 'private_key_jwt',
+    grant_types:          body.grant_types  || ['implicit'],
+    response_types:       body.response_types || ['id_token'],
+    'https://purl.imsglobal.org/spec/lti-tool-configuration': {
+      ...toolConfig,
+      deployment_id: deploymentId,
+    },
+  }, 201, corsHeaders());
+}
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: Initiate Platform → Tool Launch                           */
+/*  Called by the ModernLMS frontend to start an LTI launch.          */
+/*  GET /lti/initiate-launch?client_id=X&course_id=Y&user_id=Z        */
+/* ------------------------------------------------------------------ */
+
+async function handleInitiateLaunch(req: Request, env: Env, supabase: any) {
+  const url        = new URL(req.url);
+  const clientId   = url.searchParams.get('client_id');
+  const courseId   = url.searchParams.get('course_id');
+  const userId     = url.searchParams.get('user_id');
+  const depIdParam = url.searchParams.get('deployment_id');
+  const msgType    = url.searchParams.get('message_type') || 'LtiResourceLinkRequest';
+
+  if (!clientId || !courseId || !userId) {
+    return err('Missing required params: client_id, course_id, user_id', 400);
+  }
+
+  const { data: reg } = await supabase
+    .from('lti_registrations')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+  if (!reg) return err('Registration not found', 404);
+
+  // Resolve deployment: use provided ID or pick the first active one
+  let deploymentId = depIdParam;
+  if (!deploymentId) {
+    const { data: dep } = await supabase
+      .from('lti_deployments')
+      .select('deployment_id')
+      .eq('registration_id', reg.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+    if (!dep) return err('No active deployment found for this registration', 404);
+    deploymentId = dep.deployment_id;
+  }
+
+  const hintToken = crypto.randomUUID();
+  const ttlMs     = toInt(env.LTI_STATE_TTL_SECONDS, 300) * 1000;
+
+  const { error: hintErr } = await supabase.from('lti_login_hints').insert({
+    hint_token:      hintToken,
+    org_id:          reg.org_id,
+    registration_id: reg.id,
+    deployment_id:   deploymentId,
+    user_id:         userId,
+    course_id:       courseId,
+    target_link_uri: reg.target_link_uri,
+    message_type:    msgType,
+    expires_at:      new Date(Date.now() + ttlMs).toISOString(),
+  });
+  if (hintErr) return err(`Failed to store login hint: ${hintErr.message}`, 500);
+
+  const loginUrl = new URL(reg.auth_login_url);
+  loginUrl.searchParams.set('iss',              env.LTI_PLATFORM_ISSUER);
+  loginUrl.searchParams.set('client_id',        reg.client_id);
+  loginUrl.searchParams.set('login_hint',       hintToken);
+  loginUrl.searchParams.set('target_link_uri',  reg.target_link_uri || '');
+  loginUrl.searchParams.set('lti_message_hint', msgType === 'LtiDeepLinkingRequest' ? 'deep-link' : 'resource-link');
+
+  return Response.redirect(loginUrl.toString(), 302);
+}
+
+/* ------------------------------------------------------------------ */
+/*  HANDLER: OIDC Auth (generates and signs LTI id_token for tool)    */
+/*  Tool redirects here after receiving platform login initiation.    */
+/*  GET /lti/oidc/auth?client_id=X&redirect_uri=Y&state=Z&nonce=W    */
+/*        &login_hint=HINT_TOKEN&lti_message_hint=resource-link       */
+/* ------------------------------------------------------------------ */
+
+async function handleOidcAuth(req: Request, env: Env, supabase: any) {
+  const url        = new URL(req.url);
+  const clientId   = url.searchParams.get('client_id');
+  const redirectUri = url.searchParams.get('redirect_uri');
+  const stateParam = url.searchParams.get('state') || '';
+  const nonceParam = url.searchParams.get('nonce') || '';
+  const loginHint  = url.searchParams.get('login_hint') || '';
+  const msgHint    = url.searchParams.get('lti_message_hint') || 'resource-link';
+
+  if (!clientId || !redirectUri || !loginHint) {
+    return err('Missing client_id, redirect_uri, or login_hint', 400);
+  }
+
+  const { data: reg } = await supabase
+    .from('lti_registrations')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+  if (!reg) return err('Registration not found', 404);
+
+  // Consume login hint
+  const { data: hint } = await supabase
+    .from('lti_login_hints')
+    .select('*')
+    .eq('hint_token', loginHint)
+    .is('consumed_at', null)
+    .maybeSingle();
+  if (!hint) return err('Invalid or expired login_hint', 401);
+  if (new Date(hint.expires_at).getTime() < Date.now()) return err('Login hint expired', 401);
+
+  await supabase.from('lti_login_hints')
+    .update({ consumed_at: new Date().toISOString() })
+    .eq('id', hint.id);
+
+  const courseId     = hint.course_id;
+  const userId       = hint.user_id;
+  const deploymentId = hint.deployment_id;
+  const msgType      = msgHint === 'deep-link' ? 'LtiDeepLinkingRequest' : 'LtiResourceLinkRequest';
+
+  // Fetch user, course, enrollment, deployment in parallel
+  const [
+    { data: profile },
+    { data: course },
+    { data: enrollment },
+    { data: deployment },
+  ] = await Promise.all([
+    supabase.from('profiles').select('id, name, email').eq('id', userId).maybeSingle(),
+    supabase.from('courses').select('id, title').eq('id', courseId).maybeSingle(),
+    supabase.from('enrollments').select('role').eq('user_id', userId).eq('course_id', courseId).maybeSingle(),
+    supabase.from('lti_deployments').select('*')
+      .eq('registration_id', reg.id).eq('deployment_id', deploymentId).eq('status', 'active').maybeSingle(),
+  ]);
+
+  const role     = enrollment?.role || 'student';
+  const ltiRoles = [roleToLtiContext(role), roleToLtiSystem(role)].filter(Boolean);
+  const base     = env.LTI_PLATFORM_ISSUER;
+  const now      = Math.floor(Date.now() / 1000);
+
+  const idTokenPayload: Record<string, any> = {
+    iss:   base,
+    aud:   clientId,
+    sub:   String(userId),
+    nonce: nonceParam,
+    iat:   now,
+    exp:   now + 300,
+    name:  profile?.name  || '',
+    email: profile?.email || '',
+    [CLAIMS.VERSION]:       '1.3.0',
+    [CLAIMS.MESSAGE_TYPE]:  msgType,
+    [CLAIMS.DEPLOYMENT_ID]: deploymentId,
+    'https://purl.imsglobal.org/spec/lti/claim/target_link_uri': reg.target_link_uri || redirectUri,
+    [CLAIMS.CONTEXT]: {
+      id:    String(courseId),
+      label: String(courseId).slice(0, 8),
+      title: course?.title || 'Course',
+      type:  ['http://purl.imsglobal.org/vocab/lis/v2/course#CourseOffering'],
+    },
+    [CLAIMS.ROLES]:         ltiRoles,
+    [CLAIMS.RESOURCE_LINK]: { id: `${courseId}-${clientId}`, title: course?.title || 'LTI Resource' },
+    [CLAIMS.LAUNCH_PRESENTATION]: { document_target: 'iframe' },
+    [CLAIMS.TOOL_PLATFORM]: { name: 'ModernLMS', product_family_code: 'modernlms', version: '1.0' },
+  };
+
+  if (deployment?.enable_ags) {
+    idTokenPayload[CLAIMS.AGS_ENDPOINT] = {
+      scope:     [AGS_SCOPES.LINEITEM, AGS_SCOPES.SCORE, AGS_SCOPES.RESULT_READONLY],
+      lineitems: `${base}/lti/ags/courses/${courseId}/lineitems`,
+    };
+  }
+  if (deployment?.enable_nrps) {
+    idTokenPayload[CLAIMS.NRPS_ENDPOINT] = {
+      context_memberships_url: `${base}/lti/nrps/courses/${courseId}/memberships`,
+      service_versions: ['2.0'],
+    };
+  }
+  if (msgType === 'LtiDeepLinkingRequest') {
+    idTokenPayload[CLAIMS.DL_SETTINGS] = {
+      deep_link_return_url: reg.deep_link_return_url || `${base}/lti/deep-link/return`,
+      accept_types: ['link', 'ltiResourceLink', 'file'],
+      accept_presentation_document_targets: ['iframe', 'window'],
+      accept_multiple: true,
+      auto_create: true,
+      data: `dl-${courseId}-${Date.now()}`,
+    };
+  }
+
+  const privateJwk = JSON.parse(env.LTI_PRIVATE_JWK_ACTIVE_JSON);
+  const key        = await importJWK(privateJwk, 'RS256');
+  const idToken    = await new SignJWT(idTokenPayload)
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: privateJwk.kid || 'platform-key' })
+    .sign(key);
+
+  await supabase.from('lti_launches').insert({
+    org_id:          reg.org_id,
+    registration_id: reg.id,
+    deployment_id:   deploymentId,
+    course_id:       courseId,
+    user_id:         userId,
+    message_type:    msgType,
+    lti_version:     '1.3.0',
+    status:          'success',
+    raw_claims:      idTokenPayload,
+    correlation_id:  crypto.randomUUID(),
+  });
+
+  return html(`
+    <form id="f" method="post" action="${redirectUri}">
+      <input type="hidden" name="id_token" value="${idToken}">
+      <input type="hidden" name="state" value="${stateParam}">
+    </form>
+    <script>document.getElementById('f').submit()</script>
+  `);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Router                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -1083,6 +1412,10 @@ export default {
       if (req.method === 'GET' && url.pathname === '/.well-known/jwks.json') {
         return json(await (await handleJwks(env)).json(), 200, corsHeaders());
       }
+      if (req.method === 'GET' && url.pathname === '/.well-known/openid-configuration') return handleOpenIdConfig(req, env);
+      if (req.method === 'POST' && url.pathname === '/lti/register') return handleDynamicRegister(req, env, supabase);
+      if (req.method === 'GET'  && url.pathname === '/lti/initiate-launch') return handleInitiateLaunch(req, env, supabase);
+      if (req.method === 'GET'  && url.pathname === '/lti/oidc/auth') return handleOidcAuth(req, env, supabase);
       if (req.method === 'GET' && url.pathname === '/lti/oidc/login') return handleOidcLogin(req, env, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/launch') return handleLaunch(req, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/deep-link/return') return handleDeepLinkReturn(req, supabase);
