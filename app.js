@@ -7121,22 +7121,40 @@ function gbGradeNaturalCompare(aScore, bScore, assignment) {
   }
 }
 
+// Returns course-level deployments for a course (already added by faculty).
 function getCourseLtiTools(courseId) {
   const regs = appData.ltiRegistrations || [];
   const deps = appData.ltiDeployments || [];
-  const matchedDeployments = deps.filter(d => d.status === 'active' && d.scopeType === 'course' && String(d.scopeRef) === String(courseId));
-  return matchedDeployments
+  return deps
+    .filter(d => d.status === 'active' && d.scopeType === 'course' && String(d.scopeRef) === String(courseId))
     .map(d => {
       const reg = regs.find(r => r.id === d.registrationId);
       if (!reg || reg.status !== 'active') return null;
       return {
-        registrationId: reg.id,
-        deploymentId: d.deploymentId,
-        toolName: reg.toolName || reg.clientId,
-        issuer: reg.issuer
+        depId:            d.id,           // deployment row UUID (for update/remove)
+        registrationId:   reg.id,
+        ltiDeploymentId:  d.deploymentId, // the LTI deployment_id string
+        toolName:         reg.toolName || reg.clientId,
+        issuer:           reg.issuer,
+        visibleToStudents: d.visibleToStudents,
+        enableDeepLinking: d.enableDeepLinking,
+        enableAgs:         d.enableAgs,
+        enableNrps:        d.enableNrps,
       };
     })
     .filter(Boolean);
+}
+
+// Returns admin-authorized registrations NOT yet added to a course (available to add).
+function getAvailableLtiTools(courseId) {
+  const regs = appData.ltiRegistrations || [];
+  const deps = appData.ltiDeployments || [];
+  const addedRegIds = new Set(
+    deps
+      .filter(d => d.status === 'active' && d.scopeType === 'course' && String(d.scopeRef) === String(courseId))
+      .map(d => d.registrationId),
+  );
+  return regs.filter(r => r.status === 'active' && !addedRegIds.has(r.id));
 }
 
 async function submitToolFilePreview(registrationId) {
@@ -7185,8 +7203,8 @@ async function submitToolFilePreview(registrationId) {
 
 function renderTools() {
   const subtitle = document.getElementById('toolsSubtitle');
-  const actions = document.getElementById('toolsActions');
-  const content = document.getElementById('toolsContent');
+  const actions  = document.getElementById('toolsActions');
+  const content  = document.getElementById('toolsContent');
   if (!subtitle || !actions || !content) return;
 
   if (!activeCourseId) {
@@ -7196,36 +7214,195 @@ function renderTools() {
     return;
   }
 
-  const tools = getCourseLtiTools(activeCourseId);
-  const isStaffUser = isStaff(appData.currentUser?.id, activeCourseId) && !studentViewMode;
-  subtitle.textContent = `${tools.length} authorized tool${tools.length === 1 ? '' : 's'} in this course`;
-  actions.innerHTML = '';
-
-  if (tools.length === 0) {
-    content.innerHTML = '<div class="card"><div class="muted">No authorized LTI tools for this course.</div></div>';
-    return;
-  }
-
-  const echoes = (appData.ltiToolFileEchoes || [])
+  const isStaffUser  = isStaff(appData.currentUser?.id, activeCourseId) && !studentViewMode;
+  const courseTools  = getCourseLtiTools(activeCourseId);
+  const echoes       = (appData.ltiToolFileEchoes || [])
     .filter(e => String(e.courseId) === String(activeCourseId))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-  content.innerHTML = tools.map(t => {
-    const toolEchoes = echoes.filter(e => e.registrationId === t.registrationId);
-    const uploadBlock = isStaffUser ? `
-      <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <input type="file" id="toolFileInput-${t.registrationId}" accept=".txt,text/plain" class="form-input" style="max-width:280px;" />
-        <button class="btn btn-primary" onclick="submitToolFilePreview('${t.registrationId}')">Send file to tool</button>
-      </div>
-      <div class="muted" style="font-size:0.8rem; margin-top:6px;">Stores first 50 chars for student view.</div>
-    ` : '';
+  actions.innerHTML = '';
 
-    const list = toolEchoes.length
-      ? `<div style="margin-top:12px;">${toolEchoes.slice(0, 10).map(e => `<div style="padding:8px 10px; border:1px solid var(--border-light); border-radius:8px; margin-bottom:8px;"><strong>${escapeHtml(e.fileName)}</strong><div class="muted" style="font-size:0.85rem; margin-top:4px;">${escapeHtml(e.filePreview50 || '')}</div></div>`).join('')}</div>`
-      : '<div class="muted" style="margin-top:10px;">No file previews yet.</div>';
+  /* ── STUDENT view ──────────────────────────────────────────────────────── */
+  if (!isStaffUser) {
+    const visibleTools = courseTools.filter(t => t.visibleToStudents);
+    subtitle.textContent = `${visibleTools.length} tool${visibleTools.length === 1 ? '' : 's'}`;
+    if (visibleTools.length === 0) {
+      content.innerHTML = '<div class="card"><div class="muted">No tools available in this course yet.</div></div>';
+      return;
+    }
+    content.innerHTML = visibleTools.map(t => {
+      const toolEchoes = echoes.filter(e => e.registrationId === t.registrationId);
+      const echoList   = toolEchoes.length
+        ? toolEchoes.slice(0, 10).map(e =>
+            `<div style="padding:8px 10px;border:1px solid var(--border-light);border-radius:8px;margin-bottom:8px;">
+               <strong>${escapeHtml(e.fileName)}</strong>
+               <div class="muted" style="font-size:0.85rem;margin-top:4px;">${escapeHtml(e.filePreview50 || '')}</div>
+             </div>`).join('')
+        : '<div class="muted" style="margin-top:8px;font-size:0.85rem;">No files shared yet.</div>';
+      return `<div class="card" style="margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:1.25rem;">🧩</span>
+          <div>
+            <div style="font-weight:600;">${escapeHtml(t.toolName)}</div>
+            <div class="muted" style="font-size:0.8rem;">${escapeHtml(t.issuer)}</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;">${echoList}</div>
+      </div>`;
+    }).join('');
+    return;
+  }
 
-    return `<div class="card" style="margin-bottom:14px;"><div style="display:flex; align-items:center; gap:10px;"><span style="font-size:1.25rem;">🧩</span><div><div style="font-weight:600;">${escapeHtml(t.toolName)}</div><div class="muted" style="font-size:0.8rem;">${escapeHtml(t.issuer)}</div></div></div>${uploadBlock}${list}</div>`;
-  }).join('');
+  /* ── FACULTY view ─────────────────────────────────────────────────────── */
+  subtitle.textContent = `${courseTools.length} tool${courseTools.length === 1 ? '' : 's'} in this course`;
+
+  // ── Part 1: tools already added to this course ─────────────────────────
+  const addedSection = courseTools.length === 0
+    ? '<div class="card"><div class="muted">No tools added to this course yet. Add one from the available list below.</div></div>'
+    : courseTools.map(t => {
+        const toolEchoes    = echoes.filter(e => e.registrationId === t.registrationId);
+        const visLabel      = t.visibleToStudents ? 'Visible to students' : 'Hidden from students';
+        const visColor      = t.visibleToStudents ? 'var(--success,#065f46)' : 'var(--text-muted,#6b7280)';
+        const visBtnLabel   = t.visibleToStudents ? 'Hide from students' : 'Show to students';
+
+        const uploadBlock = `
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="file" id="toolFileInput-${t.registrationId}" accept=".txt,text/plain" class="form-input" style="max-width:260px;" />
+            <button class="btn btn-secondary" onclick="submitToolFilePreview('${escapeHtml(t.registrationId)}')">Share file with tool</button>
+          </div>
+          <div class="muted" style="font-size:0.78rem;margin-top:4px;">First 50 chars stored for student view.</div>`;
+
+        const echoList = toolEchoes.length
+          ? toolEchoes.slice(0, 5).map(e =>
+              `<div style="padding:6px 10px;border:1px solid var(--border-light);border-radius:6px;margin-bottom:6px;font-size:0.85rem;">
+                 <strong>${escapeHtml(e.fileName)}</strong>
+                 <span class="muted" style="margin-left:8px;">${escapeHtml(e.filePreview50 || '')}</span>
+               </div>`).join('')
+          : '';
+
+        return `<div class="card" style="margin-bottom:12px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:1.2rem;">🧩</span>
+              <div>
+                <div style="font-weight:600;">${escapeHtml(t.toolName)}</div>
+                <div class="muted" style="font-size:0.78rem;">${escapeHtml(t.issuer)}</div>
+                <div style="font-size:0.8rem;margin-top:3px;color:${visColor};">● ${visLabel}</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-secondary" style="font-size:0.8rem;padding:5px 11px;"
+                onclick="toggleToolVisibility('${t.depId}', ${t.visibleToStudents})">${visBtnLabel}</button>
+              <button class="btn btn-secondary" style="font-size:0.8rem;padding:5px 11px;color:var(--danger);"
+                onclick="removeToolFromCourse('${t.depId}', '${escapeHtml(t.toolName)}')">Remove</button>
+            </div>
+          </div>
+          ${uploadBlock}
+          ${echoList ? `<div style="margin-top:10px;">${echoList}</div>` : ''}
+        </div>`;
+      }).join('');
+
+  // ── Part 2: authorized tools not yet in this course ────────────────────
+  const available = getAvailableLtiTools(activeCourseId);
+  const availableSection = available.length === 0 ? '' : `
+    <h4 style="margin:18px 0 10px;font-size:0.95rem;color:var(--text-muted);">Available to add</h4>
+    ${available.map(r => `
+      <div class="card" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:1.2rem;">🧩</span>
+          <div>
+            <div style="font-weight:600;">${escapeHtml(r.toolName || r.clientId)}</div>
+            <div class="muted" style="font-size:0.78rem;">${escapeHtml(r.issuer)}</div>
+          </div>
+        </div>
+        <button class="btn btn-primary" style="font-size:0.82rem;padding:6px 14px;"
+          onclick="addToolToCourse('${r.id}')">Add to course</button>
+      </div>`).join('')}`;
+
+  content.innerHTML = addedSection + availableSection;
+}
+
+// ── Faculty: add an authorized tool to the current course ──────────────────────
+
+async function addToolToCourse(registrationId) {
+  if (!activeCourseId) return;
+  const course = appData.courses.find(c => c.id === activeCourseId);
+  if (!course) { showToast('Course not found.', 'error'); return; }
+
+  // Reuse deployment_id from any existing deployment for this registration
+  const existingDep = (appData.ltiDeployments || []).find(d => d.registrationId === registrationId);
+  const deploymentId = existingDep?.deploymentId || `deploy-${registrationId.slice(0, 8)}`;
+
+  const { data, error } = await supabaseClient
+    .from('lti_deployments')
+    .insert({
+      org_id:              course.orgId,
+      registration_id:     registrationId,
+      deployment_id:       deploymentId,
+      scope_type:          'course',
+      scope_ref:           activeCourseId,
+      enable_deep_linking: existingDep?.enableDeepLinking ?? true,
+      enable_ags:          existingDep?.enableAgs ?? true,
+      enable_nrps:         existingDep?.enableNrps ?? true,
+      status:              'active',
+      visible_to_students: false,
+    })
+    .select('*')
+    .single();
+
+  if (error) { showToast(`Could not add tool: ${error.message}`, 'error'); return; }
+
+  appData.ltiDeployments = [
+    ...(appData.ltiDeployments || []),
+    {
+      id:               data.id,
+      orgId:            data.org_id,
+      registrationId:   data.registration_id,
+      deploymentId:     data.deployment_id,
+      scopeType:        data.scope_type,
+      scopeRef:         data.scope_ref,
+      enableDeepLinking: data.enable_deep_linking,
+      enableAgs:        data.enable_ags,
+      enableNrps:       data.enable_nrps,
+      status:           data.status,
+      visibleToStudents: false,
+    },
+  ];
+  renderTools();
+  showToast('Tool added to course. Toggle visibility to show it to students.', 'success');
+}
+
+// ── Faculty: toggle student visibility for a course-level deployment ───────────
+
+async function toggleToolVisibility(depId, currentlyVisible) {
+  const newValue = !currentlyVisible;
+  const { error } = await supabaseClient
+    .from('lti_deployments')
+    .update({ visible_to_students: newValue })
+    .eq('id', depId);
+
+  if (error) { showToast(`Could not update visibility: ${error.message}`, 'error'); return; }
+
+  appData.ltiDeployments = (appData.ltiDeployments || []).map(d =>
+    d.id === depId ? { ...d, visibleToStudents: newValue } : d,
+  );
+  renderTools();
+  showToast(newValue ? 'Tool is now visible to students.' : 'Tool hidden from students.', 'success');
+}
+
+// ── Faculty: remove a tool from the current course ────────────────────────────
+
+async function removeToolFromCourse(depId, toolName) {
+  const { error } = await supabaseClient
+    .from('lti_deployments')
+    .update({ status: 'inactive' })
+    .eq('id', depId);
+
+  if (error) { showToast(`Could not remove tool: ${error.message}`, 'error'); return; }
+
+  appData.ltiDeployments = (appData.ltiDeployments || []).filter(d => d.id !== depId);
+  renderTools();
+  showToast(`"${toolName}" removed from this course.`, 'success');
 }
 
 function renderGradebook() {

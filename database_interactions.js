@@ -153,7 +153,7 @@ export async function loadDataFromSupabase() {
       supabaseClient.from('quiz_time_overrides').select('*'),
       supabaseClient.from('grade_settings').select('*'),
       supabaseClient.from('question_banks').select('*'),
-      supabaseClient.from('lti_registrations').select('*').eq('status', 'active'),
+      supabaseClient.from('lti_registrations').select('*').eq('status', 'active').eq('admin_authorized', true),
       supabaseClient.from('lti_deployments').select('*').eq('status', 'active'),
       supabaseClient.from('lti_tool_file_echoes').select('*')
     ]);
@@ -467,7 +467,8 @@ export async function loadDataFromSupabase() {
       issuer: r.issuer,
       clientId: r.client_id,
       toolName: r.tool_name,
-      status: r.status
+      status: r.status,
+      adminAuthorized: r.admin_authorized !== false, // default true
     }));
 
     appData.ltiDeployments = (ltiDeploymentsRes.data || []).map(d => ({
@@ -480,7 +481,8 @@ export async function loadDataFromSupabase() {
       enableDeepLinking: d.enable_deep_linking,
       enableAgs: d.enable_ags,
       enableNrps: d.enable_nrps,
-      status: d.status
+      status: d.status,
+      visibleToStudents: d.visible_to_students === true,
     }));
 
     appData.ltiToolFileEchoes = (ltiToolFileEchoesRes.data || []).map(e => ({

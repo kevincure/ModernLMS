@@ -439,26 +439,24 @@ async function loadAuditLog() {
 
 
 async function loadLtiTools() {
+  // Load ALL registrations (including revoked) so admin can see and manage them
   const [{ data: regs, error: regErr }, { data: deps, error: depErr }] = await Promise.all([
     admin.sb
       .from('lti_registrations')
-      .select('id, org_id, tool_name, issuer, client_id, status, created_at')
+      .select('id, org_id, tool_name, issuer, client_id, status, admin_authorized, created_at')
       .eq('org_id', admin.org.id)
-      .eq('status', 'active')
       .order('created_at', { ascending: false }),
     admin.sb
       .from('lti_deployments')
-      .select('id, registration_id, deployment_id, scope_type, scope_ref, enable_deep_linking, enable_ags, enable_nrps, status, created_at')
+      .select('id, registration_id, deployment_id, scope_type, scope_ref, enable_deep_linking, enable_ags, enable_nrps, status, visible_to_students, created_at')
       .eq('org_id', admin.org.id)
       .eq('status', 'active')
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }),
   ]);
-
   if (regErr) throw new Error(`[Admin] loadLtiTools registrations: ${regErr.message}`);
   if (depErr) throw new Error(`[Admin] loadLtiTools deployments: ${depErr.message}`);
-
   admin.ltiRegistrations = regs || [];
-  admin.ltiDeployments = deps || [];
+  admin.ltiDeployments   = deps || [];
 }
 
 async function refreshLtiToolsSection() {
@@ -476,39 +474,179 @@ function renderToolsSection() {
   if (!wrap) return;
 
   if (!admin.ltiRegistrations.length) {
-    wrap.innerHTML = '<div class="admin-empty">No active LTI tool registrations for this organization.</div>';
+    wrap.innerHTML = '<div class="admin-empty">No LTI tool registrations yet. Click "+ Add LTI Tool" to register the first tool.</div>';
     return;
   }
 
   const rows = admin.ltiRegistrations.map(r => {
-    const d = admin.ltiDeployments.filter(dep => dep.registration_id === r.id);
-    const depBadges = d.length
-      ? d.map(dep => `<span class="role-badge" style="margin-right:6px;">${escHtml(dep.scope_type)}:${escHtml(dep.scope_ref || 'all')} · DL:${dep.enable_deep_linking ? 'Y' : 'N'} AGS:${dep.enable_ags ? 'Y' : 'N'} NRPS:${dep.enable_nrps ? 'Y' : 'N'}</span>`).join('')
-      : '<span class="muted">No active deployments</span>';
+    const isAuth = r.admin_authorized !== false;
+    const deps   = admin.ltiDeployments.filter(d => d.registration_id === r.id);
+    const orgDep = deps.find(d => d.scope_type === 'org');
 
-    return `<tr>
-      <td><strong>${escHtml(r.tool_name || '(unnamed)')}</strong></td>
-      <td><code>${escHtml(r.client_id)}</code></td>
-      <td>${escHtml(r.issuer)}</td>
-      <td>${depBadges}</td>
+    const services = orgDep
+      ? [
+          orgDep.enable_deep_linking ? '<span class="role-badge">DL</span>'   : '',
+          orgDep.enable_ags          ? '<span class="role-badge">AGS</span>'  : '',
+          orgDep.enable_nrps         ? '<span class="role-badge">NRPS</span>' : '',
+        ].filter(Boolean).join(' ')
+      : '<span class="muted" style="font-size:0.8rem;">no org deploy</span>';
+
+    const depId     = orgDep?.deployment_id || '—';
+    const authBadge = isAuth
+      ? '<span class="role-badge" style="background:var(--success-light,#d1fae5);color:var(--success,#065f46);">✓ Authorized</span>'
+      : '<span class="role-badge" style="background:var(--danger-light,#fee2e2);color:var(--danger,#991b1b);">✗ Revoked</span>';
+    const actionBtn = isAuth
+      ? `<button class="btn btn-secondary" style="font-size:0.78rem;padding:4px 10px;"
+           onclick="toggleToolAuthorized('${r.id}',true)">Revoke</button>`
+      : `<button class="btn btn-primary" style="font-size:0.78rem;padding:4px 10px;"
+           onclick="toggleToolAuthorized('${r.id}',false)">Authorize</button>`;
+
+    return `<tr style="${isAuth ? '' : 'opacity:0.6;'}">
+      <td><strong>${escHtml(r.tool_name || '(unnamed)')}</strong><br>
+          <span class="muted" style="font-size:0.78rem;">${escHtml(r.issuer)}</span></td>
+      <td><code>${escHtml(r.client_id)}</code><br>
+          <span class="muted" style="font-size:0.78rem;">deploy: ${escHtml(depId)}</span></td>
+      <td>${services}</td>
+      <td>${authBadge}</td>
+      <td style="white-space:nowrap;">${actionBtn}</td>
     </tr>`;
   }).join('');
 
   wrap.innerHTML = `
     <div class="admin-table-wrap">
       <table class="admin-table">
-        <thead>
-          <tr>
-            <th>Tool</th>
-            <th>Client ID</th>
-            <th>Issuer</th>
-            <th>Deployments / services</th>
-          </tr>
-        </thead>
+        <thead><tr>
+          <th>Tool / Issuer</th>
+          <th>Client ID / Deploy ID</th>
+          <th>Services</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>
-  `;
+    </div>`;
+}
+
+// ── Open Add Tool modal ───────────────────────────────────────────────────────
+
+function openAddToolModal() {
+  ['addToolName','addToolIssuer','addToolClientId','addToolDeploymentId',
+   'addToolJwksUrl','addToolLaunchUrl','addToolDeepLinkUrl'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('addToolDeploymentId').value = 'deploy-1';
+  ['addToolEnableDl','addToolEnableAgs','addToolEnableNrps'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = true;
+  });
+  hideInlineError('addToolError');
+  openModal('modal-addTool');
+  setTimeout(() => document.getElementById('addToolName')?.focus(), 80);
+}
+
+// ── Save new tool registration + org-level deployment ─────────────────────────
+
+async function saveLtiTool() {
+  const name         = document.getElementById('addToolName').value.trim();
+  const issuer       = document.getElementById('addToolIssuer').value.trim();
+  const clientId     = document.getElementById('addToolClientId').value.trim();
+  const deploymentId = document.getElementById('addToolDeploymentId').value.trim();
+  const jwksUrl      = document.getElementById('addToolJwksUrl').value.trim();
+  const launchUrl    = document.getElementById('addToolLaunchUrl').value.trim();
+  const deepLinkUrl  = document.getElementById('addToolDeepLinkUrl').value.trim() || null;
+  const enableDl     = document.getElementById('addToolEnableDl').checked;
+  const enableAgs    = document.getElementById('addToolEnableAgs').checked;
+  const enableNrps   = document.getElementById('addToolEnableNrps').checked;
+
+  hideInlineError('addToolError');
+  if (!name)         { showInlineError('addToolError', 'Tool name is required.');       return; }
+  if (!issuer)       { showInlineError('addToolError', 'Tool issuer URL is required.'); return; }
+  if (!clientId)     { showInlineError('addToolError', 'Client ID is required.');       return; }
+  if (!deploymentId) { showInlineError('addToolError', 'Deployment ID is required.');   return; }
+  if (!jwksUrl)      { showInlineError('addToolError', 'JWKS URL is required.');        return; }
+  if (!launchUrl)    { showInlineError('addToolError', 'Launch URL is required.');      return; }
+
+  setSubmitLoading('addToolSubmitBtn', true);
+
+  // 1. Create registration
+  const { data: reg, error: regErr } = await admin.sb
+    .from('lti_registrations')
+    .insert({
+      org_id:               admin.org.id,
+      tool_name:            name,
+      issuer,
+      client_id:            clientId,
+      auth_login_url:       launchUrl,
+      jwks_url:             jwksUrl,
+      target_link_uri:      launchUrl,
+      deep_link_return_url: deepLinkUrl,
+      status:               'active',
+      admin_authorized:     true,
+      metadata:             {},
+    })
+    .select('id')
+    .single();
+
+  if (regErr) {
+    setSubmitLoading('addToolSubmitBtn', false);
+    showInlineError('addToolError', `Registration failed: ${regErr.message}`);
+    return;
+  }
+
+  // 2. Create org-level deployment so service token calls work immediately
+  const { error: depErr } = await admin.sb
+    .from('lti_deployments')
+    .insert({
+      org_id:              admin.org.id,
+      registration_id:     reg.id,
+      deployment_id:       deploymentId,
+      scope_type:          'org',
+      scope_ref:           null,
+      enable_deep_linking: enableDl,
+      enable_ags:          enableAgs,
+      enable_nrps:         enableNrps,
+      status:              'active',
+      visible_to_students: false,
+    });
+
+  setSubmitLoading('addToolSubmitBtn', false);
+
+  if (depErr) {
+    showInlineError('addToolError', `Tool registered but deployment setup failed: ${depErr.message}`);
+    return;
+  }
+
+  await auditLog('lti_tool_registered', 'lti_registration', reg.id, { name, issuer, clientId, deploymentId });
+
+  await loadLtiTools();
+  closeModal('modal-addTool');
+  renderToolsSection();
+  showToast(`"${name}" registered and authorized.`);
+}
+
+// ── Authorize / revoke a tool ─────────────────────────────────────────────────
+
+async function toggleToolAuthorized(regId, currentlyAuthorized) {
+  const newValue = !currentlyAuthorized;
+  const label    = newValue ? 'authorize' : 'revoke';
+
+  const { error } = await admin.sb
+    .from('lti_registrations')
+    .update({ admin_authorized: newValue })
+    .eq('id', regId)
+    .eq('org_id', admin.org.id);
+
+  if (error) { showToast(`Failed to ${label}: ${error.message}`, true); return; }
+
+  const reg = admin.ltiRegistrations.find(r => r.id === regId);
+  await auditLog(`lti_tool_${label}d`, 'lti_registration', regId, { tool_name: reg?.tool_name });
+
+  admin.ltiRegistrations = admin.ltiRegistrations.map(r =>
+    r.id === regId ? { ...r, admin_authorized: newValue } : r,
+  );
+  renderToolsSection();
+  showToast(`Tool ${newValue ? 'authorized' : 'revoked'}.`);
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
