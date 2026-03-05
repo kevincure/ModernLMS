@@ -436,16 +436,115 @@ Also check: is their JWKS URL reachable from the public internet (not behind a V
 
 ---
 
-## 3) Operational notes
+## 3) ADTA-specific integration notes (AllDayTA)
 
-1. **Stable tunnel for internal testing:** Run `cloudflared tunnel login` and create a named tunnel so the URL doesn't rotate on every restart
+ADTA uses LTI-DR v1.0 for registration and LTI Advantage (Deep Linking + AGS) for content embedding and grade passback.
+
+### 3.1 How to register ADTA
+
+**Staging (recommended for testing):**
+
+1. Generate a registration token from the admin UI (or `POST /lti/admin/registration-token?org_id=<uuid>`)
+2. Direct ADTA to register against our platform:
+   ```
+   https://staging-api.alldayta.com/lti/register?org_id=<org_id>&openid_configuration=<encoded_url>&registration_token=<token>
+   ```
+   Or have them hit our registration endpoint directly:
+   ```
+   POST https://<worker>/lti/register?org_id=<org_id>
+   ```
+   Our `/.well-known/openid-configuration` advertises our `registration_endpoint` so ADTA can discover it automatically.
+
+**Manual registration (fallback):**
+
+If dynamic registration is unavailable, give ADTA these values (prepend your worker base URL):
+
+| Field | Value |
+|---|---|
+| JWKS URL | `/.well-known/jwks.json` |
+| OIDC Login URL | `/lti/oidc/login` |
+| Redirect / Launch URL | `/lti/launch` |
+| Target Link URI | `/lti/launch` |
+| Issuer | your `LTI_PLATFORM_ISSUER` value |
+| Token Endpoint | `/lti/oauth2/token` |
+
+### 3.2 What ADTA uses
+
+ADTA uses these LTI Advantage services for their "IQ" integration:
+
+- **Deep Linking 2.0** — professor browses ADTA, selects an activity, ADTA sends back a `LtiDeepLinkingResponse` content item to embed in the course
+- **AGS (Assignment and Grade Services)** — after a student completes an ADTA activity, ADTA POSTs a score via AGS which lands in `lti_ags_scores`
+
+### 3.3 iframe embedding
+
+LTI tools are displayed inside an `<iframe>` on the course page. The correct pattern is to point the iframe `src` at the platform's `/lti/initiate-launch` URL. The OIDC flow (login → auth → redirect → POST) all happens inside the iframe; the tool's content renders in place.
+
+**X-Frame-Options / CSP:** ADTA must serve their launch response without `X-Frame-Options: DENY` and with a `Content-Security-Policy` that allows framing from your platform origin.
+
+### 3.4 Gradebook / AGS — current status and gap
+
+The platform fully implements the AGS protocol surface:
+
+| Endpoint | Method(s) | Status |
+|---|---|---|
+| `/lti/ags/courses/{id}/lineitems` | GET, POST | ✅ |
+| `/lti/ags/lineitems/{id}` | GET, PUT, DELETE | ✅ |
+| `/lti/ags/lineitems/{id}/scores` | POST | ✅ |
+| `/lti/ags/lineitems/{id}/results` | GET | ✅ |
+
+Scores received from ADTA land in `lti_ags_scores`, and `lti_ags_line_items` has an `assignment_id` FK to `assignments` for future linkage.
+
+**Current gap:** There is no automatic sync from `lti_ags_scores` → `grade_entries`. Scores from ADTA are stored but do not appear in the ModernLMS gradebook. To achieve full gradebook integration, either:
+- Add a Supabase trigger on `lti_ags_scores` that upserts `grade_entries` when `grading_progress = 'FullyGraded'` and `assignment_id` is populated
+- Or poll / webhook from the frontend
+
+### 3.5 How to verify "fully supported" for AGS
+
+Run these queries after a student completes an ADTA activity:
+
+```sql
+-- Confirm score was received
+SELECT li.label, li.assignment_id, s.user_id, s.score_given, s.score_max,
+       s.grading_progress, s.activity_progress
+FROM lti_ags_scores s
+JOIN lti_ags_line_items li ON li.id = s.line_item_id
+ORDER BY s.created_at DESC
+LIMIT 20;
+
+-- Confirm line item is linked to an assignment (assignment_id must not be null for gradebook sync)
+SELECT id, label, assignment_id, course_id FROM lti_ags_line_items ORDER BY created_at DESC;
+```
+
+Protocol-level pass/fail: run `/test-all` on the test tool — all 16 checks must pass. That validates the AGS wire protocol is correct. The gradebook sync above is a separate application-layer concern.
+
+### 3.6 `scopes_supported` in openid-configuration
+
+The `/.well-known/openid-configuration` now correctly advertises all supported scopes:
+
+```
+openid
+https://purl.imsglobal.org/spec/lti-ags/scope/lineitem
+https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly
+https://purl.imsglobal.org/spec/lti-ags/scope/score
+https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly
+https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly
+```
+
+This was previously only `['openid']`, which would cause ADTA (and any well-behaved LTI-DR client) to not request AGS/NRPS scopes since it couldn't discover they were supported.
+
+---
+
+## 4) Operational notes
+
+1. **Non-org-member access to LTI tools:** Users enrolled via course invite (not org members) cannot read `lti_registrations` or `lti_deployments` — those tables are org-superadmin-only by RLS. They won't see Launch buttons. If students/TAs need to launch tools, add a read policy on `lti_deployments` for enrolled users.
+2. **Stable tunnel for internal testing:** Run `cloudflared tunnel login` and create a named tunnel so the URL doesn't rotate on every restart
 2. **One permanent test org/course/deployment:** Keep a fixed test course UUID so you never need to re-insert deployments
 3. **`LTI_PLATFORM_ISSUER` secret:** This is the only secret that must exactly match `PLATFORM_AGS_BASE` — double-check it after any domain change
 4. **JTI replay prevention:** The platform tracks `jti` values in `lti_client_assertion_jti`. If you get replay errors in tests, the table may have stale entries; they expire automatically based on token `exp`
 
 ---
 
-## 4) Quick status checklist
+## 5) Quick status checklist
 
 - [ ] Migration applied in Supabase
 - [ ] Worker deployed, `/healthz` returns OK
