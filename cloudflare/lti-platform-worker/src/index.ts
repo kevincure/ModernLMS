@@ -804,6 +804,9 @@ async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseI
     const orgId = body.org_id || (await resolveCourseOrgId(supabase, courseId));
     if (!orgId) return err('Missing org_id (and could not infer from course)', 400);
 
+    const scoreMax = body.scoreMaximum ?? body.score_max ?? 100;
+    const label    = body.label || 'LTI Activity';
+
     const { data, error } = await supabase
       .from('lti_ags_line_items')
       .insert({
@@ -813,8 +816,8 @@ async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseI
         deployment_id: body.deployment_id || null,
         assignment_id: body.assignment_id || null,
         lineitem_url: crypto.randomUUID(),
-        label: body.label || 'Line Item',
-        score_max: body.scoreMaximum ?? body.score_max ?? 100,
+        label,
+        score_max: scoreMax,
         resource_id: body.resourceId || null,
         resource_link_id: body.resourceLinkId || null,
         tag: body.tag || null,
@@ -825,6 +828,31 @@ async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseI
       .select('*')
       .single();
     if (error) return err(error.message, 500);
+
+    // LTI AGS spec: each line item is a gradebook column.
+    // Auto-create a matching LMS assignment so scores write through to the gradebook.
+    if (!data.assignment_id) {
+      const { data: assignment } = await supabase
+        .from('assignments')
+        .insert({
+          course_id:       courseId,
+          title:           label,
+          points:          Math.round(Number(scoreMax)),
+          status:          'published',
+          assignment_type: 'external_tool',
+          grading_type:    'points',
+        })
+        .select('id')
+        .single();
+
+      if (assignment) {
+        await supabase
+          .from('lti_ags_line_items')
+          .update({ assignment_id: assignment.id })
+          .eq('id', data.id);
+        data.assignment_id = assignment.id;
+      }
+    }
 
     const formatted = formatLineItem(data, env.LTI_PLATFORM_ISSUER);
     return respond(formatted, 201, MEDIA.LINEITEM);
@@ -838,7 +866,11 @@ async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseI
 /* ------------------------------------------------------------------ */
 
 async function handleAgsLineitemById(req: Request, env: Env, supabase: any, lineItemId: string) {
-  const { data: existing } = await supabase.from('lti_ags_line_items').select('course_id').eq('id', lineItemId).maybeSingle();
+  const { data: existing } = await supabase
+    .from('lti_ags_line_items')
+    .select('course_id, assignment_id')
+    .eq('id', lineItemId)
+    .maybeSingle();
   try {
     await authorizeServiceRequest(req, env, supabase, [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY], existing?.course_id || null);
   } catch (e: any) {
@@ -854,7 +886,7 @@ async function handleAgsLineitemById(req: Request, env: Env, supabase: any, line
   if (req.method === 'PUT') {
     const body: any = await req.json();
     const updates: any = {};
-    if (body.label !== undefined)        updates.label = body.label;
+    if (body.label !== undefined)         updates.label = body.label;
     if (body.scoreMaximum !== undefined)  updates.score_max = body.scoreMaximum;
     if (body.score_max !== undefined)     updates.score_max = body.score_max;
     if (body.tag !== undefined)           updates.tag = body.tag;
@@ -870,10 +902,46 @@ async function handleAgsLineitemById(req: Request, env: Env, supabase: any, line
       .select('*')
       .single();
     if (error) return err(error.message, 500);
+
+    // Keep linked assignment in sync with the line item.
+    if (data.assignment_id) {
+      const assignmentUpdates: any = {};
+      if (updates.label     !== undefined) assignmentUpdates.title  = updates.label;
+      if (updates.score_max !== undefined) assignmentUpdates.points = Math.round(Number(updates.score_max));
+      if (Object.keys(assignmentUpdates).length > 0) {
+        await supabase
+          .from('assignments')
+          .update(assignmentUpdates)
+          .eq('id', data.assignment_id)
+          .eq('assignment_type', 'external_tool');
+      }
+    }
+
     return respond(formatLineItem(data, env.LTI_PLATFORM_ISSUER), 200, MEDIA.LINEITEM);
   }
 
   if (req.method === 'DELETE') {
+    // Clean up the auto-created LMS assignment and any LTI-sourced submissions/grades.
+    if (existing?.assignment_id) {
+      const { data: ltiSubs } = await supabase
+        .from('submissions')
+        .select('id')
+        .eq('assignment_id', existing.assignment_id)
+        .eq('source', 'lti_ags');
+
+      if (ltiSubs?.length) {
+        const subIds = ltiSubs.map((s: any) => s.id);
+        await supabase.from('grades').delete().in('submission_id', subIds);
+        await supabase.from('submissions').delete().in('id', subIds);
+      }
+
+      await supabase
+        .from('assignments')
+        .delete()
+        .eq('id', existing.assignment_id)
+        .eq('assignment_type', 'external_tool');
+    }
+
     const { error } = await supabase.from('lti_ags_line_items').delete().eq('id', lineItemId);
     if (error) return err(error.message, 500);
     return new Response('', { status: 204, headers: corsHeaders() });
@@ -933,6 +1001,23 @@ async function handleAgsScores(req: Request, env: Env, supabase: any, lineItemId
       raw_payload: body,
     });
   if (error) return err(error.message, 500);
+
+  // LTI AGS spec §5: only write through to the LMS gradebook when the
+  // tool signals FullyGraded and a numeric score is present.
+  if (gradingProgress === 'FullyGraded' && scoreGiven != null && li.assignment_id && userId) {
+    // Scale score to the line item's scoreMaximum in case the tool's
+    // scoreMaximum in this payload differs from when the line item was created.
+    const scaledScore = Number(scoreMax) > 0
+      ? (Number(scoreGiven) / Number(scoreMax)) * Number(li.score_max)
+      : Number(scoreGiven);
+
+    await supabase.rpc('lti_ags_sync_grade', {
+      p_assignment_id: li.assignment_id,
+      p_user_id:       userId,
+      p_score:         scaledScore,
+      p_comment:       comment || null,
+    });
+  }
 
   // AGS spec: score POST returns 200 with empty body
   return new Response('', { status: 200, headers: { 'content-type': MEDIA.SCORE, ...corsHeaders() } });

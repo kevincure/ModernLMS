@@ -494,9 +494,16 @@ The platform fully implements the AGS protocol surface:
 
 Scores received from ADTA land in `lti_ags_scores`, and `lti_ags_line_items` has an `assignment_id` FK to `assignments` for future linkage.
 
-**Current gap:** There is no automatic sync from `lti_ags_scores` → `grade_entries`. Scores from ADTA are stored but do not appear in the ModernLMS gradebook. To achieve full gradebook integration, either:
-- Add a Supabase trigger on `lti_ags_scores` that upserts `grade_entries` when `grading_progress = 'FullyGraded'` and `assignment_id` is populated
-- Or poll / webhook from the frontend
+**Gradebook write-through is now implemented** via migration `20260308_lti_ags_gradebook_sync.sql`:
+
+- When a tool **creates a line item** (POST `/lti/ags/courses/{id}/lineitems`), the platform auto-creates a matching `assignments` row with `assignment_type = 'external_tool'` and links `lti_ags_line_items.assignment_id` to it.
+- When a tool **updates a line item** (PUT), the linked assignment's `title` and `points` are kept in sync.
+- When a tool **deletes a line item** (DELETE), any LTI-sourced submissions/grades are cleaned up and the assignment is removed.
+- When a tool **posts a score** (POST `/lti/ags/lineitems/{id}/scores`) with `gradingProgress = FullyGraded`, the platform calls `lti_ags_sync_grade()` which:
+  1. Finds or creates a `submissions` row (marked `source = 'lti_ags'`) for that student + assignment
+  2. Upserts a `grades` row with `released = true` so it is immediately visible to the student
+
+Scores with `gradingProgress` other than `FullyGraded` (e.g. `PendingManual`, `NotReady`) are stored in `lti_ags_scores` but do not update the LMS gradebook until a final `FullyGraded` score arrives.
 
 ### 3.5 How to verify "fully supported" for AGS
 
@@ -515,7 +522,20 @@ LIMIT 20;
 SELECT id, label, assignment_id, course_id FROM lti_ags_line_items ORDER BY created_at DESC;
 ```
 
-Protocol-level pass/fail: run `/test-all` on the test tool — all 16 checks must pass. That validates the AGS wire protocol is correct. The gradebook sync above is a separate application-layer concern.
+Protocol-level pass/fail: run `/test-all` on the test tool — all 16 checks must pass. That validates the AGS wire protocol is correct.
+
+To verify end-to-end gradebook write-through, also check:
+
+```sql
+-- Confirm a submission was auto-created (source = 'lti_ags')
+SELECT s.id, s.user_id, s.source, s.submitted_at, g.score, g.released
+FROM submissions s
+JOIN grades g ON g.submission_id = s.id
+JOIN assignments a ON a.id = s.assignment_id
+WHERE a.assignment_type = 'external_tool'
+ORDER BY s.submitted_at DESC
+LIMIT 20;
+```
 
 ### 3.6 `scopes_supported` in openid-configuration
 
