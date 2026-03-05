@@ -514,3 +514,98 @@ So the correct implementation stance is:
 - `database_interactions.js`: no LTI endpoint/service integration calls.
 - `app.js`: no LTI launch/service handling paths.
 
+---
+
+## Appendix B — Implementation Status (v2 spec-compliance pass, 2026-03-05)
+
+Compared item-by-item against [LTI 1.3 Implementation Guide](https://www.imsglobal.org/spec/lti/v1p3/impl), [AGS 2.0](https://www.imsglobal.org/spec/lti-ags/v2p0), [NRPS 2.0](https://www.imsglobal.org/spec/lti-nrps/v2p0), and [Deep Linking 2.0](https://www.imsglobal.org/spec/lti-dl/v2p0).
+
+### B.1 Items implemented in this pass
+
+| # | Spec area | Item | File(s) |
+|---|---|---|---|
+| 1 | AGS | Vendor Content-Type headers (`application/vnd.ims.lis.v2.lineitem+json`, etc.) on all AGS responses | `index.ts` — MEDIA constant + respond() |
+| 2 | AGS | Line item `id` field is a resolvable URL (`{issuer}/lti/ags/lineitems/{uuid}`) | `index.ts` — formatLineItem() |
+| 3 | AGS | Results response uses spec fields: `id`, `scoreOf`, `userId`, `resultScore`, `resultMaximum`, `comment` | `index.ts` — formatResult() |
+| 4 | AGS | Line items GET filtering: `?resource_id=`, `?resource_link_id=`, `?tag=` | `index.ts` — handleAgsLineitems() |
+| 5 | AGS | `startDateTime` / `endDateTime` on line items (stored + returned) | migration + index.ts |
+| 6 | AGS | Score `comment` field stored and returned in results | migration + index.ts |
+| 7 | AGS | `activityProgress` / `gradingProgress` validated against spec enum values | `index.ts` — handleAgsScores() |
+| 8 | AGS | Score POST returns 200 with empty body per spec | `index.ts` — handleAgsScores() |
+| 9 | AGS | Link header pagination (`Link: <url>; rel="next"`) on line items and results | `index.ts` — paginationHeaders() |
+| 10 | AGS | `resourceLinkId` field on line items | migration + formatLineItem() |
+| 11 | NRPS | Vendor Content-Type header (`application/vnd.ims.lis.v2.membershipcontainer+json`) | `index.ts` — handleNrps() |
+| 12 | NRPS | `?role=` filter (IMS role URI → internal role → filtered query) | `index.ts` — handleNrps() + ltiRoleToInternal() |
+| 13 | NRPS | `?since=` differential membership (filter by date_last_modified) | `index.ts` — handleNrps() |
+| 14 | NRPS | Link header pagination | `index.ts` — handleNrps() |
+| 15 | NRPS | Dual roles: both context-level (`membership#Instructor`) and system-level (`institution/person#Instructor`) | `index.ts` — roleToLtiContext() + roleToLtiSystem() |
+| 16 | NRPS | Inactive/Active member status from `oneroster_status` | `index.ts` — formatMember() |
+| 17 | NRPS | Course metadata in context object (`id`, `label`, `title`) | `index.ts` — handleNrps() |
+| 18 | OAuth2 | `jti` replay prevention on client assertions (stored in `lti_client_assertion_jti`) | migration + index.ts — handleToken() |
+| 19 | OAuth2 | `iat` clock skew enforcement (reject if >5min old or in future) | `index.ts` — handleToken() |
+| 20 | OAuth2 | Scope enforcement tied to deployment `enable_ags`/`enable_nrps` flags | `index.ts` — handleToken() + authorizeServiceRequest() |
+| 21 | OAuth2 | `iss` must equal `sub` (= `client_id`) per spec | `index.ts` — handleToken() |
+| 22 | Deep Linking | `data` echo verification (compare response data claim vs original request) | `index.ts` — handleDeepLinkReturn() |
+| 23 | Deep Linking | `accept_types` validation (skip items not in accepted types) | `index.ts` — handleDeepLinkReturn() |
+| 24 | Deep Linking | `accept_multiple` enforcement (reject if >1 item and flag is false) | `index.ts` — handleDeepLinkReturn() |
+| 25 | Deep Linking | Error response handling (`errMsg`/`errLog` claims) | `index.ts` — handleDeepLinkReturn() |
+| 26 | OIDC | `lti_deployment_id` forwarded in auth redirect | `index.ts` — handleOidcLogin() |
+| 27 | Core | `roles` claim read and stored from launch JWT | `index.ts` — handleLaunch() |
+| 28 | Core | `custom`, `lis`, `tool_platform` claims read and displayed | `index.ts` — handleLaunch() |
+| 29 | Core | CORS headers on all AGS/NRPS responses | `index.ts` — respond() includes corsHeaders() |
+| 30 | DB | `lti_client_assertion_jti` table for replay prevention | `20260305_lti_advantage_v2.sql` |
+| 31 | DB | `comment` column on `lti_ags_scores` | `20260305_lti_advantage_v2.sql` |
+| 32 | DB | `start_date_time`, `end_date_time`, `resource_link_id` on `lti_ags_line_items` | `20260305_lti_advantage_v2.sql` |
+| 33 | DB | `cleanup_expired_lti_tokens()` function for nonce/jti hygiene | `20260305_lti_advantage_v2.sql` |
+| 34 | Test | Comprehensive compliance test runner (`/test-all`) in test tool | `server.js` |
+| 35 | Test | AGS filtering tests, results format tests, role filter tests | `server.js` |
+
+### B.2 Items still requiring non-code / infrastructure work
+
+| # | Item | Action required |
+|---|---|---|
+| 1 | Run new DB migration `20260305_lti_advantage_v2.sql` | Execute in Supabase SQL editor |
+| 2 | Redeploy Cloudflare worker | `cd cloudflare/lti-platform-worker && npx wrangler deploy` |
+| 3 | Schedule `cleanup_expired_lti_tokens()` | Set up a Supabase pg_cron job: `SELECT cron.schedule('lti-cleanup', '0 * * * *', 'SELECT cleanup_expired_lti_tokens()')` or call periodically from a cron worker |
+| 4 | Dynamic Registration endpoints | Not implemented — requires building `GET /.well-known/openid-configuration` and `POST /lti/registration`. Most university tools can be registered manually via SQL or future admin UI. |
+| 5 | Key rotation API | Keys still stored in Cloudflare env vars. To rotate: generate new JWK, set as `LTI_PRIVATE_JWK_NEXT_JSON`, deploy, wait grace period, promote to `LTI_PRIVATE_JWK_ACTIVE_JSON`. No automated endpoint yet. |
+| 6 | Admin UI for registrations/deployments | Currently managed via SQL. Admin panel shows read-only listing in `admin.js`. Write operations (create/edit registration, manage deployments) need admin API + UI. |
+| 7 | Platform-issued launch JWT | Current flow: tool signs JWT, platform validates. For standard LTI 1.3 where the platform is the OIDC provider issuing JWTs to tools, an additional `POST /lti/auth` endpoint is needed that signs launch JWTs with platform keys. This is needed for integration with standard 3rd-party tools (Turnitin, Kaltura, etc.). |
+| 8 | Grade writeback to LMS gradebook | AGS scores are stored in `lti_ags_scores` but not yet written to `grades`/`submissions`. Requires a mapping layer: when a score is posted, find/create the matching assignment+submission+grade row. |
+| 9 | Deep link content materialization | `ltiResourceLink` items stored in `lti_deep_link_items` but not materialized as `module_items` or `assignments`. Requires mapping logic per content type. |
+| 10 | LTI Proctoring Services | Separate spec, not implemented. Common at universities for exam proctoring. |
+| 11 | Per-org signing keys | Schema supports per-org keys in `lti_platform_keys`, but worker uses global env var. To support multi-tenant with separate keys, worker needs to read keys from DB. |
+| 12 | Privacy controls on NRPS | Email is returned unconditionally. Add a per-deployment or per-org flag to suppress PII (email, name) in NRPS responses per FERPA/institutional policy. |
+
+### B.3 How to test the full implementation locally
+
+1. Run the new migration in Supabase:
+   ```sql
+   -- Paste contents of supabase/migrations/20260305_lti_advantage_v2.sql
+   ```
+
+2. Deploy updated worker:
+   ```bash
+   cd cloudflare/lti-platform-worker
+   npm install && npx wrangler deploy
+   ```
+
+3. Start test tool with tunnel:
+   ```bash
+   cd cloudflare/lti-test-tool
+   npm install && npm start
+   # In another terminal:
+   cloudflared tunnel --url http://localhost:8788
+   ```
+
+4. Update `.env` with tunnel URL if changed, update `lti_registrations` in Supabase if needed.
+
+5. Run the comprehensive compliance test:
+   - Navigate to `http://localhost:8788/test-all` (or tunnel URL `/test-all`)
+   - All tests should return PASS
+   - Check: vendor content types, URL-format line item IDs, spec-compliant result fields, pagination Link headers, role filtering, differential membership
+
+6. Manual smoke test via Tool UI:
+   - `/tool-ui` — use buttons for deep linking, AGS, NRPS
+   - Verify deep link data echo, score comment, AGS filtering, role-filtered roster
+
