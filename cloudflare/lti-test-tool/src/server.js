@@ -183,6 +183,7 @@ app.get('/tool-ui', (_req, res) => {
     <p>User: ${TOOL_USER_ID}</p>
     <p>Use buttons to emulate deep links and AGS score passback.</p>
     <form method="post" action="/emit-deep-links"><button>Emit deep links</button></form>
+    <form method="post" action="/emit-file-item"><button>Emit file item deep-link</button></form>
     <form method="post" action="/post-grade"><button>Post grade 8/10</button></form>
     <form method="get" action="/roster"><button>Get roster (NRPS)</button></form>
   `);
@@ -221,39 +222,95 @@ app.post('/emit-deep-links', async (_req, res) => {
   `);
 });
 
+
+
+async function getServiceAccessToken(courseId = TOOL_COURSE_ID) {
+  const key = await importJWK(toolPrivateJwk, 'RS256');
+  const now = Math.floor(Date.now() / 1000);
+  const tokenEndpoint = `${PLATFORM_AGS_BASE}/lti/oauth2/token`;
+  const clientAssertion = await new SignJWT({ tool_iss: TOOL_ISSUER })
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: toolPrivateJwk.kid || 'tool-key-1' })
+    .setIssuer(TOOL_CLIENT_ID)
+    .setSubject(TOOL_CLIENT_ID)
+    .setAudience(tokenEndpoint)
+    .setIssuedAt(now)
+    .setExpirationTime(now + 300)
+    .sign(key);
+
+  const scope = [
+    'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem',
+    'https://purl.imsglobal.org/spec/lti-ags/scope/score',
+    'https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly',
+    'https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly'
+  ].join(' ');
+
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    client_assertion: clientAssertion,
+    scope,
+    deployment_id: TOOL_DEPLOYMENT_ID,
+    course_id: courseId
+  });
+
+  const resp = await fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+  });
+
+  const tokenBody = await resp.json();
+  if (!resp.ok || !tokenBody.access_token) {
+    throw new Error(`Token request failed: ${JSON.stringify(tokenBody)}`);
+  }
+  return tokenBody.access_token;
+}
+
 app.post('/post-grade', async (_req, res) => {
-  const lineitemsUrl = `${PLATFORM_AGS_BASE}/lti/ags/courses/${TOOL_COURSE_ID}/lineitems`;
-  const createRes = await fetch(lineitemsUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ org_id: TOOL_ORG_ID, label: 'Demo AGS Item', scoreMaximum: 10, assignment_id: null })
-  });
-  const lineItem = await createRes.json();
-  const lineItemId = lineItem.id;
+  try {
+    const accessToken = await getServiceAccessToken(TOOL_COURSE_ID);
+    const lineitemsUrl = `${PLATFORM_AGS_BASE}/lti/ags/courses/${TOOL_COURSE_ID}/lineitems`;
+    const createRes = await fetch(lineitemsUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ org_id: TOOL_ORG_ID, label: 'Demo AGS Item', scoreMaximum: 10, assignment_id: null })
+    });
+    const lineItem = await createRes.json();
+    const lineItemId = lineItem.id;
 
-  if (!lineItemId) return res.status(500).json({ createdLineItem: lineItem, postedScore: { error: 'Line item creation failed' } });
+    if (!lineItemId) return res.status(500).json({ createdLineItem: lineItem, postedScore: { error: 'Line item creation failed' } });
 
-  const scoreRes = await fetch(`${PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemId}/scores`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      userId: TOOL_USER_ID,
-      scoreGiven: 8,
-      scoreMaximum: 10,
-      activityProgress: 'Completed',
-      gradingProgress: 'FullyGraded',
-      timestamp: new Date().toISOString()
-    })
-  });
+    const scoreRes = await fetch(`${PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemId}/scores`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({
+        userId: TOOL_USER_ID,
+        scoreGiven: 8,
+        scoreMaximum: 10,
+        activityProgress: 'Completed',
+        gradingProgress: 'FullyGraded',
+        timestamp: new Date().toISOString()
+      })
+    });
 
-  const score = await scoreRes.json();
-  res.json({ createdLineItem: lineItem, postedScore: score });
+    const score = await scoreRes.json();
+    res.json({ createdLineItem: lineItem, postedScore: score });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'post-grade failed' });
+  }
 });
 
 app.get('/roster', async (_req, res) => {
-  const r = await fetch(`${PLATFORM_NRPS_BASE}/lti/nrps/courses/${TOOL_COURSE_ID}/memberships`);
-  const body = await r.text();
-  res.type('application/json').send(body);
+  try {
+    const accessToken = await getServiceAccessToken(TOOL_COURSE_ID);
+    const r = await fetch(`${PLATFORM_NRPS_BASE}/lti/nrps/courses/${TOOL_COURSE_ID}/memberships`, {
+      headers: { authorization: `Bearer ${accessToken}` }
+    });
+    const body = await r.text();
+    res.status(r.status).type('application/json').send(body);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'roster failed' });
+  }
 });
 
 function randomText() {
@@ -262,4 +319,38 @@ function randomText() {
 
 app.listen(PORT, () => {
   console.log(`LTI test tool on http://localhost:${PORT}`);
+});
+
+
+app.post('/emit-file-item', async (_req, res) => {
+  const nonce = randomText();
+  const key = await importJWK(toolPrivateJwk, 'RS256');
+  const dlPayload = {
+    iss: TOOL_ISSUER,
+    aud: TOOL_CLIENT_ID,
+    sub: TOOL_USER_ID,
+    nonce,
+    'https://purl.imsglobal.org/spec/lti/claim/version': '1.3.0',
+    'https://purl.imsglobal.org/spec/lti/claim/message_type': 'LtiDeepLinkingResponse',
+    'https://purl.imsglobal.org/spec/lti/claim/deployment_id': TOOL_DEPLOYMENT_ID,
+    'https://purl.imsglobal.org/spec/lti/claim/context': { id: TOOL_COURSE_ID },
+    'https://purl.imsglobal.org/spec/lti-dl/claim/content_items': [
+      { type: 'file', title: 'sample-tool-file.txt', text: 'This file came from tool deep-link item and is used for preview testing.' }
+    ]
+  };
+
+  const jwt = await new SignJWT(dlPayload)
+    .setProtectedHeader({ alg: 'RS256', kid: toolPrivateJwk.kid || 'tool-key-1', typ: 'JWT' })
+    .setIssuer(TOOL_ISSUER)
+    .setAudience(TOOL_CLIENT_ID)
+    .setIssuedAt()
+    .setExpirationTime('5m')
+    .sign(key);
+
+  res.send(`
+    <form id="f" method="post" action="${PLATFORM_AGS_BASE}/lti/deep-link/return">
+      <input type="hidden" name="JWT" value="${jwt}" />
+    </form>
+    <script>document.getElementById('f').submit()</script>
+  `);
 });

@@ -83,6 +83,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
       </button>
 
+      <button class="tool-btn" data-page="tools" onclick="navigateTo('tools')" title="LTI Tools" aria-label="LTI Tools">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4l-7.8 7.8-3.3.7.7-3.3 7.8-7.8z"/><path d="M4 20h16"/></svg>
+      </button>
+
       <button class="tool-btn" data-page="gradebook" onclick="navigateTo('gradebook')" title="Gradebook" aria-label="Gradebook">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5M8 17h10"/></svg>
       </button>
@@ -163,6 +167,10 @@
         <button class="mobile-drawer-item" data-page="files" onclick="navigateTo('files'); closeMobileDrawer()">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
           Files
+        </button>
+        <button class="mobile-drawer-item" data-page="tools" onclick="navigateTo('tools'); closeMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4l-7.8 7.8-3.3.7.7-3.3 7.8-7.8z"/><path d="M4 20h16"/></svg>
+          LTI Tools
         </button>
         <button class="mobile-drawer-item" data-page="gradebook" onclick="navigateTo('gradebook'); closeMobileDrawer()">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5M8 17h10"/></svg>
@@ -336,6 +344,21 @@
         </div>
         <div class="page-body">
           <div id="filesList"></div>
+        </div>
+      </section>
+
+
+      <!-- LTI Tools -->
+      <section class="page" id="page-tools">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">LTI Tools</h1>
+            <div class="page-subtitle" id="toolsSubtitle"></div>
+          </div>
+          <div class="page-actions" id="toolsActions"></div>
+        </div>
+        <div class="page-body">
+          <div id="toolsContent"></div>
         </div>
       </section>
 

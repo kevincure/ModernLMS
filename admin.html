@@ -139,6 +139,15 @@
         </svg>
       </button>
 
+      <!-- Authorized LTI tools -->
+      <button class="tool-btn" data-section="tools"
+        onclick="adminNav('tools')" title="LTI Tools" aria-label="LTI Tools">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M14.7 6.3a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4l-7.8 7.8-3.3.7.7-3.3 7.8-7.8z"/>
+          <path d="M4 20h16"/>
+        </svg>
+      </button>
+
       <!-- Audit log -->
       <button class="tool-btn" data-section="audit"
         onclick="adminNav('audit')" title="Audit Log" aria-label="Audit Log">
@@ -187,6 +196,10 @@
         <button class="mobile-drawer-item" data-section="enrollments" onclick="adminNav('enrollments'); closeAdminMobileDrawer()">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-8 0M4 21a8 8 0 0 1 16 0"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg>
           Enrollments
+        </button>
+        <button class="mobile-drawer-item" data-section="tools" onclick="adminNav('tools'); closeAdminMobileDrawer()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4l-7.8 7.8-3.3.7.7-3.3 7.8-7.8z"/><path d="M4 20h16"/></svg>
+          LTI Tools
         </button>
         <button class="mobile-drawer-item" data-section="audit" onclick="adminNav('audit'); closeAdminMobileDrawer()">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -299,6 +312,18 @@
             </select>
           </div>
           <div id="enrollmentsWrap"></div>
+        </section>
+
+
+        <section id="section-tools" class="admin-section" style="display:none;">
+          <div class="admin-section-header">
+            <div>
+              <h2 class="admin-section-title">Authorized LTI Tools</h2>
+              <p class="muted" style="margin-top:4px; font-size:0.875rem;">Tools currently active for this organization and course scopes.</p>
+            </div>
+            <button class="btn btn-secondary" onclick="refreshLtiToolsSection()">↺ Refresh</button>
+          </div>
+          <div id="toolsTableWrap"></div>
         </section>
 
         <!-- ── Section: Audit Log ───────────────────────── -->
