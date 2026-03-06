@@ -195,14 +195,24 @@ function formatResult(score: any, lineItemId: string, baseUrl: string): any {
   return obj;
 }
 
-function formatMember(enrollment: any): any {
+/**
+ * Format an enrollment into an NRPS member object.
+ * @param piiPolicy Controls PII exposure: 'full' = name+email, 'email-only' = email only,
+ *                  'anonymous' = no PII, 'name-only' = name only. Default: 'full'.
+ */
+function formatMember(enrollment: any, piiPolicy: string = 'full'): any {
   const obj: any = {
     user_id: enrollment.user_id,
     roles: [roleToLtiContext(enrollment.role), roleToLtiSystem(enrollment.role)],
     status: enrollment.oneroster_status === 'active' ? 'Active' : 'Inactive',
   };
-  if (enrollment.profiles?.name)  obj.name = enrollment.profiles.name;
-  if (enrollment.profiles?.email) obj.email = enrollment.profiles.email;
+  if (piiPolicy === 'full' || piiPolicy === 'name-only') {
+    if (enrollment.profiles?.name) obj.name = enrollment.profiles.name;
+  }
+  if (piiPolicy === 'full' || piiPolicy === 'email-only') {
+    if (enrollment.profiles?.email) obj.email = enrollment.profiles.email;
+  }
+  // 'anonymous' exposes neither name nor email
   return obj;
 }
 
@@ -385,19 +395,42 @@ async function handleOidcLogin(req: Request, env: Env, supabase: any) {
   const reg = await resolveRegistration(supabase, iss, clientId);
   if (!reg) return err('Unknown registration', 404);
 
+  // Validate redirect_uri: target_link_uri must match registration or metadata redirect_uris
+  const registeredRedirects: string[] = [
+    reg.target_link_uri,
+    ...(reg.metadata?.raw_client_metadata?.redirect_uris || []),
+  ].filter(Boolean);
+  if (registeredRedirects.length > 0 && !registeredRedirects.includes(targetLinkUri)) {
+    return err('target_link_uri does not match any registered redirect URI', 400);
+  }
+
   const state = randomToken();
   const nonce = randomToken();
   const ttlMs = toInt(env.LTI_STATE_TTL_SECONDS, 300) * 1000;
 
-  // Resolve deployment_id if a course-scoped deployment exists
+  // Honor tool-provided lti_deployment_id if present; otherwise fall back to first active
+  const requestedDeploymentId = url.searchParams.get('lti_deployment_id');
   let deploymentId: string | null = null;
-  const { data: depRows } = await supabase
-    .from('lti_deployments')
-    .select('deployment_id')
-    .eq('registration_id', reg.id)
-    .eq('status', 'active')
-    .limit(1);
-  if (depRows?.[0]) deploymentId = depRows[0].deployment_id;
+  if (requestedDeploymentId) {
+    // Validate the requested deployment exists and is active for this registration
+    const { data: dep } = await supabase
+      .from('lti_deployments')
+      .select('deployment_id')
+      .eq('registration_id', reg.id)
+      .eq('deployment_id', requestedDeploymentId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (!dep) return err('Requested lti_deployment_id is not valid or inactive', 400);
+    deploymentId = dep.deployment_id;
+  } else {
+    const { data: depRows } = await supabase
+      .from('lti_deployments')
+      .select('deployment_id')
+      .eq('registration_id', reg.id)
+      .eq('status', 'active')
+      .limit(1);
+    if (depRows?.[0]) deploymentId = depRows[0].deployment_id;
+  }
 
   const { error: insErr } = await supabase.from('lti_state_nonce').insert({
     org_id: reg.org_id,
@@ -561,7 +594,9 @@ async function handleLaunch(req: Request, supabase: any) {
   if (!iss || !aud) return err('Invalid token (missing iss/aud)', 401);
   if (Array.isArray(audValue) && !azp) return err('Invalid token (missing azp with multi aud)', 401);
 
+  // Per LTI 1.3 spec: when azp is present it MUST equal the tool's client_id
   const reg = await resolveRegistration(supabase, iss, aud);
+  if (azp && reg && azp !== reg.client_id) return err('Invalid token (azp does not match client_id)', 401);
   if (!reg) return err('Registration not found', 404);
 
   const { data: sn } = await supabase
@@ -593,6 +628,18 @@ async function handleLaunch(req: Request, supabase: any) {
   if (payload.nonce !== sn.nonce) return err('Nonce mismatch', 401);
   if (payload[CLAIMS.VERSION] !== '1.3.0') return err('Invalid LTI version', 401);
 
+  // Validate target_link_uri claim against registration
+  const targetLinkUriClaim = payload['https://purl.imsglobal.org/spec/lti/claim/target_link_uri'];
+  if (targetLinkUriClaim && reg.target_link_uri) {
+    const allowedTargets: string[] = [
+      reg.target_link_uri,
+      ...(reg.metadata?.raw_client_metadata?.redirect_uris || []),
+    ].filter(Boolean);
+    if (!allowedTargets.includes(String(targetLinkUriClaim))) {
+      return err('target_link_uri claim does not match registered URI', 401);
+    }
+  }
+
   const msgType = String(payload[CLAIMS.MESSAGE_TYPE] || '');
   if (!['LtiResourceLinkRequest', 'LtiDeepLinkingRequest'].includes(msgType)) {
     return err('Unsupported LTI message type', 401);
@@ -602,6 +649,11 @@ async function handleLaunch(req: Request, supabase: any) {
   const courseId = parseCourseIdFromContext(payload);
   const deployment = await resolveDeployment(supabase, reg.id, deploymentId, courseId);
   if (!deployment) return err('Invalid or inactive deployment', 401);
+
+  // Enforce deep-linking feature flag
+  if (msgType === 'LtiDeepLinkingRequest' && !deployment.enable_deep_linking) {
+    return err('Deep linking is disabled for this deployment', 403);
+  }
 
   const userId = payload.sub ? String(payload.sub) : null;
   const resourceLinkId = payload?.[CLAIMS.RESOURCE_LINK]?.id || null;
@@ -687,27 +739,58 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
   const deployment = await resolveDeployment(supabase, reg.id, deploymentId, courseId);
   if (!deployment) return err('Invalid or inactive deployment', 401);
 
-  // Find the original DL request launch to verify data echo
-  const { data: recentDlLaunch } = await supabase
-    .from('lti_launches')
-    .select('id, raw_claims')
-    .eq('registration_id', reg.id)
-    .eq('deployment_id', deploymentId)
-    .eq('course_id', courseId)
-    .eq('message_type', 'LtiDeepLinkingRequest')
-    .eq('status', 'success')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // Enforce deep-linking feature flag on return as well
+  if (!deployment.enable_deep_linking) {
+    return err('Deep linking is disabled for this deployment', 403);
+  }
+
+  // Find the original DL request launch using the data echo as transaction binding.
+  // The data claim is a unique token (dl-{courseId}-{timestamp}) set during DL request.
+  const echoedData = payload[CLAIMS.DL_DATA] || null;
+  let recentDlLaunch: any = null;
+
+  if (echoedData) {
+    // Strong correlation: match on the unique data token embedded in raw_claims
+    const { data: launches } = await supabase
+      .from('lti_launches')
+      .select('id, raw_claims')
+      .eq('registration_id', reg.id)
+      .eq('deployment_id', deploymentId)
+      .eq('message_type', 'LtiDeepLinkingRequest')
+      .eq('status', 'success')
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    recentDlLaunch = (launches || []).find((l: any) => {
+      const settings = l.raw_claims?.[CLAIMS.DL_SETTINGS] || {};
+      return settings.data === echoedData;
+    });
+
+    if (!recentDlLaunch) {
+      return err('Deep linking data claim does not match any pending DL request', 401);
+    }
+  } else {
+    // Fallback: no data claim echoed — match most recent DL launch for this context
+    const { data: fallback } = await supabase
+      .from('lti_launches')
+      .select('id, raw_claims')
+      .eq('registration_id', reg.id)
+      .eq('deployment_id', deploymentId)
+      .eq('course_id', courseId)
+      .eq('message_type', 'LtiDeepLinkingRequest')
+      .eq('status', 'success')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    recentDlLaunch = fallback;
+  }
+
   if (!recentDlLaunch) return err('No matching deep-link launch found', 401);
 
-  // Verify data echo if original request included data
+  // Verify data echo consistency
   const originalSettings = recentDlLaunch.raw_claims?.[CLAIMS.DL_SETTINGS] || {};
-  if (originalSettings.data) {
-    const echoedData = payload[CLAIMS.DL_DATA];
-    if (echoedData !== originalSettings.data) {
-      return err('Deep linking data claim does not match original request', 401);
-    }
+  if (originalSettings.data && echoedData !== originalSettings.data) {
+    return err('Deep linking data claim does not match original request', 401);
   }
 
   // If tool returned an error, log it and return
@@ -736,12 +819,58 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
     return err('Tool returned multiple items but accept_multiple is false', 400);
   }
 
+  let materialized = 0;
   for (const item of items) {
     const itemType = String(item.type || 'unknown');
 
     // Validate item type against accepted types
     if (acceptTypes.length > 0 && !acceptTypes.includes(itemType)) {
       continue; // skip items that don't match accepted types
+    }
+
+    let createdLmsId: string | null = null;
+    let createdLmsType: string = itemType;
+
+    // Materialize deep-link items into LMS objects
+    if (itemType === 'ltiResourceLink' && courseId) {
+      // Create an assignment of type external_tool so it appears in the gradebook
+      const { data: assignment } = await supabase
+        .from('assignments')
+        .insert({
+          course_id: courseId,
+          title: item.title || 'LTI Activity',
+          points: 100,
+          status: 'published',
+          assignment_type: 'external_tool',
+          grading_type: 'points',
+        })
+        .select('id')
+        .single();
+
+      if (assignment) {
+        createdLmsId = assignment.id;
+        createdLmsType = 'assignment';
+
+        // Also create a line item so AGS can target it later
+        await supabase.from('lti_ags_line_items').insert({
+          org_id: reg.org_id,
+          course_id: courseId,
+          registration_id: reg.id,
+          deployment_id: deploymentId,
+          assignment_id: assignment.id,
+          lineitem_url: crypto.randomUUID(),
+          label: item.title || 'LTI Activity',
+          score_max: 100,
+          resource_id: item.resourceId || null,
+          resource_link_id: item.url ? `dl-${assignment.id}` : null,
+          tag: item.tag || null,
+        });
+        materialized++;
+      }
+    } else if (itemType === 'link' && courseId) {
+      // Store as a course link / external resource reference
+      createdLmsType = 'external_link';
+      // No separate table for external links — the deep_link_items record itself serves as the record
     }
 
     const preview = itemType === 'file' ? String(item.title || item.text || '').slice(0, 50) : null;
@@ -755,12 +884,12 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
       content_title: item.title || null,
       content_url: item.url || null,
       custom_claims: { ...item, file_preview_50: preview },
-      created_lms_type: itemType,
-      created_lms_id: null,
+      created_lms_type: createdLmsType,
+      created_lms_id: createdLmsId,
     });
   }
 
-  return html(`<h3>Deep link response accepted.</h3><p>${items.length} item(s) stored.</p>`);
+  return html(`<h3>Deep link response accepted.</h3><p>${items.length} item(s) stored, ${materialized} materialized into LMS objects.</p>`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -768,8 +897,12 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
 /* ------------------------------------------------------------------ */
 
 async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseId: string) {
+  // GET accepts either lineitem or lineitem.readonly; POST requires full lineitem scope
+  const requiredScopes = req.method === 'GET'
+    ? [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY]
+    : [AGS_SCOPES.LINEITEM];
   try {
-    await authorizeServiceRequest(req, env, supabase, [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY], courseId);
+    await authorizeServiceRequest(req, env, supabase, requiredScopes, courseId);
   } catch (e: any) {
     return err(e?.message || 'Unauthorized', 401);
   }
@@ -871,8 +1004,12 @@ async function handleAgsLineitemById(req: Request, env: Env, supabase: any, line
     .select('course_id, assignment_id')
     .eq('id', lineItemId)
     .maybeSingle();
+  // GET accepts either lineitem or lineitem.readonly; PUT/DELETE require full lineitem scope
+  const requiredScopes = req.method === 'GET'
+    ? [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY]
+    : [AGS_SCOPES.LINEITEM];
   try {
-    await authorizeServiceRequest(req, env, supabase, [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY], existing?.course_id || null);
+    await authorizeServiceRequest(req, env, supabase, requiredScopes, existing?.course_id || null);
   } catch (e: any) {
     return err(e?.message || 'Unauthorized', 401);
   }
@@ -1070,11 +1207,15 @@ async function handleAgsResults(req: Request, env: Env, supabase: any, lineItemI
 async function handleNrps(req: Request, env: Env, supabase: any, courseId: string) {
   if (req.method !== 'GET') return err('Method not allowed', 405);
 
+  let authCtx: ServiceAuthContext;
   try {
-    await authorizeServiceRequest(req, env, supabase, [NRPS_SCOPE], courseId);
+    authCtx = await authorizeServiceRequest(req, env, supabase, [NRPS_SCOPE], courseId);
   } catch (e: any) {
     return err(e?.message || 'Unauthorized', 401);
   }
+
+  // Privacy policy from deployment metadata (default: 'full' for backward compat)
+  const piiPolicy: string = authCtx.deployment?.nrps_pii_policy || 'full';
 
   const u = new URL(req.url);
   const limit = Math.max(1, Math.min(1000, Number(u.searchParams.get('limit') || 100)));
@@ -1086,6 +1227,28 @@ async function handleNrps(req: Request, env: Env, supabase: any, courseId: strin
   const roleFilter = u.searchParams.get('role');
   const rlid = u.searchParams.get('rlid');
   const since = u.searchParams.get('since');
+
+  // NRPS rlid filter: if specified, verify the resource link exists in this course.
+  // Per spec, rlid narrows the membership to users who can access the resource link.
+  // We validate the resource link exists; the membership itself is still course-scoped
+  // since LTI resource links are available to all course enrollees.
+  if (rlid) {
+    const { data: lineItem } = await supabase
+      .from('lti_ags_line_items')
+      .select('id')
+      .eq('course_id', courseId)
+      .eq('resource_link_id', rlid)
+      .limit(1)
+      .maybeSingle();
+    if (!lineItem) {
+      // Resource link not found in this course — return empty membership per spec
+      return respond(
+        { id: `${env.LTI_PLATFORM_ISSUER}/lti/nrps/courses/${courseId}/memberships`, context: { id: courseId }, members: [] },
+        200,
+        MEDIA.MEMBERSHIP_CONTAINER,
+      );
+    }
+  }
 
   let query = supabase
     .from('enrollments')
@@ -1119,7 +1282,7 @@ async function handleNrps(req: Request, env: Env, supabase: any, courseId: strin
   // Fetch course metadata for context object
   const { data: course } = await supabase.from('courses').select('id, name, code').eq('id', courseId).maybeSingle();
 
-  const members = (enrollments || []).map((e: any) => formatMember(e));
+  const members = (enrollments || []).map((e: any) => formatMember(e, piiPolicy));
 
   const pgHeaders = paginationHeaders(req.url, page, limit, members.length);
 
@@ -1424,6 +1587,15 @@ async function handleOidcAuth(req: Request, env: Env, supabase: any) {
     .limit(1)
     .maybeSingle();
   if (!reg) return err('Registration not found', 404);
+
+  // Validate redirect_uri against registered URIs to prevent open redirect / token leakage
+  const allowedRedirects: string[] = [
+    reg.target_link_uri,
+    ...(reg.metadata?.raw_client_metadata?.redirect_uris || []),
+  ].filter(Boolean);
+  if (allowedRedirects.length > 0 && !allowedRedirects.includes(redirectUri)) {
+    return err('redirect_uri does not match any registered redirect URI', 400);
+  }
 
   // Consume login hint
   const { data: hint } = await supabase
