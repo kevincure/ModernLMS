@@ -120,9 +120,41 @@ function randomToken() {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function parseCookieValue(cookieHeader: string, name: string): string | null {
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function toInt(v: string | undefined, d: number) {
   const n = Number(v);
   return Number.isFinite(n) ? n : d;
+}
+
+/**
+ * Check that the request's Accept header is compatible with the expected response media type.
+ * Returns null if OK, or an error Response if negotiation fails.
+ */
+function checkAcceptHeader(req: Request, expectedMediaType: string): Response | null {
+  if (req.method !== 'GET') return null;
+  const accept = req.headers.get('accept') || '*/*';
+  // Accept anything if wildcard
+  if (accept.includes('*/*') || accept.includes('application/*')) return null;
+  if (accept.includes(expectedMediaType) || accept.includes('application/json')) return null;
+  return json({ error: `Unsupported Accept type. Expected: ${expectedMediaType}` }, 406);
+}
+
+/**
+ * Check that the request's Content-Type header matches the expected media type for write operations.
+ * Returns null if OK, or an error Response if negotiation fails.
+ */
+function checkContentType(req: Request, expectedMediaType: string): Response | null {
+  if (req.method !== 'POST' && req.method !== 'PUT') return null;
+  const ct = req.headers.get('content-type') || '';
+  // Allow application/json as a lenient alternative to the vendor type
+  if (ct.includes(expectedMediaType) || ct.includes('application/json')) return null;
+  // If no content-type at all, be lenient (many tools omit it)
+  if (!ct) return null;
+  return json({ error: `Unsupported Content-Type. Expected: ${expectedMediaType}` }, 415);
 }
 
 /* ------------------------------------------------------------------ */
@@ -457,7 +489,14 @@ async function handleOidcLogin(req: Request, env: Env, supabase: any) {
   // Spec SHOULD: forward lti_deployment_id
   if (deploymentId) redirect.searchParams.set('lti_deployment_id', deploymentId);
 
-  return Response.redirect(redirect.toString(), 302);
+  // Bind state to browser via cookie for CSRF hardening (OIDC recommended practice)
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: redirect.toString(),
+      'set-cookie': `__Host-lti_state=${state}; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=600`,
+    },
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -585,6 +624,13 @@ async function handleLaunch(req: Request, supabase: any) {
   const idToken = String(form.get('id_token') || '');
   const state = String(form.get('state') || '');
   if (!idToken || !state) return err('Missing id_token/state');
+
+  // CSRF hardening: verify state cookie matches form state (if cookie was set)
+  const cookieHeader = req.headers.get('cookie') || '';
+  const cookieState = parseCookieValue(cookieHeader, '__Host-lti_state');
+  if (cookieState && cookieState !== state) {
+    return err('State cookie mismatch (possible CSRF)', 401);
+  }
 
   const decoded = decodeJwt(idToken);
   const iss = String(decoded.iss || '');
@@ -744,54 +790,34 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
     return err('Deep linking is disabled for this deployment', 403);
   }
 
-  // Find the original DL request launch using the data echo as transaction binding.
-  // The data claim is a unique token (dl-{courseId}-{timestamp}) set during DL request.
+  // Strict transaction binding: require the data echo claim.
+  // The platform always sets a unique data token (dl-{courseId}-{timestamp}) on DL requests,
+  // so the tool MUST echo it back. No recency-based fallback.
   const echoedData = payload[CLAIMS.DL_DATA] || null;
-  let recentDlLaunch: any = null;
-
-  if (echoedData) {
-    // Strong correlation: match on the unique data token embedded in raw_claims
-    const { data: launches } = await supabase
-      .from('lti_launches')
-      .select('id, raw_claims')
-      .eq('registration_id', reg.id)
-      .eq('deployment_id', deploymentId)
-      .eq('message_type', 'LtiDeepLinkingRequest')
-      .eq('status', 'success')
-      .order('created_at', { ascending: false })
-      .limit(20);
-
-    recentDlLaunch = (launches || []).find((l: any) => {
-      const settings = l.raw_claims?.[CLAIMS.DL_SETTINGS] || {};
-      return settings.data === echoedData;
-    });
-
-    if (!recentDlLaunch) {
-      return err('Deep linking data claim does not match any pending DL request', 401);
-    }
-  } else {
-    // Fallback: no data claim echoed — match most recent DL launch for this context
-    const { data: fallback } = await supabase
-      .from('lti_launches')
-      .select('id, raw_claims')
-      .eq('registration_id', reg.id)
-      .eq('deployment_id', deploymentId)
-      .eq('course_id', courseId)
-      .eq('message_type', 'LtiDeepLinkingRequest')
-      .eq('status', 'success')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    recentDlLaunch = fallback;
+  if (!echoedData) {
+    return err('Missing deep linking data claim (required for transaction binding)', 401);
   }
 
-  if (!recentDlLaunch) return err('No matching deep-link launch found', 401);
+  const { data: launches } = await supabase
+    .from('lti_launches')
+    .select('id, raw_claims')
+    .eq('registration_id', reg.id)
+    .eq('deployment_id', deploymentId)
+    .eq('message_type', 'LtiDeepLinkingRequest')
+    .eq('status', 'success')
+    .order('created_at', { ascending: false })
+    .limit(20);
 
-  // Verify data echo consistency
+  const recentDlLaunch = (launches || []).find((l: any) => {
+    const settings = l.raw_claims?.[CLAIMS.DL_SETTINGS] || {};
+    return settings.data === echoedData;
+  });
+
+  if (!recentDlLaunch) {
+    return err('Deep linking data claim does not match any pending DL request', 401);
+  }
+
   const originalSettings = recentDlLaunch.raw_claims?.[CLAIMS.DL_SETTINGS] || {};
-  if (originalSettings.data && echoedData !== originalSettings.data) {
-    return err('Deep linking data claim does not match original request', 401);
-  }
 
   // If tool returned an error, log it and return
   if (errMsg) {
@@ -868,12 +894,19 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
         materialized++;
       }
     } else if (itemType === 'link' && courseId) {
-      // Store as a course link / external resource reference
       createdLmsType = 'external_link';
-      // No separate table for external links — the deep_link_items record itself serves as the record
+    } else if (itemType === 'html' && courseId) {
+      // HTML content items contain inline HTML in item.html
+      createdLmsType = 'html_content';
+    } else if (itemType === 'image' && courseId) {
+      // Image content items have url, width, height
+      createdLmsType = 'image';
+    } else if (itemType === 'file' && courseId) {
+      createdLmsType = 'file';
     }
 
-    const preview = itemType === 'file' ? String(item.title || item.text || '').slice(0, 50) : null;
+    const preview = (itemType === 'file' || itemType === 'image')
+      ? String(item.title || item.text || '').slice(0, 50) : null;
     await supabase.from('lti_deep_link_items').insert({
       org_id: reg.org_id,
       course_id: courseId,
@@ -897,6 +930,12 @@ async function handleDeepLinkReturn(req: Request, supabase: any) {
 /* ------------------------------------------------------------------ */
 
 async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseId: string) {
+  // Content negotiation
+  const acceptErr = checkAcceptHeader(req, MEDIA.LINEITEM_CONTAINER);
+  if (acceptErr) return acceptErr;
+  const ctErr = checkContentType(req, MEDIA.LINEITEM);
+  if (ctErr) return ctErr;
+
   // GET accepts either lineitem or lineitem.readonly; POST requires full lineitem scope
   const requiredScopes = req.method === 'GET'
     ? [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY]
@@ -999,6 +1038,12 @@ async function handleAgsLineitems(req: Request, env: Env, supabase: any, courseI
 /* ------------------------------------------------------------------ */
 
 async function handleAgsLineitemById(req: Request, env: Env, supabase: any, lineItemId: string) {
+  // Content negotiation
+  const acceptErr = checkAcceptHeader(req, MEDIA.LINEITEM);
+  if (acceptErr) return acceptErr;
+  const ctErr = checkContentType(req, MEDIA.LINEITEM);
+  if (ctErr) return ctErr;
+
   const { data: existing } = await supabase
     .from('lti_ags_line_items')
     .select('course_id, assignment_id')
@@ -1093,6 +1138,8 @@ async function handleAgsLineitemById(req: Request, env: Env, supabase: any, line
 
 async function handleAgsScores(req: Request, env: Env, supabase: any, lineItemId: string) {
   if (req.method !== 'POST') return err('Method not allowed', 405);
+  const ctErr = checkContentType(req, MEDIA.SCORE);
+  if (ctErr) return ctErr;
   const { data: li } = await supabase.from('lti_ags_line_items').select('*').eq('id', lineItemId).maybeSingle();
   if (!li) return err('Line item not found', 404);
 
@@ -1166,6 +1213,8 @@ async function handleAgsScores(req: Request, env: Env, supabase: any, lineItemId
 
 async function handleAgsResults(req: Request, env: Env, supabase: any, lineItemId: string) {
   if (req.method !== 'GET') return err('Method not allowed', 405);
+  const acceptErr = checkAcceptHeader(req, MEDIA.RESULT_CONTAINER);
+  if (acceptErr) return acceptErr;
   const { data: li } = await supabase.from('lti_ags_line_items').select('course_id').eq('id', lineItemId).maybeSingle();
   if (!li) return err('Line item not found', 404);
 
@@ -1206,6 +1255,8 @@ async function handleAgsResults(req: Request, env: Env, supabase: any, lineItemI
 
 async function handleNrps(req: Request, env: Env, supabase: any, courseId: string) {
   if (req.method !== 'GET') return err('Method not allowed', 405);
+  const acceptErr = checkAcceptHeader(req, MEDIA.MEMBERSHIP_CONTAINER);
+  if (acceptErr) return acceptErr;
 
   let authCtx: ServiceAuthContext;
   try {
@@ -1389,6 +1440,123 @@ async function handleGenerateRegistrationToken(req: Request, env: Env, supabase:
 }
 
 /* ------------------------------------------------------------------ */
+/*  HANDLER: Key Rotation                                              */
+/*  POST /lti/admin/rotate-key                                         */
+/*  Generates a new RSA key pair, stages it as "next", and optionally  */
+/*  promotes "next" → "active" on subsequent call.                     */
+/* ------------------------------------------------------------------ */
+
+async function handleKeyRotation(req: Request, env: Env, supabase: any) {
+  const url = new URL(req.url);
+  const orgId = url.searchParams.get('org_id');
+  const action = url.searchParams.get('action') || 'status';
+
+  if (action === 'status') {
+    // Return current key status
+    const activePrivate = JSON.parse(env.LTI_PRIVATE_JWK_ACTIVE_JSON);
+    const activeKid = activePrivate.kid || 'platform-key';
+    let nextKid: string | null = null;
+    if (env.LTI_PRIVATE_JWK_NEXT_JSON) {
+      try {
+        const nextPrivate = JSON.parse(env.LTI_PRIVATE_JWK_NEXT_JSON);
+        nextKid = nextPrivate.kid || null;
+      } catch { /* no next key */ }
+    }
+
+    // Fetch rotation history
+    const query = orgId
+      ? supabase.from('lti_key_rotation_events').select('*').eq('org_id', orgId).order('created_at', { ascending: false }).limit(10)
+      : supabase.from('lti_key_rotation_events').select('*').order('created_at', { ascending: false }).limit(10);
+    const { data: events } = await query;
+
+    return json({
+      active_kid: activeKid,
+      next_kid: nextKid,
+      jwks_endpoint: `${env.LTI_PLATFORM_ISSUER}/.well-known/jwks.json`,
+      rotation_history: events || [],
+      instructions: {
+        promote: 'To promote the next key to active: POST /lti/admin/rotate-key?action=promote&org_id=X',
+        note: 'After promoting, update LTI_PRIVATE_JWK_ACTIVE_JSON with the next key and clear LTI_PRIVATE_JWK_NEXT_JSON via Cloudflare dashboard or wrangler secrets.',
+      },
+    }, 200, corsHeaders());
+  }
+
+  if (action === 'generate') {
+    // Generate a new RSA-2048 key pair for staging as "next"
+    const keyPair = await crypto.subtle.generateKey(
+      { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([0x01, 0x00, 0x01]), hash: 'SHA-256' },
+      true,
+      ['sign', 'verify'],
+    );
+
+    const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+    const kid = `platform-${Date.now()}`;
+    (privateJwk as any).kid = kid;
+    (privateJwk as any).use = 'sig';
+    (privateJwk as any).alg = 'RS256';
+
+    // Log the rotation event
+    if (orgId) {
+      await supabase.from('lti_key_rotation_events').insert({
+        org_id: orgId,
+        old_kid: null,
+        new_kid: kid,
+        result: 'scheduled',
+        details: { action: 'generate', note: 'New key generated. Set as LTI_PRIVATE_JWK_NEXT_JSON to stage.' },
+      });
+    }
+
+    return json({
+      kid,
+      private_jwk: privateJwk,
+      instructions: [
+        '1. Set this JWK as LTI_PRIVATE_JWK_NEXT_JSON in your worker secrets',
+        '2. Wait for tools to cache the updated JWKS (typically 24h)',
+        '3. Call POST /lti/admin/rotate-key?action=promote&org_id=X to finalize',
+      ],
+    }, 201, corsHeaders());
+  }
+
+  if (action === 'promote') {
+    if (!orgId) return err('Missing org_id for promote action', 400);
+    if (!env.LTI_PRIVATE_JWK_NEXT_JSON) {
+      return err('No next key configured (LTI_PRIVATE_JWK_NEXT_JSON is empty)', 400);
+    }
+
+    const activePrivate = JSON.parse(env.LTI_PRIVATE_JWK_ACTIVE_JSON);
+    const nextPrivate = JSON.parse(env.LTI_PRIVATE_JWK_NEXT_JSON);
+    const oldKid = activePrivate.kid || 'platform-key';
+    const newKid = nextPrivate.kid || 'unknown';
+
+    // Log the promotion event
+    await supabase.from('lti_key_rotation_events').insert({
+      org_id: orgId,
+      old_kid: oldKid,
+      new_kid: newKid,
+      cutover_at: new Date().toISOString(),
+      result: 'success',
+      details: {
+        action: 'promote',
+        note: 'Next key promoted. Update LTI_PRIVATE_JWK_ACTIVE_JSON to the new key and clear LTI_PRIVATE_JWK_NEXT_JSON.',
+      },
+    });
+
+    return json({
+      promoted: true,
+      old_kid: oldKid,
+      new_kid: newKid,
+      instructions: [
+        `1. Set LTI_PRIVATE_JWK_ACTIVE_JSON to the key with kid="${newKid}"`,
+        '2. Clear LTI_PRIVATE_JWK_NEXT_JSON (or set to empty)',
+        '3. Redeploy the worker',
+      ],
+    }, 200, corsHeaders());
+  }
+
+  return err('Invalid action. Use: status, generate, promote', 400);
+}
+
+/* ------------------------------------------------------------------ */
 /*  HANDLER: Dynamic Registration (LTI-DR v1.0)                       */
 /*  Tool POSTs its client metadata here; we create the registration.  */
 /* ------------------------------------------------------------------ */
@@ -1423,17 +1591,74 @@ async function handleDynamicRegister(req: Request, env: Env, supabase: any) {
   let body: any;
   try { body = await req.json(); } catch { return err('Expected JSON body', 400); }
 
+  // Validate required OpenID Dynamic Client Registration fields
   const toolConfig  = body['https://purl.imsglobal.org/spec/lti-tool-configuration'] || {};
   const redirectUris: string[] = body.redirect_uris || [];
-  const clientName: string    = body.client_name || toolConfig.domain || 'Unknown Tool';
+  const clientName: string    = body.client_name || toolConfig.domain || '';
   const loginUri: string      = body.initiate_login_uri || '';
   const jwksUri: string       = body.jwks_uri || '';
   const targetLinkUri: string = toolConfig.target_link_uri || redirectUris[0] || '';
   const domain: string        = toolConfig.domain || '';
   const issuer: string        = domain ? `https://${domain}` : targetLinkUri;
 
+  if (!clientName) return err('Missing required field: client_name', 400);
   if (!loginUri || !jwksUri || !targetLinkUri) {
     return err('Missing required fields: initiate_login_uri, jwks_uri, target_link_uri', 400);
+  }
+
+  // Validate URIs are well-formed HTTPS URLs
+  const uriFields = { initiate_login_uri: loginUri, jwks_uri: jwksUri, target_link_uri: targetLinkUri };
+  for (const [name, uri] of Object.entries(uriFields)) {
+    try {
+      const parsed = new URL(uri);
+      if (parsed.protocol !== 'https:') {
+        return err(`${name} must use HTTPS`, 400);
+      }
+    } catch {
+      return err(`${name} is not a valid URL`, 400);
+    }
+  }
+  for (const uri of redirectUris) {
+    try {
+      const parsed = new URL(uri);
+      if (parsed.protocol !== 'https:') {
+        return err(`redirect_uri "${uri}" must use HTTPS`, 400);
+      }
+    } catch {
+      return err(`redirect_uri "${uri}" is not a valid URL`, 400);
+    }
+  }
+
+  // Validate token_endpoint_auth_method per LTI spec (must be private_key_jwt)
+  const authMethod = body.token_endpoint_auth_method || 'private_key_jwt';
+  if (authMethod !== 'private_key_jwt') {
+    return err('token_endpoint_auth_method must be "private_key_jwt" per LTI 1.3 spec', 400);
+  }
+
+  // Validate response_types (only id_token allowed for LTI)
+  const responseTypes: string[] = body.response_types || ['id_token'];
+  if (!responseTypes.includes('id_token')) {
+    return err('response_types must include "id_token"', 400);
+  }
+
+  // Validate grant_types
+  const grantTypes: string[] = body.grant_types || ['implicit', 'client_credentials'];
+  const validGrants = new Set(['implicit', 'client_credentials']);
+  const invalidGrants = grantTypes.filter(g => !validGrants.has(g));
+  if (invalidGrants.length > 0) {
+    return err(`Unsupported grant_types: ${invalidGrants.join(', ')}. Allowed: implicit, client_credentials`, 400);
+  }
+
+  // Check for duplicate registration (same org + issuer)
+  const { data: existingReg } = await supabase
+    .from('lti_registrations')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('issuer', issuer)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (existingReg) {
+    return err(`A registration for issuer "${issuer}" already exists in this org`, 409);
   }
 
   const clientId    = crypto.randomUUID();
@@ -1675,7 +1900,7 @@ async function handleOidcAuth(req: Request, env: Env, supabase: any) {
   if (msgType === 'LtiDeepLinkingRequest') {
     idTokenPayload[CLAIMS.DL_SETTINGS] = {
       deep_link_return_url: reg.deep_link_return_url || `${base}/lti/deep-link/return`,
-      accept_types: ['link', 'ltiResourceLink', 'file'],
+      accept_types: ['link', 'ltiResourceLink', 'file', 'html', 'image'],
       accept_presentation_document_targets: ['iframe', 'window'],
       accept_multiple: true,
       auto_create: true,
@@ -1728,6 +1953,7 @@ export default {
       }
       if (req.method === 'GET' && url.pathname === '/.well-known/openid-configuration') return handleOpenIdConfig(req, env);
       if (req.method === 'POST' && url.pathname === '/lti/admin/registration-token') return handleGenerateRegistrationToken(req, env, supabase);
+      if (url.pathname === '/lti/admin/rotate-key') return handleKeyRotation(req, env, supabase);
       if (req.method === 'POST' && url.pathname === '/lti/register') return handleDynamicRegister(req, env, supabase);
       if (req.method === 'GET'  && url.pathname === '/lti/initiate-launch') return handleInitiateLaunch(req, env, supabase);
       if (req.method === 'GET'  && url.pathname === '/lti/oidc/auth') return handleOidcAuth(req, env, supabase);
