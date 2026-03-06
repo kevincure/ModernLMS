@@ -180,13 +180,41 @@ when you try to emit deep links.
 
 ---
 
-### 1.5 Execute smoke test — automated (16 checks)
+### 1.5 Execute smoke test — automated (25 checks)
 
 ```
 http://localhost:8788/test-all
 ```
 
-All 16 must show `"PASS"`. These cover: token endpoint, AGS content types, line item CRUD, score posting, grading progress validation, results format, pagination, NRPS content type, structure, dual roles, role filter, since filter.
+All 25 must show `"PASS"`. They are organized into 6 sections:
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 01 | `token_endpoint` | OAuth2 client_credentials with signed JWT |
+| 02 | `token_jti_required` | Missing `jti` claim rejected (IMS Security §5.1.2) |
+| 03 | `token_jti_replay` | Replayed `jti` rejected on second use |
+| 04 | `ags_lineitem_content_type` | Response uses `application/vnd.ims.lis.v2.lineitem+json` |
+| 05 | `ags_lineitem_id_is_url` | Line item `id` is a fully-qualified URL |
+| 06 | `ags_lineitem_spec_fields` | `scoreMaximum`, `label`, `tag` present |
+| 07 | `ags_container_content_type` | List uses `lineitemcontainer+json` |
+| 08 | `ags_filter_by_tag` | `?tag=` filtering works correctly |
+| 09 | `ags_score_returns_204` | Score POST returns 204 No Content (spec §5) |
+| 10 | `ags_validates_grading_progress` | Invalid `gradingProgress` rejected with 400 |
+| 11 | `ags_score_wrong_content_type` | Score POST with `application/json` rejected (415) |
+| 12 | `ags_results_content_type` | Results use `resultcontainer+json` |
+| 13 | `ags_results_spec_format` | Results have `scoreOf`, `userId` fields |
+| 14 | `ags_results_has_comment` | Results include `comment` field |
+| 15 | `ags_pagination_link_header` | Pagination `Link` header with `rel="next"` |
+| 16 | `ags_wrong_accept_rejected` | GET lineitems with `text/html` Accept → 406 |
+| 17 | `nrps_content_type` | NRPS uses `membershipcontainer+json` |
+| 18 | `nrps_response_structure` | Response has `context` and `members` |
+| 19 | `nrps_dual_roles` | Members have both context and system roles |
+| 20 | `nrps_role_filter` | `?role=` filtering returns 200 |
+| 21 | `nrps_since_filter` | Differential `?since=` returns 200 |
+| 22 | `nrps_wrong_accept_rejected` | GET memberships with `text/html` Accept → 406 |
+| 23 | `platform_jwks` | `/.well-known/jwks.json` returns keys |
+| 24 | `openid_configuration` | `/.well-known/openid-configuration` advertises all scopes incl. `lineitem.readonly` |
+| 25 | `healthz` | `/healthz` returns `{"status":"ok"}` |
 
 ---
 
@@ -522,7 +550,7 @@ LIMIT 20;
 SELECT id, label, assignment_id, course_id FROM lti_ags_line_items ORDER BY created_at DESC;
 ```
 
-Protocol-level pass/fail: run `/test-all` on the test tool — all 16 checks must pass. That validates the AGS wire protocol is correct.
+Protocol-level pass/fail: run `/test-all` on the test tool — all 25 checks must pass. That validates the AGS wire protocol, security enforcement, and content negotiation are all correct.
 
 To verify end-to-end gradebook write-through, also check:
 
@@ -554,7 +582,38 @@ This was previously only `['openid']`, which would cause ADTA (and any well-beha
 
 ---
 
-## 4) Operational notes
+## 4) Security & spec-compliance hardening (March 2026)
+
+The following hardening was applied across three audit passes:
+
+### Security fixes
+- **XSS prevention:** All values interpolated into the OIDC auto-submit HTML form (`redirect_uri`, `id_token`, `state`) are HTML-escaped
+- **CSRF protection:** OIDC state is bound to a `__Host-` SameSite cookie to prevent cross-site launch forgery
+- **JTI required:** Client assertions without a `jti` claim are now rejected (was previously optional)
+- **JTI replay:** Same `jti` values are rejected on second use per IMS Security Framework §5.1.2
+- **Content negotiation:** AGS and NRPS endpoints reject requests with incorrect `Accept` or `Content-Type` headers (406/415)
+- **Deep linking gated:** Platform-initiated deep-link launches check `deployment.enable_deep_linking` before proceeding
+- **Dynamic registration validation:** Registration endpoint validates all required metadata fields and restricts allowed scopes
+- **Scope type safety:** Unknown `scope_type` values in deployments are rejected (no fallthrough to permissive match)
+
+### Spec compliance fixes
+- **AGS score POST:** Returns 204 No Content (was 200)
+- **AGS endpoint claim:** Now includes `lineitem.readonly` scope in addition to `lineitem`, `score`, `result.readonly`
+- **AGS results:** Include `comment` field in results response
+- **DL content types:** `file`, `html`, and `image` content items are now materialized (was only `link` and `ltiResourceLink`)
+- **DL transaction binding:** Deep-link return validates `data` echo, deployment_id, and msg_type from original launch
+- **NRPS privacy:** `email` and `name` fields are only included when privacy settings allow
+
+### Performance
+- **JWKS caching:** `RemoteJWKSet` instances are cached per URL within the Worker isolate (avoids re-fetching on every request)
+- **Login hint cleanup:** Expired login hints are now cleaned up by the `cleanup_expired_lti_tokens()` function
+
+### Operations
+- **Key rotation:** `/lti/admin/keys/rotate` endpoint for zero-downtime RSA key rotation (requires `LTI_PRIVATE_JWK_NEXT_JSON` secret)
+
+---
+
+## 5) Operational notes (unchanged)
 
 1. **Non-org-member access to LTI tools:** Users enrolled via course invite (not org members) cannot read `lti_registrations` or `lti_deployments` — those tables are org-superadmin-only by RLS. They won't see Launch buttons. If students/TAs need to launch tools, add a read policy on `lti_deployments` for enrolled users.
 2. **Stable tunnel for internal testing:** Run `cloudflared tunnel login` and create a named tunnel so the URL doesn't rotate on every restart
@@ -564,7 +623,7 @@ This was previously only `['openid']`, which would cause ADTA (and any well-beha
 
 ---
 
-## 5) Quick status checklist
+## 6) Quick status checklist
 
 - [ ] Migration applied in Supabase
 - [ ] Worker deployed, `/healthz` returns OK
@@ -575,7 +634,7 @@ This was previously only `['openid']`, which would cause ADTA (and any well-beha
 - [ ] Supabase registration `issuer` matches `TOOL_ISSUER`
 - [ ] Supabase registration `auth_login_url` ends in `/auth-dispatch`
 - [ ] Supabase registration `jwks_url` matches tunnel URL + `/.well-known/jwks.json`
-- [ ] `/test-all` returns 16/16 PASS
+- [ ] `/test-all` returns 25/25 PASS
 - [ ] Resource launch shows `LtiResourceLinkRequest`
 - [ ] Deep-link launch shows `Deep Linking Request Received` (NOT resource link)
 - [ ] Emit deep links (after deep-link launch) shows `Deep link response accepted`
