@@ -230,7 +230,7 @@ app.get('/', (_req, res) => {
     </ul>
     <h3>Spec Compliance Tests</h3>
     <ul>
-      <li><a href="/test-all">Run ALL spec compliance tests</a></li>
+      <li><a href="/test-all">Run ALL spec compliance tests (25 checks)</a></li>
     </ul>
   `);
 });
@@ -332,7 +332,7 @@ app.get('/tool-ui', (_req, res) => {
     <form method="get" action="/roster-since"><button>Get roster (differential/since)</button></form>
 
     <h3>All-in-One</h3>
-    <form method="get" action="/test-all"><button>Run ALL compliance tests</button></form>
+    <form method="get" action="/test-all"><button>Run ALL compliance tests (25 checks)</button></form>
   `);
 });
 
@@ -462,7 +462,7 @@ app.post('/post-grade', async (_req, res) => {
       }),
     });
 
-    // AGS spec: score POST returns 200 with empty body
+    // AGS spec §5: score POST returns 204 No Content
     res.json({
       createdLineItem: lineItem,
       postedScore: { status: scoreRes.status, ok: scoreRes.ok },
@@ -644,6 +644,57 @@ app.get('/roster-since', async (_req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  Helpers: raw client assertion builder (for negative tests)         */
+/* ------------------------------------------------------------------ */
+
+async function buildClientAssertion({ includeJti = true, jtiValue = null } = {}) {
+  const key = await importJWK(toolPrivateJwk, 'RS256');
+  const now = Math.floor(Date.now() / 1000);
+  const tokenEndpoint = `${PLATFORM_AGS_BASE}/lti/oauth2/token`;
+  const jti = jtiValue || crypto.randomUUID();
+
+  const payload = { tool_iss: TOOL_ISSUER };
+  if (includeJti) {
+    payload.jti = jti;
+  }
+
+  const builder = new SignJWT(payload)
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: toolPrivateJwk.kid || 'tool-key-1' })
+    .setIssuer(TOOL_CLIENT_ID)
+    .setSubject(TOOL_CLIENT_ID)
+    .setAudience(tokenEndpoint)
+    .setIssuedAt(now)
+    .setExpirationTime(now + 300);
+
+  if (includeJti) builder.setJti(jti);
+
+  return { assertion: await builder.sign(key), jti };
+}
+
+async function callTokenEndpoint(clientAssertion) {
+  const tokenEndpoint = `${PLATFORM_AGS_BASE}/lti/oauth2/token`;
+  const scope = [
+    'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem',
+    'https://purl.imsglobal.org/spec/lti-ags/scope/score',
+    'https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly',
+    'https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly',
+  ].join(' ');
+
+  return fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      client_assertion: clientAssertion,
+      scope,
+      deployment_id: TOOL_DEPLOYMENT_ID,
+      course_id: TOOL_COURSE_ID,
+    }).toString(),
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /*  Routes: Comprehensive test runner                                  */
 /* ------------------------------------------------------------------ */
 
@@ -653,51 +704,92 @@ app.get('/test-all', async (_req, res) => {
   const fail = (name, detail) => { results[name] = { status: 'FAIL', detail }; };
 
   try {
+    // ================================================================
+    // SECTION 1: TOKEN ENDPOINT
+    // ================================================================
+
     // 1. Token endpoint (jti + scope enforcement)
     let accessToken;
     try {
       accessToken = await getServiceAccessToken(TOOL_COURSE_ID);
-      pass('token_endpoint');
+      pass('01_token_endpoint');
     } catch (e) {
-      fail('token_endpoint', e.message);
+      fail('01_token_endpoint', e.message);
       return res.json({ results, summary: 'Stopped: token endpoint failed' });
     }
 
-    // 2. AGS: Create line item with spec fields
+    // 2. Token endpoint: JTI is required (missing jti must be rejected)
+    try {
+      const { assertion } = await buildClientAssertion({ includeJti: false });
+      const noJtiRes = await callTokenEndpoint(assertion);
+      if (noJtiRes.status === 401) pass('02_token_jti_required');
+      else fail('02_token_jti_required', `Expected 401, got ${noJtiRes.status}`);
+    } catch (e) {
+      fail('02_token_jti_required', e.message);
+    }
+
+    // 3. Token endpoint: JTI replay prevention (same jti rejected on second use)
+    try {
+      const fixedJti = crypto.randomUUID();
+      const { assertion: first } = await buildClientAssertion({ jtiValue: fixedJti });
+      const firstRes = await callTokenEndpoint(first);
+      if (!firstRes.ok) {
+        fail('03_token_jti_replay', `First request failed: ${firstRes.status}`);
+      } else {
+        const { assertion: second } = await buildClientAssertion({ jtiValue: fixedJti });
+        const secondRes = await callTokenEndpoint(second);
+        if (secondRes.status === 401) pass('03_token_jti_replay');
+        else fail('03_token_jti_replay', `Replay accepted with status ${secondRes.status}`);
+      }
+    } catch (e) {
+      fail('03_token_jti_replay', e.message);
+    }
+
+    // ================================================================
+    // SECTION 2: AGS - LINE ITEMS
+    // ================================================================
+
+    // 4. AGS: Create line item with spec fields + correct content type
     const lineitemsUrl = `${PLATFORM_AGS_BASE}/lti/ags/courses/${TOOL_COURSE_ID}/lineitems`;
     const createRes = await fetch(lineitemsUrl, {
       method: 'POST',
-      headers: { 'content-type': MEDIA.LINEITEM, authorization: `Bearer ${accessToken}` },
+      headers: { 'content-type': MEDIA.LINEITEM, accept: MEDIA.LINEITEM, authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ org_id: TOOL_ORG_ID, label: 'Compliance Test', scoreMaximum: 100, tag: 'compliance', resourceId: 'comp-1' }),
     });
     const lineItem = await createRes.json();
     const createCT = createRes.headers.get('content-type') || '';
-    if (createCT.includes('vnd.ims.lis.v2.lineitem')) pass('ags_lineitem_content_type');
-    else fail('ags_lineitem_content_type', `Got: ${createCT}`);
+    if (createCT.includes('vnd.ims.lis.v2.lineitem')) pass('04_ags_lineitem_content_type');
+    else fail('04_ags_lineitem_content_type', `Got: ${createCT}`);
 
-    if (lineItem.id && lineItem.id.startsWith('http')) pass('ags_lineitem_id_is_url');
-    else fail('ags_lineitem_id_is_url', `Got: ${lineItem.id}`);
+    // 5. AGS: Line item id is a URL per spec
+    if (lineItem.id && lineItem.id.startsWith('http')) pass('05_ags_lineitem_id_is_url');
+    else fail('05_ags_lineitem_id_is_url', `Got: ${lineItem.id}`);
 
-    if (lineItem.scoreMaximum !== undefined) pass('ags_lineitem_spec_fields');
-    else fail('ags_lineitem_spec_fields', 'Missing scoreMaximum');
+    // 6. AGS: Line item has spec fields (scoreMaximum, label, tag, resourceId)
+    if (lineItem.scoreMaximum !== undefined && lineItem.label && lineItem.tag) pass('06_ags_lineitem_spec_fields');
+    else fail('06_ags_lineitem_spec_fields', `Missing fields: ${JSON.stringify(lineItem)}`);
 
-    // 3. AGS: List line items with container content type
+    // 7. AGS: List line items with container content type
     const listRes = await fetch(lineitemsUrl, {
       headers: { accept: MEDIA.LINEITEM_CONTAINER, authorization: `Bearer ${accessToken}` },
     });
     const listCT = listRes.headers.get('content-type') || '';
-    if (listCT.includes('vnd.ims.lis.v2.lineitemcontainer')) pass('ags_container_content_type');
-    else fail('ags_container_content_type', `Got: ${listCT}`);
+    if (listCT.includes('vnd.ims.lis.v2.lineitemcontainer')) pass('07_ags_container_content_type');
+    else fail('07_ags_container_content_type', `Got: ${listCT}`);
 
-    // 4. AGS: Filter by tag
+    // 8. AGS: Filter by tag
     const tagRes = await fetch(`${lineitemsUrl}?tag=compliance`, {
       headers: { accept: MEDIA.LINEITEM_CONTAINER, authorization: `Bearer ${accessToken}` },
     });
     const tagItems = await tagRes.json();
-    if (tagItems.length > 0 && tagItems.every(i => i.tag === 'compliance')) pass('ags_filter_by_tag');
-    else fail('ags_filter_by_tag', `Got ${tagItems.length} items`);
+    if (tagItems.length > 0 && tagItems.every(i => i.tag === 'compliance')) pass('08_ags_filter_by_tag');
+    else fail('08_ags_filter_by_tag', `Got ${tagItems.length} items`);
 
-    // 5. AGS: Post score
+    // ================================================================
+    // SECTION 3: AGS - SCORES
+    // ================================================================
+
+    // 9. AGS: Post score returns 204 No Content (spec §5)
     const lineItemUuid = lineItem.id.split('/').pop();
     const scoreRes = await fetch(`${PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemUuid}/scores`, {
       method: 'POST',
@@ -708,10 +800,10 @@ app.get('/test-all', async (_req, res) => {
         comment: 'Compliance test score', timestamp: new Date().toISOString(),
       }),
     });
-    if (scoreRes.status === 200) pass('ags_score_post');
-    else fail('ags_score_post', `Status: ${scoreRes.status}`);
+    if (scoreRes.status === 204) pass('09_ags_score_returns_204');
+    else fail('09_ags_score_returns_204', `Expected 204, got ${scoreRes.status}`);
 
-    // 6. AGS: Invalid gradingProgress rejected
+    // 10. AGS: Invalid gradingProgress rejected with 400
     const badGradeRes = await fetch(`${PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemUuid}/scores`, {
       method: 'POST',
       headers: { 'content-type': MEDIA.SCORE, authorization: `Bearer ${accessToken}` },
@@ -721,69 +813,147 @@ app.get('/test-all', async (_req, res) => {
         timestamp: new Date().toISOString(),
       }),
     });
-    if (badGradeRes.status === 400) pass('ags_validates_grading_progress');
-    else fail('ags_validates_grading_progress', `Status: ${badGradeRes.status}`);
+    if (badGradeRes.status === 400) pass('10_ags_validates_grading_progress');
+    else fail('10_ags_validates_grading_progress', `Expected 400, got ${badGradeRes.status}`);
 
-    // 7. AGS: Results format
+    // 11. AGS: Score POST with wrong content-type rejected
+    const badCtRes = await fetch(`${PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemUuid}/scores`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({
+        userId: TOOL_USER_ID, scoreGiven: 50, scoreMaximum: 100,
+        activityProgress: 'Completed', gradingProgress: 'FullyGraded',
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    if (badCtRes.status === 415) pass('11_ags_score_wrong_content_type');
+    else fail('11_ags_score_wrong_content_type', `Expected 415, got ${badCtRes.status}`);
+
+    // ================================================================
+    // SECTION 4: AGS - RESULTS
+    // ================================================================
+
+    // 12. AGS: Results format + content type
     const resultsRes = await fetch(`${PLATFORM_AGS_BASE}/lti/ags/lineitems/${lineItemUuid}/results`, {
       headers: { accept: MEDIA.RESULT_CONTAINER, authorization: `Bearer ${accessToken}` },
     });
     const resultsCT = resultsRes.headers.get('content-type') || '';
-    if (resultsCT.includes('vnd.ims.lis.v2.resultcontainer')) pass('ags_results_content_type');
-    else fail('ags_results_content_type', `Got: ${resultsCT}`);
+    if (resultsCT.includes('vnd.ims.lis.v2.resultcontainer')) pass('12_ags_results_content_type');
+    else fail('12_ags_results_content_type', `Got: ${resultsCT}`);
 
+    // 13. AGS: Results have spec-mandated fields
     const resultsData = await resultsRes.json();
-    if (resultsData.length > 0 && resultsData[0].scoreOf && resultsData[0].userId) pass('ags_results_spec_format');
-    else fail('ags_results_spec_format', `Fields: ${JSON.stringify(Object.keys(resultsData[0] || {}))}`);
+    if (resultsData.length > 0 && resultsData[0].scoreOf && resultsData[0].userId) pass('13_ags_results_spec_format');
+    else fail('13_ags_results_spec_format', `Fields: ${JSON.stringify(Object.keys(resultsData[0] || {}))}`);
 
-    // 8. AGS: Pagination Link header
+    // 14. AGS: Results include comment field
+    if (resultsData.length > 0 && resultsData[0].comment !== undefined) pass('14_ags_results_has_comment');
+    else fail('14_ags_results_has_comment', 'Missing comment field in results');
+
+    // 15. AGS: Pagination Link header
     const pgRes = await fetch(`${lineitemsUrl}?limit=1`, {
       headers: { accept: MEDIA.LINEITEM_CONTAINER, authorization: `Bearer ${accessToken}` },
     });
     const pgLink = pgRes.headers.get('link');
-    if (pgLink && pgLink.includes('rel="next"')) pass('ags_pagination_link_header');
-    else fail('ags_pagination_link_header', `Link: ${pgLink}`);
+    if (pgLink && pgLink.includes('rel="next"')) pass('15_ags_pagination_link_header');
+    else fail('15_ags_pagination_link_header', `Link: ${pgLink}`);
 
-    // 9. NRPS: Content type
+    // 16. AGS: GET lineitems with wrong Accept header rejected
+    const badAcceptRes = await fetch(lineitemsUrl, {
+      headers: { accept: 'text/html', authorization: `Bearer ${accessToken}` },
+    });
+    if (badAcceptRes.status === 406) pass('16_ags_wrong_accept_rejected');
+    else fail('16_ags_wrong_accept_rejected', `Expected 406, got ${badAcceptRes.status}`);
+
+    // ================================================================
+    // SECTION 5: NRPS
+    // ================================================================
+
+    // 17. NRPS: Content type
     const nrpsRes = await fetch(`${PLATFORM_NRPS_BASE}/lti/nrps/courses/${TOOL_COURSE_ID}/memberships`, {
       headers: { authorization: `Bearer ${accessToken}`, accept: MEDIA.MEMBERSHIP_CONTAINER },
     });
     const nrpsCT = nrpsRes.headers.get('content-type') || '';
-    if (nrpsCT.includes('vnd.ims.lis.v2.membershipcontainer')) pass('nrps_content_type');
-    else fail('nrps_content_type', `Got: ${nrpsCT}`);
+    if (nrpsCT.includes('vnd.ims.lis.v2.membershipcontainer')) pass('17_nrps_content_type');
+    else fail('17_nrps_content_type', `Got: ${nrpsCT}`);
 
+    // 18. NRPS: Response structure (context + members)
     const nrpsData = await nrpsRes.json();
-    if (nrpsData.context?.id && nrpsData.members) pass('nrps_response_structure');
-    else fail('nrps_response_structure', `Keys: ${JSON.stringify(Object.keys(nrpsData))}`);
+    if (nrpsData.context?.id && nrpsData.members) pass('18_nrps_response_structure');
+    else fail('18_nrps_response_structure', `Keys: ${JSON.stringify(Object.keys(nrpsData))}`);
 
-    // 10. NRPS: System roles included
+    // 19. NRPS: Dual roles (context + system)
     if (nrpsData.members?.length > 0) {
       const roles = nrpsData.members[0].roles || [];
       const hasSystem = roles.some(r => r.includes('institution/person'));
       const hasContext = roles.some(r => r.includes('membership#'));
-      if (hasSystem && hasContext) pass('nrps_dual_roles');
-      else fail('nrps_dual_roles', `Roles: ${JSON.stringify(roles)}`);
+      if (hasSystem && hasContext) pass('19_nrps_dual_roles');
+      else fail('19_nrps_dual_roles', `Roles: ${JSON.stringify(roles)}`);
     } else {
-      fail('nrps_dual_roles', 'No members returned');
+      fail('19_nrps_dual_roles', 'No members returned');
     }
 
-    // 11. NRPS: Role filter
+    // 20. NRPS: Role filter
     const roleFilter = encodeURIComponent('http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor');
     const roleRes = await fetch(
       `${PLATFORM_NRPS_BASE}/lti/nrps/courses/${TOOL_COURSE_ID}/memberships?role=${roleFilter}`,
       { headers: { authorization: `Bearer ${accessToken}`, accept: MEDIA.MEMBERSHIP_CONTAINER } },
     );
-    if (roleRes.status === 200) pass('nrps_role_filter');
-    else fail('nrps_role_filter', `Status: ${roleRes.status}`);
+    if (roleRes.status === 200) pass('20_nrps_role_filter');
+    else fail('20_nrps_role_filter', `Status: ${roleRes.status}`);
 
-    // 12. NRPS: Differential membership (?since=)
+    // 21. NRPS: Differential membership (?since=)
     const since = new Date(Date.now() - 30 * 86400000).toISOString();
     const sinceRes = await fetch(
       `${PLATFORM_NRPS_BASE}/lti/nrps/courses/${TOOL_COURSE_ID}/memberships?since=${encodeURIComponent(since)}`,
       { headers: { authorization: `Bearer ${accessToken}`, accept: MEDIA.MEMBERSHIP_CONTAINER } },
     );
-    if (sinceRes.status === 200) pass('nrps_since_filter');
-    else fail('nrps_since_filter', `Status: ${sinceRes.status}`);
+    if (sinceRes.status === 200) pass('21_nrps_since_filter');
+    else fail('21_nrps_since_filter', `Status: ${sinceRes.status}`);
+
+    // 22. NRPS: Wrong Accept header rejected
+    const nrpsBadAccept = await fetch(
+      `${PLATFORM_NRPS_BASE}/lti/nrps/courses/${TOOL_COURSE_ID}/memberships`,
+      { headers: { authorization: `Bearer ${accessToken}`, accept: 'text/html' } },
+    );
+    if (nrpsBadAccept.status === 406) pass('22_nrps_wrong_accept_rejected');
+    else fail('22_nrps_wrong_accept_rejected', `Expected 406, got ${nrpsBadAccept.status}`);
+
+    // ================================================================
+    // SECTION 6: PLATFORM ENDPOINTS (no auth needed)
+    // ================================================================
+
+    // 23. JWKS endpoint returns keys
+    try {
+      const jwksRes = await fetch(`${PLATFORM_AGS_BASE}/.well-known/jwks.json`);
+      const jwksBody = await jwksRes.json();
+      if (jwksRes.ok && jwksBody.keys?.length > 0) pass('23_platform_jwks');
+      else fail('23_platform_jwks', `Status: ${jwksRes.status}, keys: ${jwksBody.keys?.length}`);
+    } catch (e) {
+      fail('23_platform_jwks', e.message);
+    }
+
+    // 24. OpenID configuration endpoint
+    try {
+      const oidcRes = await fetch(`${PLATFORM_AGS_BASE}/.well-known/openid-configuration`);
+      const oidcBody = await oidcRes.json();
+      const hasScopes = oidcBody.scopes_supported?.includes('https://purl.imsglobal.org/spec/lti-ags/scope/lineitem');
+      const hasLineitemReadonly = oidcBody.scopes_supported?.includes('https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly');
+      if (oidcRes.ok && hasScopes && hasLineitemReadonly) pass('24_openid_configuration');
+      else fail('24_openid_configuration', `scopes: ${JSON.stringify(oidcBody.scopes_supported)}`);
+    } catch (e) {
+      fail('24_openid_configuration', e.message);
+    }
+
+    // 25. Health check
+    try {
+      const healthRes = await fetch(`${PLATFORM_AGS_BASE}/healthz`);
+      const healthBody = await healthRes.json();
+      if (healthRes.ok && healthBody.status === 'ok') pass('25_healthz');
+      else fail('25_healthz', `Status: ${healthRes.status}`);
+    } catch (e) {
+      fail('25_healthz', e.message);
+    }
 
     // Summary
     const total = Object.keys(results).length;

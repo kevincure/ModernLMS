@@ -1,11 +1,12 @@
 # Local LTI Test Tool (actual runnable implementation)
 
-This folder now includes runnable code at `src/server.js` that can:
-1. Start an LTI resource launch
+This folder includes runnable code at `src/server.js` that can:
+1. Start an LTI resource launch (OIDC flow)
 2. Start an LTI deep-link launch
-3. Emit two deep-link items
-4. Create AGS lineitem + post score 8/10
+3. Emit deep-link items (link, ltiResourceLink, file)
+4. Create AGS lineitem + post score
 5. Call NRPS memberships endpoint
+6. Run 25 automated spec-compliance checks via `/test-all`
 
 ## 1) Install
 ```bash
@@ -52,6 +53,16 @@ order by created_at desc limit 20;
 select * from lti_ags_line_items order by created_at desc limit 20;
 ```
 
-## 6) Known assumptions in this baseline tool
-- Uses fixed course id `demo-course-1` and user id `demo-user-1` for quick smoke tests.
-- For real org data, replace those with claim-driven values.
+## 6) Automated test coverage (`/test-all`)
+
+The 25 checks cover:
+- **Token endpoint (3):** Happy path, missing jti rejected, jti replay rejected
+- **AGS line items (5):** Content types, URL-format IDs, spec fields, container type, tag filter
+- **AGS scores (3):** 204 response, gradingProgress validation, wrong Content-Type rejected
+- **AGS results (4):** Content type, spec format, comment field, pagination Link header, wrong Accept rejected
+- **NRPS (6):** Content type, response structure, dual roles, role filter, since filter, wrong Accept rejected
+- **Platform (3):** JWKS endpoint, OpenID configuration (with all scopes), healthz
+
+## 7) Known assumptions
+- Uses UUIDs from `.env` for org/course/user — must match real Supabase data.
+- The deep-link flow uses in-memory state (`pendingDlData`) so "Start Deep Link Launch" must precede "Emit Deep Links" in the same server session.
