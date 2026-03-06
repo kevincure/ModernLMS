@@ -120,6 +120,10 @@ function randomToken() {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function parseCookieValue(cookieHeader: string, name: string): string | null {
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
@@ -311,10 +315,13 @@ async function resolveDeployment(supabase: any, registrationId: string, deployme
   if (error) throw error;
 
   const rows = data || [];
+  // Priority: course-scoped > department-scoped > org-scoped
+  // Department scope is treated like org (applies to all courses in the department).
+  // Unknown scope types are rejected (do not fall through).
   return rows.find((row: any) => {
-    if (row.scope_type === 'org') return true;
     if (row.scope_type === 'course') return courseId && String(row.scope_ref) === String(courseId);
-    return true;
+    if (row.scope_type === 'department' || row.scope_type === 'org') return true;
+    return false; // reject unknown scope types
   }) || null;
 }
 
@@ -328,9 +335,22 @@ async function resolveCourseOrgId(supabase: any, courseId: string | null): Promi
 /*  JWT verification helpers                                           */
 /* ------------------------------------------------------------------ */
 
+// Cache RemoteJWKSet instances per URL to avoid re-fetching JWKS on every request.
+// In Cloudflare Workers the module scope persists across requests within the same isolate.
+const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+function getCachedJWKS(url: string): ReturnType<typeof createRemoteJWKSet> {
+  let jwks = jwksCache.get(url);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(url));
+    jwksCache.set(url, jwks);
+  }
+  return jwks;
+}
+
 async function verifyToolJwt(idToken: string, registration: any) {
   if (!registration?.jwks_url) throw new Error('Registration missing jwks_url');
-  const JWKS = createRemoteJWKSet(new URL(registration.jwks_url));
+  const JWKS = getCachedJWKS(registration.jwks_url);
   return jwtVerify(idToken, JWKS, { issuer: registration.issuer, audience: registration.client_id });
 }
 
@@ -531,7 +551,7 @@ async function handleToken(req: Request, env: Env, supabase: any) {
 
   // Verify signature against tool JWKS
   try {
-    const JWKS = createRemoteJWKSet(new URL(reg.jwks_url));
+    const JWKS = getCachedJWKS(reg.jwks_url);
     await jwtVerify(clientAssertion, JWKS, {
       issuer: clientId,
       audience: `${env.LTI_PLATFORM_ISSUER}/lti/oauth2/token`,
@@ -540,9 +560,10 @@ async function handleToken(req: Request, env: Env, supabase: any) {
     return err(`Client assertion verify failed: ${e?.message || 'unknown'}`, 401);
   }
 
-  // JTI replay prevention (spec MUST)
+  // JTI replay prevention (IMS Security Framework §5.1.2: jti is MUST)
   const jti = decoded.jti ? String(decoded.jti) : null;
-  if (jti) {
+  if (!jti) return err('Missing jti claim in client assertion (required per spec)', 401);
+  {
     const { data: existingJti } = await supabase
       .from('lti_client_assertion_jti')
       .select('jti')
@@ -1203,8 +1224,8 @@ async function handleAgsScores(req: Request, env: Env, supabase: any, lineItemId
     });
   }
 
-  // AGS spec: score POST returns 200 with empty body
-  return new Response('', { status: 200, headers: { 'content-type': MEDIA.SCORE, ...corsHeaders() } });
+  // AGS spec §5: score POST returns 204 No Content
+  return new Response(null, { status: 204, headers: corsHeaders() });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1887,7 +1908,7 @@ async function handleOidcAuth(req: Request, env: Env, supabase: any) {
 
   if (deployment?.enable_ags) {
     idTokenPayload[CLAIMS.AGS_ENDPOINT] = {
-      scope:     [AGS_SCOPES.LINEITEM, AGS_SCOPES.SCORE, AGS_SCOPES.RESULT_READONLY],
+      scope:     [AGS_SCOPES.LINEITEM, AGS_SCOPES.LINEITEM_READONLY, AGS_SCOPES.SCORE, AGS_SCOPES.RESULT_READONLY],
       lineitems: `${base}/lti/ags/courses/${courseId}/lineitems`,
     };
   }
@@ -1898,6 +1919,10 @@ async function handleOidcAuth(req: Request, env: Env, supabase: any) {
     };
   }
   if (msgType === 'LtiDeepLinkingRequest') {
+    // Enforce deep-linking feature flag on platform-initiated DL launches
+    if (deployment && !deployment.enable_deep_linking) {
+      return err('Deep linking is disabled for this deployment', 403);
+    }
     idTokenPayload[CLAIMS.DL_SETTINGS] = {
       deep_link_return_url: reg.deep_link_return_url || `${base}/lti/deep-link/return`,
       accept_types: ['link', 'ltiResourceLink', 'file', 'html', 'image'],
@@ -1927,10 +1952,14 @@ async function handleOidcAuth(req: Request, env: Env, supabase: any) {
     correlation_id:  crypto.randomUUID(),
   });
 
+  // HTML-escape all interpolated values to prevent XSS
+  const safeRedirect = escapeHtml(redirectUri);
+  const safeToken = escapeHtml(idToken);
+  const safeState = escapeHtml(stateParam);
   return html(`
-    <form id="f" method="post" action="${redirectUri}">
-      <input type="hidden" name="id_token" value="${idToken}">
-      <input type="hidden" name="state" value="${stateParam}">
+    <form id="f" method="post" action="${safeRedirect}">
+      <input type="hidden" name="id_token" value="${safeToken}">
+      <input type="hidden" name="state" value="${safeState}">
     </form>
     <script>document.getElementById('f').submit()</script>
   `);
