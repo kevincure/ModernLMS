@@ -56,7 +56,7 @@ export async function signInWithGoogle() {
   }
 
   console.log('[Auth] Starting Google OAuth sign-in...');
-  showLoginLoading(true);
+  showLoginLoading(true, 'Redirecting to Google…');
 
   try {
     const { data, error } = await supabaseClient.auth.signInWithOAuth({
@@ -108,6 +108,8 @@ export async function handleAuthStateChange(event, session) {
       return;
     }
 
+    // Show loading while we load data (this covers the post-OAuth-redirect gap).
+    showLoginLoading(true, 'Signing you in…');
     // For true sign-ins (new user in app state), bootstrap normally.
     await handleSignedIn(session.user);
   } else if (event === 'SIGNED_OUT') {
@@ -209,6 +211,9 @@ export async function checkExistingSession() {
     return;
   }
 
+  // Show loading immediately — if we have a session we'll go straight into the app.
+  showLoginLoading(true, 'Checking your session…');
+
   console.log('[Auth] Checking for existing session...');
 
   const { data: { session }, error } = await supabaseClient.auth.getSession();
@@ -221,6 +226,7 @@ export async function checkExistingSession() {
 
   if (session?.user) {
     console.log('[Auth] Found existing session for:', session.user.email);
+    showLoginLoading(true, 'Signing you in…');
     await handleSignedIn(session.user);
   } else {
     console.log('[Auth] No existing session');
@@ -249,10 +255,13 @@ export function showLoginScreen() {
 /**
  * Show/hide login loading state
  */
-export function showLoginLoading(show) {
+export function showLoginLoading(show, message) {
   const loadingEl = document.getElementById('loginLoading');
   const btnEl = document.getElementById('googleSignInBtn');
-  if (loadingEl) loadingEl.style.display = show ? 'block' : 'none';
+  if (loadingEl) {
+    loadingEl.style.display = show ? 'block' : 'none';
+    if (show && message) loadingEl.textContent = message;
+  }
   if (btnEl) btnEl.disabled = show;
 }
 

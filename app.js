@@ -7422,25 +7422,27 @@ function launchLtiTool(clientId, toolName) {
     + `&course_id=${encodeURIComponent(activeCourseId)}`
     + `&user_id=${encodeURIComponent(userId)}`;
 
-  // Build the modal once; reuse on subsequent launches.
+  // Build the full-screen panel once; reuse on subsequent launches.
   let modal = document.getElementById('ltiLaunchModal');
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'ltiLaunchModal';
-    modal.className = 'modal-overlay';
-    // Click backdrop to close
-    modal.addEventListener('click', e => { if (e.target === modal) closeLtiLaunchModal(); });
+    modal.className = 'modal-overlay modal-overlay--fullscreen';
     modal.innerHTML = `
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ltiLaunchTitle"
-           style="width:90vw;max-width:1200px;height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;">
-        <div class="modal-header" style="flex-shrink:0;padding:12px 16px;">
+           style="display:flex;flex-direction:column;padding:0;overflow:hidden;">
+        <div class="modal-header" style="flex-shrink:0;padding:10px 16px;">
           <h2 class="modal-title" id="ltiLaunchTitle" style="font-size:1rem;margin:0;"></h2>
-          <button class="modal-close" aria-label="Close tool" onclick="closeLtiLaunchModal()">&times;</button>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <a id="ltiLaunchNewTab" href="#" target="_blank" rel="noopener"
+               class="btn btn-secondary btn-sm" style="font-size:0.8rem;">Open in new tab ↗</a>
+            <button class="modal-close" aria-label="Close tool" onclick="closeLtiLaunchModal()">&times;</button>
+          </div>
         </div>
         <div style="flex:1;position:relative;min-height:0;">
           <div id="ltiLaunchSpinner"
                style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
-                      justify-content:center;gap:12px;color:var(--text-muted);background:var(--bg,#fff);">
+                      justify-content:center;gap:12px;color:var(--text-muted);background:var(--bg-card,#fff);z-index:1;">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  style="animation:ai-spin 1s linear infinite;">
               <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4
@@ -7450,7 +7452,7 @@ function launchLtiTool(clientId, toolName) {
           </div>
           <iframe id="ltiLaunchFrame"
             style="position:absolute;inset:0;width:100%;height:100%;border:none;"
-            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
+            sandbox="allow-forms allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
             allow="camera; microphone; fullscreen; clipboard-write"
             referrerpolicy="no-referrer-when-downgrade">
           </iframe>
@@ -7464,8 +7466,9 @@ function launchLtiTool(clientId, toolName) {
     frame.addEventListener('load', () => { spinner.style.display = 'none'; });
   }
 
-  // Update title and (re-)point the iframe at the launch URL.
+  // Update title, new-tab link, and (re-)point the iframe at the launch URL.
   modal.querySelector('#ltiLaunchTitle').textContent = toolName || 'External Tool';
+  modal.querySelector('#ltiLaunchNewTab').href = launchUrl;
   const frame  = modal.querySelector('#ltiLaunchFrame');
   const spinner = modal.querySelector('#ltiLaunchSpinner');
   spinner.style.display = 'flex';

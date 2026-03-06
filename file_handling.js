@@ -855,17 +855,17 @@ export async function viewFile(fileId) {
   let viewerContent = '';
   if (viewableExts.includes(ext)) {
     if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
-      viewerContent = `<img src="${escapeHtml(fileUrl)}" alt="${escapeHtml(file.name)}" style="max-width:100%; max-height:75vh; object-fit:contain; display:block; margin:0 auto;">`;
+      viewerContent = `<img src="${escapeHtml(fileUrl)}" alt="${escapeHtml(file.name)}" style="max-width:100%; object-fit:contain; display:block; margin:0 auto;">`;
     } else if (ext === 'txt' || ext === 'tex') {
       // Load text inline
-      viewerContent = `<div id="fileViewerTextContent" style="padding:16px; font-family:monospace; white-space:pre-wrap; max-height:70vh; overflow-y:auto; background:var(--bg-color); border-radius:var(--radius);">Loading…</div>`;
+      viewerContent = `<div id="fileViewerTextContent" style="font-family:monospace; white-space:pre-wrap; background:var(--bg-color); border-radius:var(--radius); padding:8px;">Loading…</div>`;
     } else {
-      // PDF via iframe
-      viewerContent = `<iframe src="${escapeHtml(fileUrl)}" style="width:100%; height:75vh; border:none; border-radius:var(--radius);"></iframe>`;
+      // PDF via iframe — fills the flex modal-body
+      viewerContent = `<iframe src="${escapeHtml(fileUrl)}" style="width:100%; height:100%; min-height:60vh; border:none;"></iframe>`;
     }
   } else if (googleViewerExts.includes(ext)) {
     const googleViewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
-    viewerContent = `<iframe src="${escapeHtml(googleViewerUrl)}" style="width:100%; height:75vh; border:none; border-radius:var(--radius);"></iframe>`;
+    viewerContent = `<iframe src="${escapeHtml(googleViewerUrl)}" style="width:100%; height:100%; min-height:60vh; border:none;"></iframe>`;
   } else {
     // Trigger download for unsupported formats
     window._downloadFile(fileUrl, file.name);
@@ -876,16 +876,16 @@ export async function viewFile(fileId) {
   document.getElementById('fileViewerModal')?.remove();
 
   const modalHtml = `
-    <div class="modal-overlay" id="fileViewerModal" style="display:flex; z-index:900;">
-      <div class="modal" style="max-width:90vw; width:900px; max-height:95vh; display:flex; flex-direction:column;">
-        <div class="modal-header" style="flex-shrink:0;">
+    <div class="modal-overlay modal-overlay--fullscreen visible" id="fileViewerModal" style="z-index:900;">
+      <div class="modal" style="display:flex; flex-direction:column; overflow:hidden;">
+        <div class="modal-header" style="flex-shrink:0; padding:10px 16px;">
           <h2 class="modal-title" style="font-size:1rem;">${escapeHtml(file.name)}</h2>
           <div style="display:flex; gap:8px; align-items:center;">
             <button class="btn btn-secondary btn-sm" onclick="window._downloadFile('${escapeHtml(fileUrl)}', '${escapeHtml(file.name)}')">Download</button>
-            <button class="modal-close" onclick="document.getElementById('fileViewerModal').remove()">&times;</button>
+            <button class="modal-close" aria-label="Close" onclick="document.getElementById('fileViewerModal').remove()">&times;</button>
           </div>
         </div>
-        <div class="modal-body" style="flex:1; overflow:hidden; padding:0;">
+        <div class="modal-body" style="flex:1; overflow:auto; padding:16px;">
           ${viewerContent}
         </div>
       </div>
