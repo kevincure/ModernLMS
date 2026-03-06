@@ -871,6 +871,30 @@ body {
   display: flex;
 }
 
+/* Full-screen viewer: fills everything to the right of the left toolbar */
+.modal-overlay--fullscreen {
+  left: var(--toolbar-width);
+  padding: 0;
+  background: var(--bg-card);
+  align-items: stretch;
+  justify-content: stretch;
+}
+.modal-overlay--fullscreen .modal {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+/* On mobile the toolbar is hidden; full-screen covers the whole viewport */
+@media (max-width: 768px) {
+  .modal-overlay--fullscreen {
+    left: 0;
+  }
+}
+
 .modal {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
