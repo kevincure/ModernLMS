@@ -1544,6 +1544,10 @@ function navigateTo(page) {
     });
     return;
   }
+
+  // Any page navigation should close an open tool modal.
+  closeLtiLaunchModal();
+
   document.querySelectorAll('.tool-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.page === page);
   });
@@ -1570,7 +1574,23 @@ function navigateTo(page) {
       notifications: renderNotifications,
     };
     if (pageRenders[page]) pageRenders[page]();
+    if (page === 'tools') autoLaunchSingleToolFromToolsPage();
   }
+}
+
+function autoLaunchSingleToolFromToolsPage() {
+  if (!activeCourseId || !appData.currentUser?.id) return;
+
+  const isStaffUser = isStaff(appData.currentUser.id, activeCourseId) && !studentViewMode;
+  const courseTools = getCourseLtiTools(activeCourseId);
+  const launchableTools = isStaffUser
+    ? courseTools
+    : courseTools.filter(t => t.visibleToStudents);
+
+  if (launchableTools.length !== 1) return;
+
+  const tool = launchableTools[0];
+  launchLtiTool(tool.clientId, tool.toolName);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
