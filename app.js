@@ -7452,7 +7452,7 @@ function launchLtiTool(clientId, toolName) {
           </div>
           <iframe id="ltiLaunchFrame"
             style="position:absolute;inset:0;width:100%;height:100%;border:none;"
-            sandbox="allow-forms allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
             allow="camera; microphone; fullscreen; clipboard-write"
             referrerpolicy="no-referrer-when-downgrade">
           </iframe>
